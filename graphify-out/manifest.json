@@ -1,0 +1,237 @@
+{
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/tsconfig.node.json": {
+    "mtime": 1781133817.5621364,
+    "ast_hash": "70bdd0a673bcfc0e828080b306e7c680",
+    "semantic_hash": "70bdd0a673bcfc0e828080b306e7c680"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/tsconfig.app.json": {
+    "mtime": 1781133817.562726,
+    "ast_hash": "136630b5accce1ca50663df229534a26",
+    "semantic_hash": "136630b5accce1ca50663df229534a26"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/package.json": {
+    "mtime": 1781263587.7879472,
+    "ast_hash": "e99d72eb6909c39d549f12582b48a9b4",
+    "semantic_hash": "e99d72eb6909c39d549f12582b48a9b4"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/tsconfig.json": {
+    "mtime": 1781133817.5647736,
+    "ast_hash": "a3d39fa780ebff65444de257f291ce6c",
+    "semantic_hash": "a3d39fa780ebff65444de257f291ce6c"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/eslint.config.js": {
+    "mtime": 1781133817.5650742,
+    "ast_hash": "0355276bc79439afe3c53e3a2470ca1e",
+    "semantic_hash": "0355276bc79439afe3c53e3a2470ca1e"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/vite.config.ts": {
+    "mtime": 1781134123.9558473,
+    "ast_hash": "b58af61603f802abaf0b1d2242ffdec5",
+    "semantic_hash": "b58af61603f802abaf0b1d2242ffdec5"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/score.mjs": {
+    "mtime": 1781282470.2946196,
+    "ast_hash": "322a0048e9670a2ceb2a1da619ade166",
+    "semantic_hash": "322a0048e9670a2ceb2a1da619ade166"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/run.mjs": {
+    "mtime": 1781282494.9445384,
+    "ast_hash": "90a89441f994510e9326dda96fdfdf9c",
+    "semantic_hash": "90a89441f994510e9326dda96fdfdf9c"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/compare.mjs": {
+    "mtime": 1781282441.9513855,
+    "ast_hash": "28b918e785555b4135a63991610a37ab",
+    "semantic_hash": "28b918e785555b4135a63991610a37ab"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/rerun-missing.mjs": {
+    "mtime": 1781166878.388098,
+    "ast_hash": "a8aa6d725d9925aea2c2650affbb2dd7",
+    "semantic_hash": "a8aa6d725d9925aea2c2650affbb2dd7"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/results/results.json": {
+    "mtime": 1781282664.2522385,
+    "ast_hash": "48ddc4672112b7d4dd62710883736e0c",
+    "semantic_hash": "48ddc4672112b7d4dd62710883736e0c"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/.claude/settings.local.json": {
+    "mtime": 1781198344.555637,
+    "ast_hash": "8686a17777daf202e1d7dea8f4dce603",
+    "semantic_hash": "8686a17777daf202e1d7dea8f4dce603"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/.claude/launch.json": {
+    "mtime": 1781263472.9283319,
+    "ast_hash": "6b94a26ec730da2b8e3b75d232a2ac9a",
+    "semantic_hash": "6b94a26ec730da2b8e3b75d232a2ac9a"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/server/providers.mjs": {
+    "mtime": 1781203716.159978,
+    "ast_hash": "198bfc0371458d9555f7709ece97e23a",
+    "semantic_hash": "198bfc0371458d9555f7709ece97e23a"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/server/index.mjs": {
+    "mtime": 1781203672.3384802,
+    "ast_hash": "b2d9b6dfc268fb6bfdfa77a68387392b",
+    "semantic_hash": "b2d9b6dfc268fb6bfdfa77a68387392b"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/server/prompt.mjs": {
+    "mtime": 1781203716.1521947,
+    "ast_hash": "e91757a357d414394cf64a9961b9a13f",
+    "semantic_hash": "e91757a357d414394cf64a9961b9a13f"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/App.tsx": {
+    "mtime": 1781263022.1750956,
+    "ast_hash": "54be33db9f53d7bc06eff99fd7ee284a",
+    "semantic_hash": "54be33db9f53d7bc06eff99fd7ee284a"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/main.tsx": {
+    "mtime": 1781134422.2239366,
+    "ast_hash": "4a6759297d63683effa352d92df35dcc",
+    "semantic_hash": "4a6759297d63683effa352d92df35dcc"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/types.ts": {
+    "mtime": 1781238815.4547691,
+    "ast_hash": "4bd6dacb4ad8416b7db9fc8355e5e178",
+    "semantic_hash": "4bd6dacb4ad8416b7db9fc8355e5e178"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/state/ui.ts": {
+    "mtime": 1781266551.2610195,
+    "ast_hash": "d23e22241374f21b1c8520a476637582",
+    "semantic_hash": "d23e22241374f21b1c8520a476637582"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/state/store.ts": {
+    "mtime": 1781265740.2932937,
+    "ast_hash": "e5317b85ab888922e7e7c1bad0b17013",
+    "semantic_hash": "e5317b85ab888922e7e7c1bad0b17013"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/Viewport.tsx": {
+    "mtime": 1781272105.1773517,
+    "ast_hash": "0570f4ba19d77af5f2046e7ab5479053",
+    "semantic_hash": "0570f4ba19d77af5f2046e7ab5479053"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/TopBar.tsx": {
+    "mtime": 1781272509.709194,
+    "ast_hash": "984e27d17da82e65f4bcb93729383867",
+    "semantic_hash": "984e27d17da82e65f4bcb93729383867"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/RightPanel.tsx": {
+    "mtime": 1781272105.1778138,
+    "ast_hash": "340711fa0ea40339912abd638d0ef9c2",
+    "semantic_hash": "340711fa0ea40339912abd638d0ef9c2"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/EnginesModal.tsx": {
+    "mtime": 1781272105.1783116,
+    "ast_hash": "32a8f77a53e004bdac551dcf604bb53e",
+    "semantic_hash": "32a8f77a53e004bdac551dcf604bb53e"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/icons.tsx": {
+    "mtime": 1781281505.5865042,
+    "ast_hash": "4b4971b6b59cd0eebe683efd3398aa14",
+    "semantic_hash": "4b4971b6b59cd0eebe683efd3398aa14"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/Dialogs.tsx": {
+    "mtime": 1781272105.1790617,
+    "ast_hash": "fc89929fc50598d7a23fa0cff4c5e28f",
+    "semantic_hash": "fc89929fc50598d7a23fa0cff4c5e28f"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/ChatPanel.tsx": {
+    "mtime": 1781272105.1762528,
+    "ast_hash": "e23ac1cac5fb2cae909c3a7d83a3b50e",
+    "semantic_hash": "e23ac1cac5fb2cae909c3a7d83a3b50e"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/EmptyState.tsx": {
+    "mtime": 1781272105.17935,
+    "ast_hash": "147f11f691754aae207f29258e0e26d8",
+    "semantic_hash": "147f11f691754aae207f29258e0e26d8"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/components/HelpModal.tsx": {
+    "mtime": 1781272105.1787903,
+    "ast_hash": "6ff1ad9a15dd8cdc3873255fed5f74eb",
+    "semantic_hash": "6ff1ad9a15dd8cdc3873255fed5f74eb"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/stl.ts": {
+    "mtime": 1781190839.3016973,
+    "ast_hash": "16d49b1bee5755b5dd2dbaa6bfa32e30",
+    "semantic_hash": "16d49b1bee5755b5dd2dbaa6bfa32e30"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/storage.ts": {
+    "mtime": 1781203752.185321,
+    "ast_hash": "bd1c7c87b2a0bf4d74dbe44aa8b1b42f",
+    "semantic_hash": "bd1c7c87b2a0bf4d74dbe44aa8b1b42f"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/examples.ts": {
+    "mtime": 1781134340.2811258,
+    "ast_hash": "5cd5cb19c8c9285c9a6a2224706f4032",
+    "semantic_hash": "5cd5cb19c8c9285c9a6a2224706f4032"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/capture.ts": {
+    "mtime": 1781189751.1878526,
+    "ast_hash": "39263d4546da328bcf08a771a69e7aa3",
+    "semantic_hash": "39263d4546da328bcf08a771a69e7aa3"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/api.ts": {
+    "mtime": 1781185878.9401085,
+    "ast_hash": "fec64995b4ea4af0f5d6f5a245a8b87a",
+    "semantic_hash": "fec64995b4ea4af0f5d6f5a245a8b87a"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/threeMF.ts": {
+    "mtime": 1781203696.173707,
+    "ast_hash": "55975bdeb38ebcca047abfcd93be0bbd",
+    "semantic_hash": "55975bdeb38ebcca047abfcd93be0bbd"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/params.ts": {
+    "mtime": 1781134222.7201118,
+    "ast_hash": "fc47c1ece1f5e1595e55b51dfc8c7c7c",
+    "semantic_hash": "fc47c1ece1f5e1595e55b51dfc8c7c7c"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/openscad/client.ts": {
+    "mtime": 1781134247.1782172,
+    "ast_hash": "41195af71b47d2a5612032c05639112e",
+    "semantic_hash": "41195af71b47d2a5612032c05639112e"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/src/lib/openscad/worker.ts": {
+    "mtime": 1781134236.877943,
+    "ast_hash": "1c303dad35023745f0722516851e3ccf",
+    "semantic_hash": "1c303dad35023745f0722516851e3ccf"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/index.html": {
+    "mtime": 1781267704.5669343,
+    "ast_hash": "b8ff95fafa28e4f92a5f5cbc1c5c35f7",
+    "semantic_hash": "b8ff95fafa28e4f92a5f5cbc1c5c35f7"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/README.md": {
+    "mtime": 1781272533.8362813,
+    "ast_hash": "9f4376ab9875020df4e0ea3fd7004234",
+    "semantic_hash": "9f4376ab9875020df4e0ea3fd7004234"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/CLAUDE.md": {
+    "mtime": 1781282736.37943,
+    "ast_hash": "36831403e7ce72a527d65b594eb0f03c",
+    "semantic_hash": "36831403e7ce72a527d65b594eb0f03c"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/REPORT.md": {
+    "mtime": 1781282727.5331078,
+    "ast_hash": "d70ac8f32418d2d34492d5f4b934531d",
+    "semantic_hash": "d70ac8f32418d2d34492d5f4b934531d"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/bench/AUDIT.md": {
+    "mtime": 1781190538.808646,
+    "ast_hash": "cc99cd6d59bf6b087dee477fcd030faa",
+    "semantic_hash": "cc99cd6d59bf6b087dee477fcd030faa"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/docs/UX-AUDIT.md": {
+    "mtime": 1781264852.0591261,
+    "ast_hash": "fa0fad40bd490b4433b9126623cf47c4",
+    "semantic_hash": "fa0fad40bd490b4433b9126623cf47c4"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/docs/SPEC.md": {
+    "mtime": 1781267486.530236,
+    "ast_hash": "93f0e89d0b3975bdc61cc53a6dfad7a0",
+    "semantic_hash": "93f0e89d0b3975bdc61cc53a6dfad7a0"
+  },
+  "/Users/sherif.shalaby/Desktop/Workspace/dev/VibeSCAD/docs/UX-AUDIT-2.md": {
+    "mtime": 1781269208.1437774,
+    "ast_hash": "953a9858814ba23a2700c202eeb4c5ed",
+    "semantic_hash": "953a9858814ba23a2700c202eeb4c5ed"
+  }
+}

@@ -1,0 +1,112 @@
+import { zipSync, strToU8 } from 'fflate'
+
+/**
+ * Build a spec-conformant 3MF package (the format Bambu Studio / PrusaSlicer /
+ * Orca open natively) from one or more binary STLs. Each part becomes a named
+ * object; build items lay the parts side by side on the plate with a gap, each
+ * sitting at z=0, so the slicer opens a ready-to-arrange plate.
+ */
+export function buildThreeMF(parts: Array<{ name: string; stl: ArrayBuffer }>): Uint8Array<ArrayBuffer> {
+  const objects: string[] = []
+  const items: string[] = []
+  let cursorX = 0
+
+  parts.forEach((part, index) => {
+    const { vertices, triangles, bbox } = indexMesh(part.stl)
+    const id = index + 1
+    objects.push(
+      `<object id="${id}" name="${escapeXml(part.name)}" type="model"><mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh></object>`,
+    )
+    // arrange: side by side along X with 10mm gaps, centered in Y, flat on z=0
+    const tx = cursorX - bbox.minX
+    const ty = -(bbox.minY + bbox.maxY) / 2
+    const tz = -bbox.minZ
+    cursorX += bbox.maxX - bbox.minX + 10
+    items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+  })
+
+  const model =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">` +
+    `<metadata name="Application">Vibemesh</metadata>` +
+    `<resources>${objects.join('')}</resources>` +
+    `<build>${items.join('')}</build>` +
+    `</model>`
+
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>` +
+    `</Types>`
+
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>` +
+    `</Relationships>`
+
+  const zipped = zipSync(
+    {
+      '[Content_Types].xml': strToU8(contentTypes),
+      '_rels/.rels': strToU8(rels),
+      '3D/3dmodel.model': strToU8(model),
+    },
+    { level: 6 },
+  )
+  // copy into a plain ArrayBuffer-backed view (Blob typing rejects ArrayBufferLike)
+  const out = new Uint8Array(new ArrayBuffer(zipped.byteLength))
+  out.set(zipped)
+  return out
+}
+
+/** Binary STL triangle soup → indexed mesh XML fragments + bbox. */
+function indexMesh(stl: ArrayBuffer): {
+  vertices: string
+  triangles: string
+  bbox: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }
+} {
+  const view = new DataView(stl)
+  const count = view.getUint32(80, true)
+  const index = new Map<string, number>()
+  const verts: string[] = []
+  const tris: string[] = []
+  const bbox = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity }
+  const ids = [0, 0, 0]
+
+  for (let i = 0; i < count; i++) {
+    const base = 84 + i * 50 + 12
+    for (let k = 0; k < 3; k++) {
+      const x = view.getFloat32(base + k * 12, true)
+      const y = view.getFloat32(base + k * 12 + 4, true)
+      const z = view.getFloat32(base + k * 12 + 8, true)
+      const key = `${fmt(x)} ${fmt(y)} ${fmt(z)}`
+      let id = index.get(key)
+      if (id === undefined) {
+        id = index.size
+        index.set(key, id)
+        verts.push(`<vertex x="${fmt(x)}" y="${fmt(y)}" z="${fmt(z)}"/>`)
+        if (x < bbox.minX) bbox.minX = x
+        if (x > bbox.maxX) bbox.maxX = x
+        if (y < bbox.minY) bbox.minY = y
+        if (y > bbox.maxY) bbox.maxY = y
+        if (z < bbox.minZ) bbox.minZ = z
+        if (z > bbox.maxZ) bbox.maxZ = z
+      }
+      ids[k] = id
+    }
+    // skip degenerate triangles (3MF validators reject repeated indices)
+    if (ids[0] !== ids[1] && ids[1] !== ids[2] && ids[0] !== ids[2]) {
+      tris.push(`<triangle v1="${ids[0]}" v2="${ids[1]}" v3="${ids[2]}"/>`)
+    }
+  }
+  return { vertices: verts.join(''), triangles: tris.join(''), bbox }
+}
+
+function fmt(n: number): string {
+  return Number(n.toFixed(4)).toString()
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c]!)
+}
