@@ -79,9 +79,25 @@ async function render({ id, code, defines }: RenderRequest): Promise<void> {
 }
 
 function pickError(stderr: string[]): string | undefined {
-  const lines = stderr.filter((l) => /ERROR|WARNING.*(undefined|exceed)|Parser error|Compile error/i.test(l))
-  if (lines.length === 0) return undefined
-  return lines.slice(0, 6).join('\n')
+  if (stderr.length === 0) return undefined
+  // Surface real fatals first (in source order), then the most useful warnings.
+  // The old narrow filter missed the most common non-syntax fatals — Manifold's
+  // "empty geometry" / "not 2-manifold" / "CSG normalization" phrasings and
+  // assertions — and, by taking the first 6 matches, dropped the aborting ERROR
+  // when warnings preceded it. ERRORs go first so the repair turn sees the cause.
+  const isError = (l: string) =>
+    /\bERROR\b|Parser error|Compile error|assert|2-manifold|CSG normalization|top level object is empty|object may not be|unable to convert/i.test(l)
+  const isUsefulWarning = (l: string) =>
+    /\bWARNING\b/i.test(l) && /ignored|unknown|undefined|not defined|exceed|deprecat/i.test(l)
+  const errors = stderr.filter(isError)
+  const warnings = stderr.filter(isUsefulWarning)
+  const picked = [...errors, ...warnings].slice(0, 8)
+  if (picked.length > 0) return picked.join('\n')
+  // nothing matched — return a bounded tail of the NON-BLANK raw stderr so the
+  // repair turn has real text to act on; if stderr is all blank lines, return
+  // undefined so the caller's informative exit-code fallback applies instead.
+  const tail = stderr.filter((l) => l.trim()).slice(-8)
+  return tail.length ? tail.join('\n') : undefined
 }
 
 self.onmessage = (event: MessageEvent<RenderRequest>) => {

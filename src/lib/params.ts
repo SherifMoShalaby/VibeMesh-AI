@@ -161,8 +161,11 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Extract the single ```scad fenced block from an assistant reply. */
-export function extractScadBlock(text: string): { code: string | null; prose: string } {
+/** Extract the single ```scad fenced block from an assistant reply.
+ *  `blockCount` lets callers enforce the "exactly ONE block" contract — on 0 or
+ *  >1 blocks the longest is still returned (graceful fallback), but the count
+ *  flags a contract violation worth a retry. */
+export function extractScadBlock(text: string): { code: string | null; prose: string; blockCount: number } {
   const re = /```(?:scad|openscad)?\s*\n([\s\S]*?)```/g
   let code: string | null = null
   let best = 0
@@ -172,6 +175,11 @@ export function extractScadBlock(text: string): { code: string | null; prose: st
       code = m[1].trim()
     }
   }
+  // Count only scad/openscad-TAGGED fences toward the "exactly one block" contract.
+  // Code extraction stays lenient (an untagged program is still adopted), but an
+  // untagged illustrative fence — a print-settings list, a dimension table — must
+  // NOT count as a second block and trip a spurious format retry.
+  const blockCount = (text.match(/```(?:scad|openscad)\s*\n/g) || []).length
   const prose = text.replace(re, '').replace(/\n{3,}/g, '\n\n').trim()
-  return { code, prose }
+  return { code, prose, blockCount }
 }

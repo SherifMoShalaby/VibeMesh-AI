@@ -1,7 +1,7 @@
 import type { ChatImage } from '../types'
 
 let viewportCanvas: HTMLCanvasElement | null = null
-let canonicalCapture: ((maxDim?: number) => ChatImage | null) | null = null
+let multiCapture: ((maxDim?: number) => ChatImage[]) | null = null
 
 /** Called once by the Viewport when the WebGL canvas is created. */
 export function registerViewportCanvas(canvas: HTMLCanvasElement): void {
@@ -9,12 +9,13 @@ export function registerViewportCanvas(canvas: HTMLCanvasElement): void {
 }
 
 /**
- * Registered by the Viewport: renders one frame from the canonical camera pose
- * (fixed iso angle, fitted to the model) and returns it — so successive refine
- * passes always compare the same viewpoint.
+ * Registered by the Viewport: renders the model from a few canonical FIXED poses
+ * (isometric, front, top), fitted to the model, and returns them in that order —
+ * so refine passes always compare the same viewpoints regardless of user orbiting,
+ * and the model can judge proportions/feature counts it can't see from one angle.
  */
-export function registerCanonicalCapture(fn: ((maxDim?: number) => ChatImage | null) | null): void {
-  canonicalCapture = fn
+export function registerMultiCapture(fn: ((maxDim?: number) => ChatImage[]) | null): void {
+  multiCapture = fn
 }
 
 export function canvasToChatImage(canvas: HTMLCanvasElement, maxDim = 896): ChatImage | null {
@@ -35,12 +36,20 @@ export function canvasToChatImage(canvas: HTMLCanvasElement, maxDim = 896): Chat
 }
 
 /**
- * Snapshot for the refine loop. Prefers the canonical fixed-pose render;
- * falls back to whatever is currently on screen.
+ * Snapshots for the refine loop — up to three canonical fixed-pose views.
+ * Falls back to whatever is currently on screen if the fixed poses are unavailable.
  */
+export function captureViews(maxDim = 896): ChatImage[] {
+  const views = multiCapture?.(maxDim)
+  if (views && views.length) return views
+  if (viewportCanvas) {
+    const single = canvasToChatImage(viewportCanvas, maxDim)
+    return single ? [single] : []
+  }
+  return []
+}
+
+/** Single canonical snapshot (the isometric view) — convenience for one-image callers. */
 export function captureViewport(maxDim = 896): ChatImage | null {
-  const canonical = canonicalCapture?.(maxDim)
-  if (canonical) return canonical
-  if (!viewportCanvas) return null
-  return canvasToChatImage(viewportCanvas, maxDim)
+  return captureViews(maxDim)[0] ?? null
 }

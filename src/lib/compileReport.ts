@@ -6,13 +6,20 @@ import type { ScadParameter } from '../types'
  * both feed the model the same grounded hints. (Phase 5 — render-grounded feedback.)
  */
 export function buildAutoFixPrompt(compileError: string): string {
-  const hullHint = /CGAL|applyHull|hull/i.test(compileError)
-    ? '\n\nNote: this renderer uses an older CGAL build that is fragile with hull(). Rewrite the model WITHOUT hull() — use explicit primitives instead (cylinders at corners, linear_extrude of offset() 2D profiles, rotate_extrude).'
+  // The renderer is the Manifold backend — most "no geometry" failures are
+  // non-manifold INPUT (coincident faces, zero-thickness walls, exact-touching
+  // booleans), NOT hull(). Never tell the model to delete hull(): it is the
+  // idiomatic way to make rounded forms and is fast here.
+  const manifoldHint = /manifold|empty|CSG|normalization|not closed|self-intersect/i.test(compileError)
+    ? '\n\nNote: the renderer needs manifold input. Make every boolean overlap by 0.01–0.1mm and extend each cutter ≥0.5mm past the surfaces it cuts; avoid coincident or zero-thickness faces and keep walls ≥1.2mm. Keep hull() and rounded primitives — do not remove them.'
+    : ''
+  const minkowskiHint = /minkowski/i.test(compileError)
+    ? '\n\nNote: minkowski() forces a slow fallback backend and can fail on complex shapes — replace it with explicit rounded primitives (hull() of corner cylinders, or linear_extrude of an offset() 2D profile).'
     : ''
   const timeoutHint = /timed out/i.test(compileError)
-    ? '\n\nNote: the model is too computationally heavy. Reduce boolean count (fewer flutes/ribs, simpler cutters) while keeping the overall design.'
+    ? '\n\nNote: the model was too heavy to render in time. Reduce the heaviest constructs (any minkowski(), very large hull/boolean counts) while keeping the overall design.'
     : ''
-  return `The OpenSCAD code failed to render. Fix it and return the corrected complete program.\n\nError:\n${compileError}${hullHint}${timeoutHint}`
+  return `The OpenSCAD code failed to render. Fix it and return the corrected complete program.\n\nError:\n${compileError}${manifoldHint}${minkowskiHint}${timeoutHint}`
 }
 
 const MALE_RE = /(stud|peg|pin|dowel|tenon|tongue|boss|lug|male|shaft|axle)/i

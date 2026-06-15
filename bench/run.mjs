@@ -22,6 +22,9 @@ const RENDER_TIMEOUT = 90_000
 
 const ENGINE_FILTER = process.env.BENCH_ENGINES?.split(',').map((s) => s.trim()).filter(Boolean)
 const TASK_FILTER = process.env.BENCH_TASKS?.split(',').map((s) => s.trim()).filter(Boolean)
+// BENCH_SAMPLES=k runs each task k times and aggregates (median quality scores,
+// compiledRate) — so the gate can trust tight tolerances despite a non-deterministic API.
+const SAMPLES = Math.max(1, Number(process.env.BENCH_SAMPLES) || 1)
 
 const visionImage = fs.readFileSync(path.join(ROOT, 'vision-sketch.png')).toString('base64')
 
@@ -85,6 +88,26 @@ const TASKS = [
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true },
     bed: [220, 220, 250],
     expect: { partEnumMin: 4 },
+  },
+  {
+    // curved/organic coverage — exercises the richness fix (fillets, rounded forms).
+    // Geometry is prompt-determined, so it gets a gold reference (bench/gold/T8-knob.scad).
+    id: 'T8-knob',
+    kind: 'fresh',
+    prompt:
+      'A cylindrical control knob, 30mm outer diameter and 18mm tall, with a rounded (filleted) top edge of about 4mm radius, and a 6mm diameter blind bore 12mm deep in the center of the underside for a shaft.',
+    expect: { bbox: [30, 30, 18], tol: 1.5 },
+  },
+  {
+    // press-fit coverage — exercises the numeric clearance assertion in buildability.
+    id: 'T9-pressfit',
+    kind: 'fresh',
+    kit: true,
+    prompt:
+      'A two-part press-fit alignment set I can print and assemble: a pin and a matching bushing the pin presses into. Give me the parts so they actually fit together with a real press-fit clearance.',
+    context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true },
+    bed: [220, 220, 250],
+    expect: { partEnumMin: 2 },
   },
 ]
 
@@ -233,15 +256,40 @@ function countParams(code) {
 
 /* ── scoring helpers ── */
 
+const round2 = (n) => Math.round(n * 100) / 100
+
+/** Placement score for single-part tasks: 1 when the part sits on z=0, stepped
+ *  down as it sinks below / floats above the bed. (Kits use buildability.printsFlat.) */
+function placementScore(minZ) {
+  if (typeof minZ !== 'number' || !Number.isFinite(minZ)) return null
+  const off = Math.abs(minZ)
+  if (off <= 0.5) return 1
+  if (off <= 2) return 0.5
+  return 0
+}
+
 function checkExpectations(task, code, metrics) {
   const notes = []
   let dimScore = null
   const e = task.expect ?? {}
   if (e.bbox && metrics) {
-    const diffs = e.bbox.map((d, i) => Math.abs(metrics.size[i] - d))
-    const worst = Math.max(...diffs)
-    dimScore = worst <= e.tol ? 1 : worst <= e.tol * 3 ? 0.5 : 0
-    notes.push(`bbox ${metrics.size.join('×')} vs expected ${e.bbox.join('×')} (worst off by ${worst.toFixed(2)}mm)`)
+    // continuous, per-axis, magnitude-relative: full credit within the absolute
+    // tolerance, linear falloff out to a 50%-off cliff (any axis >50% off → 0).
+    let catastrophic = false
+    const axisScores = e.bbox.map((d, i) => {
+      const err = Math.abs(metrics.size[i] - d)
+      const rel = d !== 0 ? err / Math.abs(d) : err <= e.tol ? 0 : 1
+      if (rel > 0.5) {
+        catastrophic = true
+        return 0
+      }
+      if (err <= e.tol) return 1
+      const relTol = d !== 0 ? e.tol / Math.abs(d) : 0
+      return Math.max(0, 1 - (rel - relTol) / Math.max(1e-6, 0.5 - relTol))
+    })
+    dimScore = catastrophic ? 0 : round2(axisScores.reduce((a, b) => a + b, 0) / axisScores.length)
+    const worst = Math.max(...e.bbox.map((d, i) => Math.abs(metrics.size[i] - d)))
+    notes.push(`bbox ${metrics.size.join('×')} vs expected ${e.bbox.join('×')} (worst off by ${worst.toFixed(2)}mm, dimScore ${dimScore})`)
   }
   if (e.bboxMin && metrics) {
     const ok = e.bboxMin.every((d, i) => metrics.size[i] >= d)
@@ -263,6 +311,132 @@ function checkExpectations(task, code, metrics) {
 }
 
 /* ── main ── */
+
+const median = (nums) => {
+  const a = nums.filter((n) => typeof n === 'number' && Number.isFinite(n)).sort((x, y) => x - y)
+  if (!a.length) return null
+  const m = Math.floor(a.length / 2)
+  return a.length % 2 ? a[m] : round2((a[m - 1] + a[m]) / 2)
+}
+
+/** One generate + compile + score sample. Returns the results row (incl. error
+ *  rows). Writes the .scad artifact and updates `history` (last sample wins). */
+async function runTask(engine, task, messages, dir, history, label) {
+  console.log(`[bench] ${label} — generating…`)
+  const gen = await generate(engine, messages, task.context)
+  if (gen.error) {
+    console.log(`[bench] ${label} — GEN FAILED: ${gen.error}`)
+    return { task: task.id, genMs: gen.genMs, error: gen.error }
+  }
+  const code = extractScad(gen.text)
+  if (!code) {
+    console.log(`[bench] ${label} — NO CODE BLOCK in reply (${gen.text.length} chars)`)
+    return { task: task.id, genMs: gen.genMs, error: 'no scad code block in reply', replyChars: gen.text.length }
+  }
+  fs.writeFileSync(path.join(dir, `${task.id}.scad`), code)
+  if (task.kind === 'fresh') history[task.id] = { prompt: task.prompt, replyText: gen.text }
+
+  const compiled = await compileScad(code)
+  const metrics = compiled.ok ? stlMetrics(compiled.stl) : null
+  const params = countParams(code)
+  const checks = checkExpectations(task, code, metrics)
+
+  // geometric similarity vs gold reference (tasks with bench/gold/<id>.scad)
+  let gold = null
+  if (compiled.ok) {
+    try {
+      gold = await scoreAgainstGold(task.id, compiled.stl)
+    } catch (err) {
+      gold = { error: String(err) }
+    }
+  }
+
+  // buildability: recompile each part-enum piece (-D part="…") and score kit structure
+  let buildability
+  if (task.kit) {
+    const partEnum = extractPartEnum(code)
+    const pieces = []
+    for (const piece of partEnum.pieces) {
+      const r = await compileScad(code, ['-D', `part="${piece}"`])
+      const m = r.ok ? stlMetrics(r.stl) : null
+      pieces.push({ piece, ok: r.ok, size: m?.size, minZ: m?.minZ, error: r.ok ? undefined : r.error })
+    }
+    buildability = scoreBuildability(code, partEnum, pieces, task.bed ?? [220, 220, 250])
+    buildability.pieces = pieces.map(({ piece, ok, size, minZ }) => ({ piece, ok, size, minZ }))
+  }
+
+  // over-split regression guard: a NON-kit task should not produce a multi-piece kit
+  let overSplit = false
+  if (!task.kit) {
+    const pe = extractPartEnum(code)
+    overSplit = pe.found && pe.pieces.length >= 2
+    if (overSplit) checks.notes.push(`OVER-SPLIT: non-kit task produced a ${pe.pieces.length}-piece part enum`)
+  }
+
+  // advisory LLM-judge (gated on ANTHROPIC_API_KEY + BENCH_JUDGE=1) — never gates pass/fail
+  const judge = await judgeModel({ prompt: task.prompt ?? '(custom)', code })
+
+  const row = {
+    task: task.id,
+    genMs: gen.genMs,
+    renderMs: compiled.renderMs,
+    compiled: compiled.ok,
+    compileError: compiled.ok ? undefined : compiled.error,
+    size: metrics?.size,
+    minZ: metrics?.minZ,
+    triangles: metrics?.triangles,
+    params,
+    dimScore: checks.dimScore,
+    // placement (single-part only): does the rendered part sit flat on z=0?
+    // invisible to dimScore/IoU today — a part sunk 4.8mm scores a perfect 1.
+    placementScore: task.kit ? undefined : (metrics ? placementScore(metrics.minZ) : undefined),
+    gold: gold ?? undefined,
+    buildability: buildability ?? undefined,
+    overSplit: overSplit || undefined,
+    judge: judge ?? undefined,
+    notes: checks.notes,
+    codeLines: code.split('\n').length,
+  }
+  const goldNote = gold ? (gold.error ? ', gold=ERR' : `, IoU=${gold.iou}`) : ''
+  const kitNote = buildability ? `, kit=${buildability.score}${buildability.hardFail ? ' (HARD FAIL)' : ''} [${(buildability.pieces ?? []).length}pc]` : ''
+  const judgeNote = judge && !judge.error ? `, judge=${judge.score}` : ''
+  console.log(`[bench] ${label} — gen ${Math.round(gen.genMs / 1000)}s, compiled=${compiled.ok}, size=${metrics?.size?.join('×') ?? '—'}, params=${params.count}${goldNote}${kitNote}${judgeNote}`)
+  return row
+}
+
+/** Aggregate k samples of one task into a single row: median quality scores,
+ *  compiledRate, and a representative (last compiled) sample for code-derived
+ *  fields. A k=1 run is byte-identical to runTask's row (no aggregation). */
+function aggregateRows(task, rows, k) {
+  const rep = [...rows].reverse().find((r) => r.compiled) ?? rows[rows.length - 1]
+  const okRows = rows.filter((r) => r.compiled)
+  const compiledRate = round2(okRows.length / rows.length)
+  const ious = okRows.map((r) => (r.gold && !r.gold.error ? r.gold.iou : null)).filter((n) => typeof n === 'number')
+  const dimScores = rows.map((r) => r.dimScore).filter((n) => typeof n === 'number')
+  const placements = rows.map((r) => r.placementScore).filter((n) => typeof n === 'number')
+  const buildScores = rows.map((r) => r.buildability?.score).filter((n) => typeof n === 'number')
+  return {
+    task: task.id,
+    samples: k,
+    compiledRate,
+    genMs: median(rows.map((r) => r.genMs)),
+    renderMs: median(okRows.map((r) => r.renderMs)),
+    compiled: compiledRate >= 0.5, // majority — the gate treats compiled as categorical
+    compileError: rep.compiled ? undefined : rep.compileError,
+    size: rep.size,
+    minZ: rep.minZ,
+    triangles: rep.triangles,
+    params: rep.params,
+    dimScore: dimScores.length ? median(dimScores) : rep.dimScore ?? null,
+    placementScore: task.kit ? undefined : placements.length ? median(placements) : rep.placementScore,
+    gold: ious.length ? { iou: median(ious), samples: ious.length } : rep.gold,
+    buildability: buildScores.length ? { ...rep.buildability, score: median(buildScores) } : rep.buildability,
+    overSplit: rows.some((r) => r.overSplit) || undefined,
+    judge: rep.judge,
+    notes: rep.notes,
+    codeLines: rep.codeLines,
+  }
+}
 
 async function runEngine(engine) {
   const dir = path.join(ROOT, 'results', engine.replace(/[^\w.-]+/g, '_'))
@@ -301,84 +475,17 @@ async function runEngine(engine) {
       messages = [{ role: 'user', content: task.prompt }]
     }
 
-    console.log(`[bench] ${label} — generating…`)
-    const gen = await generate(engine, messages, task.context)
-    if (gen.error) {
-      console.log(`[bench] ${label} — GEN FAILED: ${gen.error}`)
-      results.push({ task: task.id, genMs: gen.genMs, error: gen.error })
-      continue
-    }
-    const code = extractScad(gen.text)
-    if (!code) {
-      console.log(`[bench] ${label} — NO CODE BLOCK in reply (${gen.text.length} chars)`)
-      results.push({ task: task.id, genMs: gen.genMs, error: 'no scad code block in reply', replyChars: gen.text.length })
-      continue
-    }
-    fs.writeFileSync(path.join(dir, `${task.id}.scad`), code)
-    if (task.kind === 'fresh') history[task.id] = { prompt: task.prompt, replyText: gen.text }
-
-    const compiled = await compileScad(code)
-    const metrics = compiled.ok ? stlMetrics(compiled.stl) : null
-    const params = countParams(code)
-    const checks = checkExpectations(task, code, metrics)
-
-    // geometric similarity vs gold reference (tasks with bench/gold/<id>.scad)
-    let gold = null
-    if (compiled.ok) {
-      try {
-        gold = await scoreAgainstGold(task.id, compiled.stl)
-      } catch (err) {
-        gold = { error: String(err) }
+    if (SAMPLES === 1) {
+      results.push(await runTask(engine, task, messages, dir, history, label))
+    } else {
+      const rows = []
+      for (let s = 0; s < SAMPLES; s++) {
+        rows.push(await runTask(engine, task, messages, dir, history, `${label} [${s + 1}/${SAMPLES}]`))
       }
+      const agg = aggregateRows(task, rows, SAMPLES)
+      results.push(agg)
+      console.log(`[bench] ${label} — aggregated ×${SAMPLES}: compiledRate=${agg.compiledRate}, dim=${agg.dimScore}, IoU=${agg.gold?.iou ?? '—'}, kit=${agg.buildability?.score ?? '—'}`)
     }
-
-    // buildability: recompile each part-enum piece (-D part="…") and score kit structure
-    let buildability
-    if (task.kit) {
-      const partEnum = extractPartEnum(code)
-      const pieces = []
-      for (const piece of partEnum.pieces) {
-        const r = await compileScad(code, ['-D', `part="${piece}"`])
-        const m = r.ok ? stlMetrics(r.stl) : null
-        pieces.push({ piece, ok: r.ok, size: m?.size, minZ: m?.minZ, error: r.ok ? undefined : r.error })
-      }
-      buildability = scoreBuildability(code, partEnum, pieces, task.bed ?? [220, 220, 250])
-      buildability.pieces = pieces.map(({ piece, ok, size, minZ }) => ({ piece, ok, size, minZ }))
-    }
-
-    // over-split regression guard: a NON-kit task should not produce a multi-piece kit
-    let overSplit = false
-    if (!task.kit) {
-      const pe = extractPartEnum(code)
-      overSplit = pe.found && pe.pieces.length >= 2
-      if (overSplit) checks.notes.push(`OVER-SPLIT: non-kit task produced a ${pe.pieces.length}-piece part enum`)
-    }
-
-    // advisory LLM-judge (gated on ANTHROPIC_API_KEY + BENCH_JUDGE=1) — never gates pass/fail
-    const judge = await judgeModel({ prompt: task.prompt ?? '(custom)', code })
-
-    const row = {
-      task: task.id,
-      genMs: gen.genMs,
-      renderMs: compiled.renderMs,
-      compiled: compiled.ok,
-      compileError: compiled.ok ? undefined : compiled.error,
-      size: metrics?.size,
-      minZ: metrics?.minZ,
-      triangles: metrics?.triangles,
-      params,
-      dimScore: checks.dimScore,
-      gold: gold ?? undefined,
-      buildability: buildability ?? undefined,
-      overSplit: overSplit || undefined,
-      judge: judge ?? undefined,
-      notes: checks.notes,
-      codeLines: code.split('\n').length,
-    }
-    results.push(row)
-    const goldNote = gold ? (gold.error ? ', gold=ERR' : `, IoU=${gold.iou}`) : ''
-    const kitNote = buildability ? `, kit=${buildability.score}${buildability.hardFail ? ' (HARD FAIL)' : ''} [${(buildability.pieces ?? []).length}pc]` : ''
-    console.log(`[bench] ${label} — gen ${Math.round(gen.genMs / 1000)}s, compiled=${compiled.ok}, size=${metrics?.size?.join('×') ?? '—'}, params=${params.count}${goldNote}${kitNote}`)
   }
   return { engine, results }
 }

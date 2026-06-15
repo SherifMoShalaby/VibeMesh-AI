@@ -183,6 +183,8 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
 
   const hasPlates = params.some((p) => p.name === 'part' && p.kind === 'enum')
   const qualityLabel = QUALITY_PRESETS.find((q) => q.id === quality)?.label ?? 'Standard'
+  // below Fine, exports offer/auto a Fine re-render; Fine/Ultra previews export as-is
+  const belowFine = quality !== 'fine' && quality !== 'ultra'
 
   const run = (fn: () => void | Promise<unknown>) => () => {
     setOpen(false)
@@ -224,7 +226,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
             <span className="mi-icon"><DBox /></span>
             <span className="mi-text">
               <span className="mi-title">STL <span className="ext">.stl</span></span>
-              <span className="mi-sub">Universal mesh — exactly what you see now</span>
+              <span className="mi-sub">Universal mesh{belowFine ? ' — offers a Fine re-render for printing' : ''}</span>
             </span>
             <span className="mi-check"><DArrowRight /></span>
           </button>
@@ -252,7 +254,9 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
             <span className="mi-check"><DArrowRight /></span>
           </button>
           <div className="menu-sep" />
-          <div className="menu-note">Files use the current quality: {qualityLabel}</div>
+          <div className="menu-note">
+            {belowFine ? `Export can re-render curves at Fine — preview is ${qualityLabel}.` : `Exported at ${qualityLabel} quality.`}
+          </div>
         </div>
       )}
     </div>

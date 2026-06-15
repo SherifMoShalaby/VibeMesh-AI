@@ -7,7 +7,7 @@ import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
-import { canvasToChatImage, registerCanonicalCapture, registerViewportCanvas } from '../lib/capture'
+import { canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
 import EmptyState from './EmptyState'
 import { CustomBedDialog } from './Dialogs'
 import {
@@ -736,9 +736,10 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
 }
 
 /**
- * Registers the canonical refine snapshot: a fixed iso pose (azimuth -45°,
- * elevation ~30°) fitted to the model, so successive refine passes always
- * compare from the SAME viewpoint regardless of how the user orbited.
+ * Registers the refine snapshots: three fixed poses (isometric, front, top)
+ * fitted to the model, so refine passes always compare from the SAME viewpoints
+ * regardless of how the user orbited — and the model sees angles a single iso
+ * view hides (true proportions, hole/feature counts on each face).
  */
 function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
   const gl = useThree((s) => s.gl)
@@ -746,23 +747,35 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
   const camera = useThree((s) => s.camera)
 
   useEffect(() => {
-    registerCanonicalCapture((maxDim = 896) => {
-      if (!hasModel || !tbox) return null
+    registerMultiCapture((maxDim = 896) => {
+      if (!hasModel || !tbox) return []
       const prevPos = camera.position.clone()
       const prevQuat = camera.quaternion.clone()
+      const prevUp = camera.up.clone()
       const radius = Math.max(tbox.size.x, tbox.size.y, tbox.size.z, 20)
       const dist = radius * 2.2
       const target = new THREE.Vector3(tbox.center.x, tbox.center.y, tbox.box.min.z + tbox.size.z / 2)
-      camera.position.set(tbox.center.x + dist * 0.707, tbox.center.y - dist * 0.707, target.z + dist * 0.577)
-      camera.lookAt(target)
-      gl.render(scene, camera)
-      const image = canvasToChatImage(gl.domElement, maxDim)
+      const zUp = new THREE.Vector3(0, 0, 1)
+      const shoot = (pos: THREE.Vector3, up: THREE.Vector3) => {
+        camera.up.copy(up)
+        camera.position.copy(pos)
+        camera.lookAt(target)
+        gl.render(scene, camera)
+        return canvasToChatImage(gl.domElement, maxDim)
+      }
+      // isometric, front (down -Y), top (down -Z, Y-up to avoid gimbal lock)
+      const views = [
+        shoot(new THREE.Vector3(target.x + dist * 0.707, target.y - dist * 0.707, target.z + dist * 0.577), zUp),
+        shoot(new THREE.Vector3(target.x, target.y - dist, target.z), zUp),
+        shoot(new THREE.Vector3(target.x, target.y, target.z + dist), new THREE.Vector3(0, 1, 0)),
+      ].filter((v): v is NonNullable<typeof v> => v !== null)
+      camera.up.copy(prevUp)
       camera.position.copy(prevPos)
       camera.quaternion.copy(prevQuat)
       gl.render(scene, camera)
-      return image
+      return views
     })
-    return () => registerCanonicalCapture(null)
+    return () => registerMultiCapture(null)
   }, [tbox, hasModel, gl, scene, camera])
 
   return null
