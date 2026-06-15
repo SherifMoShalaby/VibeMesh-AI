@@ -12,8 +12,9 @@ One page. The contract for the four surfaces; anything not specified here is und
 
 ## 2. Refine against reference (⇄)
 - Visible only when ALL hold: a successful render exists (latest code compiled — never stale geometry), the chat contains at least one user image, an engine with vision is selected, and no generation is running.
-- One click sends: (a) a snapshot rendered from the **canonical fixed pose** (iso azimuth −45°, elevation ~30°, fitted to model — independent of user orbiting), (b) the **measured bbox in mm** as an absolute scale anchor, (c) an instruction to list discrepancies first, then return the complete corrected program.
-- Appears in chat as a `REFINE PASS` action chip with the snapshot.
+- One click sends: (a) up to **three** snapshots from **canonical fixed poses** (isometric, front, top — fitted to model, independent of user orbiting), (b) the **measured bbox in mm** as an absolute scale anchor, (c) an instruction to list discrepancies first, then return the complete corrected program. The prompt makes the DISCREPANCY LIST **non-skippable** — even on a close match the model names the nearest residual differences before correcting. If the viewport can't be captured, the failure is surfaced (composer note), never silent.
+- Appears in chat as a `REFINE PASS` action chip with the snapshots.
+- **Auto-fires once** after the first image-grounded model renders (vision engine, non-local, auto-repair on) — at most one automatic pass per project; the user can still trigger more manually.
 - Convergence expectation: features converge in 1–3 passes; dimensions require the scale anchor; passes are probabilistic — every code version remains restorable (below).
 
 ## 3. Versioning / rollback
@@ -25,19 +26,21 @@ One page. The contract for the four surfaces; anything not specified here is und
 - `⚒ ASK AI TO SPLIT INTO PARTS` shows whenever the *currently viewed* geometry exceeds the bed (including an already-split piece that is still too big — asks to split further), except in assembly preview.
 - All exports live behind ONE primary **⬇ Export** button → menu with explained choices:
   `.3mf — recommended` · `.stl` · `Parts as separate .stl files` (multi-part only) · `.scad source`;
-  the menu footer names the quality the files will use. `.scad` is also downloadable from the Code tab.
-- "Parts as separate .stl files" compiles each piece at the current quality (timeout → one Draft retry) and downloads `<project>-<part>.stl` each. **Partial success is loud**: an alert + HUD note name the failed parts; silent skips are a bug.
+  the menu footer notes that exports sharpen curves to at least Fine. `.scad` is also downloadable from the Code tab.
+- "Parts as separate .stl files" compiles each piece at **at least Fine** quality (Ultra preview → Ultra; per-piece timeout → one Draft retry) and downloads `<project>-<part>.stl` each. **Partial success is loud**: an alert + HUD note name the failed parts; silent skips are a bug.
 - `.3mf` builds ONE `.3mf` for Bambu Studio / PrusaSlicer / Orca:
   every part is a named object, parts are arranged side-by-side with 10mm gaps at z=0
-  (slicer-ready plate), vertices deduplicated, millimeter units, degenerate triangles dropped.
-  Single-piece designs export one object with the viewport placement baked. Same per-part
-  compile rules (quality, Draft retry, loud partial failure) as STL × PARTS.
+  (slicer-ready plate), vertices deduplicated (key snapped to a 0.001mm weld grid;
+  written coords keep full precision), millimeter units, degenerate triangles dropped.
+  Single-piece designs export one object with the viewport placement baked and NO re-arrange
+  (so the `.3mf` agrees with the `.stl` path); below Fine they offer a Fine re-render first.
+  Multi-part `.3mf` uses the same per-piece rules (at least Fine, Draft retry, loud partial failure) as STL × PARTS.
 - Param-value persistence: a slider value survives APPLY & RENDER only if the code's written default for that name is unchanged; if the new code changes the default, the code wins.
 
 ## 5. Surface quality
-- Presets: Draft ($fa12/$fs2) · Standard (6/0.8) · Fine (3/0.4) · Ultra (1.5/0.25), applied as `-D '$fn=0' -D $fa -D $fs`; per-call `$fn` in code is design intent and is preserved.
-- Render timeout (90s) at >Draft auto-retries at Draft with a visible amber note.
-- `⬇ EXPORT .STL` exports what you see — except when preview is Draft or was auto-degraded: then it offers a Fine re-render first (decline = export as-is). ALL PARTS notes Draft-degraded pieces.
+- Presets: Draft ($fa12/$fs2) · Standard (4/0.8) · Fine (3/0.4) · Ultra (1.5/0.25), applied as `-D '$fn=0' -D $fa -D $fs`; per-call `$fn` in code is design intent and is preserved.
+- Render watchdog is per-call: interactive renders ~60s, the Draft fallback retry ~20s (so a heavy model fails fast — not 90s+90s), deliberate exports 90s. A >Draft timeout auto-retries at Draft with a visible amber note.
+- `⬇ EXPORT .STL` exports what you see — but anything below Fine (incl. the default Standard preview, or an auto-degraded render) offers a Fine re-render first (decline = export as-is); Fine/Ultra previews export directly. ALL PARTS notes Draft-degraded pieces.
 
 ## 6. Safety (prompt-enforced)
 - Printing advice must carry caveats for load-bearing (layer orientation), food-contact (not food-safe by default), heat, and child-related parts.

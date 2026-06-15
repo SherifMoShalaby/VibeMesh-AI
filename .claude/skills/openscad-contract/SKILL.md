@@ -35,9 +35,9 @@ Parameter changes re-render via OpenSCAD `-D name=value` defines (no AI round-tr
 - **Flat on the bed**: each printable piece sits flat on the XY plane (z=0) in its best print orientation, roughly centered on the origin.
 - **Units are millimeters**, always.
 - **Minimum wall thickness 1.2 mm**; minimum feature size 0.8 mm.
-- **No global `$fn`.** The app owns global curve resolution via the `$fa`/`$fs` quality presets (Draft/Standard/Fine/Ultra), injected as `-D` defines at render time. A global `$fn` in generated code overrides the preset and breaks quality control. **Per-call `$fn` is intentionally allowed** when segment count is design intent — e.g. `$fn = 6` for hex sockets, `$fn = 3` for triangular features, `$fn = 24` on connector studs. Keep this distinction precise in any prompt edit.
+- **No global `$fn`, and no `$fn` on round features.** The app owns curve resolution via the `$fa`/`$fs` quality presets (Draft/Standard/Fine/Ultra), injected as `-D` defines at render time. A global `$fn` — or a per-call `$fn` on an ordinary round feature (hole, bore, fillet, post, stud) — overrides the preset and silently disables the quality slider on that geometry. So round features get **no `$fn`** (left to the presets), and no `$fn`/segments/resolution parameter is ever exposed. **Per-call `$fn` is allowed ONLY when the polygon count IS the geometry** — e.g. `$fn = 6` for a hex socket, `$fn = 3` for a triangular feature — never as a resolution knob. Keep this distinction precise in any prompt edit.
 - **No `import`, `surface`, `text()`, or external libraries** (no BOSL/MCAD) — no font/asset files exist in the wasm environment. Plain OpenSCAD built-ins only.
-- Prefer self-supporting geometry (45° chamfers over overhangs; teardrop/hex horizontal holes). Avoid `minkowski()` on complex shapes and huge `hull()` chains — slow renders are failed models.
+- Prefer self-supporting geometry (45° chamfers over overhangs; teardrop/hex horizontal holes). The renderer is the fast **Manifold** backend, so don't impoverish models to save render time — add the fillets/chamfers and real feature counts the design needs. Only `minkowski()` (forces a slow fallback) and pathological hundreds-of-booleans/hulls models risk the render budget; the app caps render time and falls back if one does.
 
 ## Mandatory safety caveats
 
