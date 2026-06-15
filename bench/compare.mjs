@@ -32,7 +32,7 @@ export async function compileScad(code) {
     const inst = o.getInstance()
     inst.FS.writeFile('/in.scad', code)
     try {
-      inst.callMain(['/in.scad', '-o', '/out.stl', '--export-format=binstl'])
+      inst.callMain(['/in.scad', '-o', '/out.stl', '--export-format=binstl', '--backend=Manifold'])
     } catch {
       /* abnormal exit — check for output anyway */
     }

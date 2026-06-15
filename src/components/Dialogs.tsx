@@ -34,11 +34,13 @@ export function ConfirmDialog({
 }) {
   useEscape(onCancel)
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="scrim" onClick={onCancel}>
       <div className="modal modal-sm" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">{title}</span>
-          <button className="icon-btn" onClick={onCancel} aria-label="Close">
+          <div className="mh-text">
+            <h2>{title}</h2>
+          </div>
+          <button className="icon-btn-sm" onClick={onCancel} aria-label="Close">
             <IconX />
           </button>
         </div>
@@ -46,10 +48,10 @@ export function ConfirmDialog({
           <p className="dialog-body">{body}</p>
         </div>
         <div className="modal-foot dialog-foot">
-          <button className="btn ghost" onClick={onCancel}>
+          <button className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>
-          <button className={`btn ${danger ? 'stop' : 'primary'}`} onClick={onConfirm} autoFocus>
+          <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm} autoFocus>
             {confirmLabel}
           </button>
         </div>
@@ -81,11 +83,13 @@ export function CustomBedDialog({
   }
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="scrim" onClick={onCancel}>
       <div className="modal modal-sm" role="dialog" aria-modal="true" aria-label="Custom bed size" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">Custom bed size</span>
-          <button className="icon-btn" onClick={onCancel} aria-label="Close">
+          <div className="mh-text">
+            <h2>Custom bed size</h2>
+          </div>
+          <button className="icon-btn-sm" onClick={onCancel} aria-label="Close">
             <IconX />
           </button>
         </div>
@@ -108,10 +112,10 @@ export function CustomBedDialog({
           {!valid && <p className="dialog-note">Each side must be between 10 and 2000&nbsp;mm.</p>}
         </div>
         <div className="modal-foot dialog-foot">
-          <button className="btn ghost" onClick={onCancel}>
+          <button className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn primary" onClick={save} disabled={!valid}>
+          <button className="btn btn-primary" onClick={save} disabled={!valid}>
             Save bed
           </button>
         </div>

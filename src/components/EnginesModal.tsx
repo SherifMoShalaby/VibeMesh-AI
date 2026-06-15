@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { connectEngine, testEngine, type ProviderInfo } from '../lib/api'
-import { IconX, IconRefresh } from './icons'
+import { IconX, IconRefresh, DChip } from './icons'
 
 export default function EnginesModal() {
   const enginesOpen = useUi((s) => s.enginesOpen)
@@ -54,11 +54,15 @@ export default function EnginesModal() {
   }
 
   return (
-    <div className="modal-overlay" onClick={() => setEnginesOpen(false)}>
+    <div className="scrim" onClick={() => setEnginesOpen(false)}>
       <div className="modal" role="dialog" aria-modal="true" aria-label="AI engines" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">AI engines</span>
-          <button className="icon-btn" onClick={() => setEnginesOpen(false)} aria-label="Close">
+          <span className="mh-icon"><DChip /></span>
+          <div className="mh-text">
+            <h2>AI engines</h2>
+            <p>The assistant that designs parts for you.</p>
+          </div>
+          <button className="icon-btn-sm" onClick={() => setEnginesOpen(false)} aria-label="Close">
             <IconX />
           </button>
         </div>
@@ -75,7 +79,7 @@ export default function EnginesModal() {
 
         <div className="modal-foot">
           <span className="modal-hint">Keys are saved on this computer only — they never leave it.</span>
-          <button className="btn ghost" onClick={rescan} disabled={scanning}>
+          <button className="btn btn-ghost" onClick={rescan} disabled={scanning}>
             {scanning ? 'Looking…' : <><IconRefresh /> Look again</>}
           </button>
         </div>
@@ -90,7 +94,8 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
   const setEngine = useStore((s) => s.setEngine)
   const claudeModel = useStore((s) => s.claudeModel)
   const setClaudeModel = useStore((s) => s.setClaudeModel)
-  const health = useStore((s) => s.health)
+  const kimiModel = useStore((s) => s.kimiModel)
+  const setKimiModel = useStore((s) => s.setKimiModel)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
@@ -141,15 +146,15 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
         {isActive && <span className="engine-active-badge">In use</span>}
         <span className="engine-row-actions">
           {provider.available && !isActive && (
-            <button className="btn primary sm" onClick={() => setEngine(useTargetId)} title="Design with this engine">
+            <button className="btn btn-primary sm" onClick={() => setEngine(useTargetId)} title="Design with this engine">
               Use
             </button>
           )}
-          <button className="btn ghost sm" onClick={runTest} disabled={busy}>
+          <button className="btn btn-ghost sm" onClick={runTest} disabled={busy}>
             Test
           </button>
           {provider.available && provider.connect && (
-            <button className="btn ghost sm" onClick={disconnect} disabled={busy} title={`Clear ${provider.connect.envKey}`}>
+            <button className="btn btn-ghost sm" onClick={disconnect} disabled={busy} title={`Clear ${provider.connect.envKey}`}>
               Disconnect
             </button>
           )}
@@ -157,16 +162,18 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
       </div>
       <div className="engine-row-detail">{provider.detail}</div>
 
-      {provider.id === 'claude-code' &&
-        provider.available &&
+      {provider.available &&
+        (provider.id === 'claude-code' || provider.id === 'kimi') &&
+        (provider.models?.length ?? 0) > 0 &&
         (() => {
-          const models = health?.providers.find((p) => p.id === 'claude-code')?.models
-          if (!models) return null
+          const isKimi = provider.id === 'kimi'
+          const value = isKimi ? kimiModel : claudeModel
+          const onChange = isKimi ? setKimiModel : setClaudeModel
           return (
             <label className="engine-model-row">
               <span>Model</span>
-              <select aria-label="Claude model" value={claudeModel} onChange={(e) => setClaudeModel(e.target.value)}>
-                {models.map((m) => (
+              <select aria-label={`${provider.label} model`} value={value} onChange={(e) => onChange(e.target.value)}>
+                {provider.models!.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.label}
                   </option>
@@ -194,7 +201,7 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
               if (e.key === 'Enter') void save()
             }}
           />
-          <button className="btn primary sm" onClick={save} disabled={busy || !value.trim()}>
+          <button className="btn btn-primary sm" onClick={save} disabled={busy || !value.trim()}>
             {busy ? '…' : 'Connect'}
           </button>
           <a className="engine-link" href={provider.connect.url} target="_blank" rel="noreferrer">

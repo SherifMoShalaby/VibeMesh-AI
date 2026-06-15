@@ -69,6 +69,9 @@ export function stlBBox(buffer: ArrayBuffer): StlBBox | null {
 export function transformStl(buffer: ArrayBuffer, m: number[]): ArrayBuffer {
   const src = new DataView(buffer)
   const count = src.getUint32(80, true)
+  // guard a header count that exceeds the payload (mirrors stlBBox) so a malformed
+  // STL can't read past the buffer and throw mid-export
+  if (buffer.byteLength < 84 + count * 50) throw new Error('Malformed STL: triangle count exceeds buffer.')
   const out = buffer.slice(0)
   const dst = new DataView(out)
   const v: [number, number, number][] = [

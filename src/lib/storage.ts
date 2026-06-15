@@ -18,6 +18,16 @@ for (const suffix of ['projects.v1', 'activeProject.v1', 'engine.v1', 'claudeMod
   }
 }
 
+// One-time cleanup of orphaned keys from removed features (no longer read by
+// any code path). Best-effort; failures are harmless.
+for (const orphan of ['vibemesh.advanced.v1', 'vibescad.advanced.v1']) {
+  try {
+    localStorage.removeItem(orphan)
+  } catch {
+    /* storage unavailable — nothing to clean */
+  }
+}
+
 export function loadProjects(): Project[] {
   try {
     const raw = localStorage.getItem(KEY)

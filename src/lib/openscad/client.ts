@@ -50,8 +50,10 @@ class OpenScadEngine {
         this.finish(event.data)
       }
       this.worker.onerror = () => {
-        this.finish({ ok: false, error: 'OpenSCAD engine crashed — reloading it.' })
+        // respawn BEFORE finish() so a queued job gets a fresh worker, not the dead one
+        // (matches onTimeout's order; otherwise the next render stalls until the watchdog)
         this.respawn()
+        this.finish({ ok: false, error: 'OpenSCAD engine crashed — reloading it.' })
       }
     }
     return this.worker

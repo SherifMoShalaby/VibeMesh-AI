@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import type { BedSize, ChatMessage, CompileResult, ParamValue, ParamValues, Project, ScadParameter } from '../types'
 import { PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { buildDefines, extractScadBlock, parseParameters } from '../lib/params'
+import { buildAutoFixPrompt } from '../lib/compileReport'
+import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, type HealthInfo } from '../lib/api'
 import { loadActiveProjectId, loadProjects, newId, saveActiveProjectId, saveProjects } from '../lib/storage'
@@ -27,6 +29,8 @@ interface VibeState {
   projects: Project[]
   activeId: string | null
   health: HealthInfo | null
+  /** false until the first /api/health probe resolves; lets the UI tell "loading" from "no backend" */
+  healthLoaded: boolean
   engine: string | null
 
   code: string
@@ -39,6 +43,8 @@ interface VibeState {
   compileMs: number | null
   /** non-fatal render note, e.g. quality was degraded for a heavy model */
   compileNote: string | null
+  /** true when the last render auto-fell-back to Draft (drives the export-quality prompt) */
+  degradedToDraft: boolean
   /** measured bounding box of the last successful render */
   modelDims: StlBBox | null
   /** viewport arrangement: position + rotation (rad, XYZ order) applied to the mesh and baked into single-STL export */
@@ -96,12 +102,15 @@ interface VibeState {
   export3mf: (fileBase: string) => Promise<void>
   claudeModel: string
   setClaudeModel: (id: string) => void
+  kimiModel: string
+  setKimiModel: (id: string) => void
   refreshHealth: (providers?: HealthInfo['providers']) => Promise<void>
 }
 
 // legacy vibescad.* values are copied to these keys on startup (src/lib/storage.ts)
 const ENGINE_KEY = 'vibemesh.engine.v1'
 const CLAUDE_MODEL_KEY = 'vibemesh.claudeModel.v1'
+const KIMI_MODEL_KEY = 'vibemesh.kimiModel.v1'
 const QUALITY_KEY = 'vibemesh.quality.v1'
 const BED_KEY = 'vibemesh.bed.v1'
 const CUSTOM_BED_KEY = 'vibemesh.customBed.v1'
@@ -152,8 +161,28 @@ function composeMatrix(p: [number, number, number], r: [number, number, number])
   return [m00, m10, m20, 0, m01, m11, m21, 0, m02, m12, m22, 0, p[0], p[1], p[2], 1]
 }
 
+/** Does the prompt ask for a buildable KIT (→ reinforce multi-part + connector rules)?
+ *  Strong phrases only; deliberately ignores bare "part"/"lego" so singular requests
+ *  ("a replacement part", "a spare gear") are NOT over-split into kits. */
+function detectKitIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  return (
+    /\bkit\b|\bbuildable\b|\bmodular\b|\binterlock/.test(t) ||
+    /\b(snaps?|clips?)[\s-]?together\b/.test(t) ||
+    /\b(set|kit)\s+of\s+(parts|pieces)\b/.test(t) ||
+    /\bparts?\s+(that|which|to|so)\b/.test(t) ||
+    /\b(assemble|build)\b[^.?!]*\b(it|them|together)\b/.test(t)
+  )
+}
+
 let abortController: AbortController | null = null
 let paramTimer: ReturnType<typeof setTimeout> | null = null
+function clearParamTimer() {
+  if (paramTimer) {
+    clearTimeout(paramTimer)
+    paramTimer = null
+  }
+}
 
 export const useStore = create<VibeState>((set, get) => {
   /** persist projects + keep the active project record in sync */
@@ -173,7 +202,7 @@ export const useStore = create<VibeState>((set, get) => {
 
   async function compile(code: string, defines: string[]) {
     if (!code.trim()) {
-      set({ compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null })
+      set({ compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
       return
     }
     // results landing after a project switch must not touch state (stale-render race)
@@ -181,7 +210,7 @@ export const useStore = create<VibeState>((set, get) => {
     const stale = () => get().activeId !== projectAtStart
 
     // a re-render replaces the geometry — placement history would restore stale meshes
-    set({ compileStatus: 'compiling', compileError: null, compileNote: null, vpPast: [], vpFuture: [], modelRemoved: false })
+    set({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false })
     // adaptive curve quality: kill any global $fn, drive $fa/$fs from the preset.
     // Per-call $fn (hex sockets etc.) is untouched by these root-scope overrides.
     const preset = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
@@ -211,6 +240,7 @@ export const useStore = create<VibeState>((set, get) => {
         meshTransform: null, // fresh geometry → reset viewport arrangement
         compileError: null,
         compileNote: note,
+        degradedToDraft: note !== null,
         compileLog: result.log ?? null,
         compileMs: result.ms ?? null,
       }))
@@ -219,6 +249,7 @@ export const useStore = create<VibeState>((set, get) => {
         compileStatus: 'error',
         compileError: result.error ?? 'Unknown OpenSCAD error',
         compileNote: null,
+        degradedToDraft: false,
         compileLog: result.log ?? null,
         compileMs: result.ms ?? null,
       })
@@ -237,16 +268,19 @@ export const useStore = create<VibeState>((set, get) => {
     saveProjects(updated)
   }
 
-  function adoptCode(code: string) {
+  function adoptCode(code: string): Promise<void> {
     const params = parseParameters(code)
     const paramValues: ParamValues = {}
     for (const p of params) paramValues[p.name] = p.defaultValue
     set({ code, params, paramValues })
-    void compile(code, [])
+    return compile(code, [])
   }
 
+  /** one automatic render-error repair: error-only, off for weak local engines, capped */
+  const MAX_AUTO_FIX = 1
+
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
-  async function runGeneration(nameSource: { text: string; action?: string }) {
+  async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0) {
     set({ generating: true, streamText: '' })
     abortController = new AbortController()
     try {
@@ -257,8 +291,8 @@ export const useStore = create<VibeState>((set, get) => {
       const full = await streamGenerate(engine, messages, {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
         signal: abortController.signal,
-        model: engine === 'claude-code' ? get().claudeModel : undefined,
-        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label } },
+        model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
+        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
       })
       const { code, prose } = extractScadBlock(full)
       const isFirstModel = code !== null && !activeChat().some((m) => m.code)
@@ -281,7 +315,7 @@ export const useStore = create<VibeState>((set, get) => {
         ])
       }
       if (code) {
-        adoptCode(code)
+        await adoptCode(code)
         persist()
         // auto-name the project: prefer the user's words; for app-initiated
         // image-only sends use the AI's description instead of canned text
@@ -290,6 +324,23 @@ export const useStore = create<VibeState>((set, get) => {
           const source = nameSource.action && prose ? prose : nameSource.text
           const name = source.replace(/\s+/g, ' ').trim()
           persist({ name: name.length > 42 ? name.slice(0, 39) + '…' : name || 'Untitled part' })
+        }
+
+        // Phase 5: auto-repair a hard render error ONCE. Error-only (a clean render is
+        // never touched), gated off for weak local engines, capped — proven safe by the
+        // bench T5-fix task. The Auto-fix turn re-feeds the error so the model can correct it.
+        const eng = get().engine
+        if (
+          attempt < MAX_AUTO_FIX &&
+          useUi.getState().autoRepair &&
+          get().compileStatus === 'error' &&
+          get().compileError &&
+          eng &&
+          !eng.startsWith('local:')
+        ) {
+          const fixText = buildAutoFixPrompt(get().compileError!)
+          setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
+          await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1)
         }
       }
     } catch (err) {
@@ -307,8 +358,10 @@ export const useStore = create<VibeState>((set, get) => {
     projects: [],
     activeId: null,
     health: null,
+    healthLoaded: false,
     engine: null,
     claudeModel: localStorage.getItem(CLAUDE_MODEL_KEY) ?? 'default',
+    kimiModel: localStorage.getItem(KIMI_MODEL_KEY) ?? 'default',
     code: '',
     params: [],
     paramValues: {},
@@ -317,6 +370,7 @@ export const useStore = create<VibeState>((set, get) => {
     compileLog: null,
     compileMs: null,
     compileNote: null,
+    degradedToDraft: false,
     modelDims: null,
     meshTransform: null,
     stl: null,
@@ -354,10 +408,11 @@ export const useStore = create<VibeState>((set, get) => {
         const available = health.providers.filter((p) => p.available)
         engine = available.find((p) => p.id === saved)?.id ?? available[0]?.id ?? null
       }
-      set({ health, engine })
+      set({ health, engine, healthLoaded: true })
     },
 
     newProject: () => {
+      clearParamTimer()
       const project: Project = {
         id: newId(),
         name: 'Untitled part',
@@ -390,6 +445,7 @@ export const useStore = create<VibeState>((set, get) => {
     openProject: (id) => {
       const project = get().projects.find((p) => p.id === id)
       if (!project) return
+      clearParamTimer()
       set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '' })
       saveActiveProjectId(id)
       const params = parseParameters(project.code)
@@ -403,6 +459,7 @@ export const useStore = create<VibeState>((set, get) => {
       set({ projects })
       saveProjects(projects)
       if (get().activeId === id) {
+        clearParamTimer()
         set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle' })
         saveActiveProjectId(null)
       }
@@ -442,8 +499,9 @@ export const useStore = create<VibeState>((set, get) => {
     setParamValue: (name, value) => {
       const paramValues = { ...get().paramValues, [name]: value }
       set({ paramValues })
-      if (paramTimer) clearTimeout(paramTimer)
+      clearParamTimer()
       paramTimer = setTimeout(() => {
+        paramTimer = null
         const { code, params, paramValues: values } = get()
         void compile(code, buildDefines(params, values))
         persist()
@@ -489,6 +547,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     loadExample: (example) => {
+      clearParamTimer()
       const state = get()
       const current = state.projects.find((p) => p.id === state.activeId)
       const chat = [
@@ -556,6 +615,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     clearModel: () => {
+      clearParamTimer() // don't let a pending slider render resurrect the model after Remove
       const s = get()
       set({
         vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)],
@@ -599,6 +659,11 @@ export const useStore = create<VibeState>((set, get) => {
     setClaudeModel: (id) => {
       set({ claudeModel: id })
       localStorage.setItem(CLAUDE_MODEL_KEY, id)
+    },
+
+    setKimiModel: (id) => {
+      set({ kimiModel: id })
+      localStorage.setItem(KIMI_MODEL_KEY, id)
     },
 
     /** Compile and download every piece of a multi-part design (`part` enum). */
@@ -682,7 +747,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     exportStlSmart: async (fileBase) => {
-      const { stl, quality, compileNote, code, params, paramValues, meshTransform } = get()
+      const { stl, quality, degradedToDraft, code, params, paramValues, meshTransform } = get()
       if (!stl) return
       // bake any viewport move/rotate into the export so WYSIWYG holds
       const bake = (buffer: ArrayBuffer): ArrayBuffer => {
@@ -691,7 +756,7 @@ export const useStore = create<VibeState>((set, get) => {
         return transformStl(buffer, composeMatrix(t.position, t.rotation))
       }
       const fine = QUALITY_PRESETS.find((q) => q.id === 'fine')!
-      const degraded = quality === 'draft' || Boolean(compileNote?.includes('Draft'))
+      const degraded = quality === 'draft' || degradedToDraft
       if (degraded && fine) {
         const upgrade = confirm(
           'The preview was rendered at Draft quality — curves will look faceted when printed.\n\nOK: re-render at Fine quality for export (may take a while)\nCancel: export the Draft-quality STL as-is',

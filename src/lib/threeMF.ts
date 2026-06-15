@@ -68,6 +68,7 @@ function indexMesh(stl: ArrayBuffer): {
 } {
   const view = new DataView(stl)
   const count = view.getUint32(80, true)
+  if (stl.byteLength < 84 + count * 50) throw new Error('Malformed STL: triangle count exceeds buffer.')
   const index = new Map<string, number>()
   const verts: string[] = []
   const tris: string[] = []

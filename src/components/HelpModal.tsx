@@ -72,18 +72,20 @@ export default function HelpModal() {
   if (!helpOpen) return null
 
   return (
-    <div className="modal-overlay" onClick={() => setHelpOpen(false)}>
+    <div className="scrim" onClick={() => setHelpOpen(false)}>
       <div className="modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">Shortcuts</span>
-          <button className="icon-btn" onClick={() => setHelpOpen(false)} aria-label="Close">
+          <div className="mh-text">
+            <h2>Shortcuts</h2>
+          </div>
+          <button className="icon-btn-sm" onClick={() => setHelpOpen(false)} aria-label="Close">
             <IconX />
           </button>
         </div>
         <div className="modal-body">
           {GROUPS.map((g) => (
             <section key={g.title} className="help-group">
-              <div className="param-group-title">{g.title}</div>
+              <div className="pg-title">{g.title}</div>
               {g.rows.map(([keys, what]) => (
                 <div key={keys + what} className="help-row">
                   <span className="kbd">{keys}</span>

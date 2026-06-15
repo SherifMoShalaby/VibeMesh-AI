@@ -5,7 +5,20 @@ import { applyValuesToCode } from '../lib/params'
 import { downloadBlob } from '../lib/stl'
 import { QUALITY_PRESETS } from '../types'
 import { ConfirmDialog } from './Dialogs'
-import { IconChevronDown, IconTrash, IconGear, IconDownload } from './icons'
+import {
+  DLogo,
+  DHistory,
+  DChevDown,
+  DChevRight,
+  DCheck,
+  DDownload,
+  DPlus,
+  DBox,
+  DLayers,
+  DCode,
+  DArrowRight,
+  IconTrash,
+} from './icons'
 
 /** close an open dropdown when clicking anywhere outside it */
 function useClickOutside(open: boolean, onClose: () => void) {
@@ -30,6 +43,8 @@ export default function TopBar() {
   const deleteProject = useStore((s) => s.deleteProject)
   const health = useStore((s) => s.health)
   const engine = useStore((s) => s.engine)
+  const code = useStore((s) => s.code)
+  const stl = useStore((s) => s.stl)
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
 
   const [menuOpen, setMenuOpen] = useState(false)
@@ -39,31 +54,21 @@ export default function TopBar() {
   const active = projects.find((p) => p.id === activeId)
   const fileBase = (active?.name ?? 'model').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'model'
 
+  const activeProvider = health?.providers.find((p) => p.id === engine)
+  // workflow rail: Describe (have code) › Adjust (active) › Export (have geometry)
+  const hasCode = code.trim().length > 0
+  const hasModel = Boolean(stl)
+
   return (
     <header className="topbar">
       <div className="brand">
-        {/* "Vibewave mesh" — a vibe (wave) entering the part and crystallizing into mesh facets */}
-        <svg viewBox="0 0 32 32" className="brand-mark" aria-hidden>
-          <path d="M16 4 L27 10 L27 22 L16 28 L5 22 L5 10 Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
-          <path d="M19 11.4 L16 4 M19 11.4 L27 10 M23 20.6 L27 22 M15.5 20.6 L16 28" stroke="currentColor" strokeWidth="1" opacity="0.4" />
-          <path
-            d="M5 16 C7 11.4 10 11.4 12 16 L15.5 20.6 L19 11.4 L23 20.6 L27 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <circle cx="19" cy="11.4" r="1.4" fill="currentColor" />
-          <circle cx="23" cy="20.6" r="1.4" fill="currentColor" />
-        </svg>
-        <span className="brand-name">
-          VIBE<em>MESH</em>
-        </span>
+        <div className="brand-mark"><DLogo /></div>
+        <div className="brand-name">vibe<b>mesh</b></div>
       </div>
 
-      {/* one project identity: editable title + a single menu (UX-AUDIT F14) */}
-      <div className="project-controls">
+      <div className="topbar-sep" />
+
+      <div className="project-controls" ref={menuRef}>
         {active ? (
           <input
             className="project-name"
@@ -76,80 +81,74 @@ export default function TopBar() {
         ) : (
           <span className="project-name placeholder">No project open</span>
         )}
-        <div className="menu-wrap" ref={menuRef}>
-          <button
-            className="icon-btn"
-            aria-label="Projects menu"
-            aria-expanded={menuOpen}
-            title="Switch, create or delete projects"
-            onClick={() => setMenuOpen(!menuOpen)}
-          >
-            <IconChevronDown />
-          </button>
-          {menuOpen && (
-            <div className="dropdown" role="menu">
-              <button
-                className="dropdown-item"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false)
-                  newProject()
-                }}
-              >
-                + New project
-              </button>
-              {projects.length > 0 && <div className="dropdown-sep" />}
-              <div className="dropdown-scroll">
-                {projects.map((p) => (
-                  <button
-                    key={p.id}
-                    className={`dropdown-item${p.id === activeId ? ' active' : ''}`}
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      if (p.id !== activeId) openProject(p.id)
-                    }}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-              </div>
-              {active && (
-                <>
-                  <div className="dropdown-sep" />
-                  <button
-                    className="dropdown-item danger"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setConfirmDelete(true)
-                    }}
-                  >
-                    <IconTrash /> Delete this project…
-                  </button>
-                </>
-              )}
+        <button
+          className="icon-btn-sm"
+          aria-label="Version history & projects"
+          aria-expanded={menuOpen}
+          title="Switch, create or delete projects"
+          onClick={() => setMenuOpen(!menuOpen)}
+        >
+          <DHistory />
+        </button>
+        {menuOpen && (
+          <div className="menu align-left" role="menu">
+            <button className="menu-item" role="menuitem" onClick={() => { setMenuOpen(false); newProject() }}>
+              <span className="mi-icon"><DPlus /></span>
+              <span className="mi-text"><span className="mi-title">New part</span><span className="mi-sub">Start a fresh project</span></span>
+            </button>
+            {projects.length > 0 && <div className="menu-sep" />}
+            <div className="menu-scroll">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  className={`menu-item${p.id === activeId ? ' active' : ''}`}
+                  role="menuitem"
+                  onClick={() => { setMenuOpen(false); if (p.id !== activeId) openProject(p.id) }}
+                >
+                  <span className="mi-text"><span className="mi-title">{p.name}</span></span>
+                  <span className="mi-check"><DCheck /></span>
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+            {active && (
+              <>
+                <div className="menu-sep" />
+                <button className="menu-item danger" role="menuitem" onClick={() => { setMenuOpen(false); setConfirmDelete(true) }}>
+                  <span className="mi-icon" style={{ color: 'var(--err)' }}><IconTrash /></span>
+                  <span className="mi-text"><span className="mi-title" style={{ color: 'var(--err)' }}>Delete this project…</span></span>
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
+      <nav className="flow-rail" aria-label="Workflow: describe, adjust, export">
+        <div className={`flow-step${hasCode ? ' done' : ' active'}`} title="Describe the part in the chat on the left">
+          <span className="dot">{hasCode ? <DCheck /> : '1'}</span>Describe
+        </div>
+        <span className="flow-arrow"><DChevRight /></span>
+        <div className={`flow-step${hasCode ? ' active' : ''}`} title="Fine-tune with the sliders on the right">
+          <span className="dot">2</span>Adjust
+        </div>
+        <span className="flow-arrow"><DChevRight /></span>
+        <div className={`flow-step${hasModel ? ' active' : ''}`} title="Export from the button on the right">
+          <span className="dot">3</span>Export
+        </div>
+      </nav>
+
       <div className="topbar-right">
-        {health &&
-          (() => {
-            const activeProvider = health.providers.find((p) => p.id === engine)
-            return (
-              <button
-                className={`api-chip ${activeProvider ? 'ok' : 'warn'}`}
-                onClick={() => setEnginesOpen(true)}
-                title={`${activeProvider?.detail ?? 'No AI connected'} — click to manage`}
-              >
-                <i />
-                <span className="api-chip-label">{activeProvider ? `AI · ${activeProvider.label.split(' · ')[0]}` : 'Connect AI'}</span>
-                <span className="chip-gear"><IconGear /></span>
-              </button>
-            )
-          })()}
+        {health && (
+          <button
+            className={`api-chip${activeProvider ? '' : ' warn'}`}
+            onClick={() => setEnginesOpen(true)}
+            title={`${activeProvider?.detail ?? 'No AI connected'} — click to manage`}
+          >
+            <span className="status-dot" />
+            <span className="api-chip-label">{activeProvider ? `Claude · ${activeProvider.label.split(' · ')[0]}` : 'Connect AI'}</span>
+            <span className="chev"><DChevDown /></span>
+          </button>
+        )}
         <ExportMenu fileBase={fileBase} />
       </div>
 
@@ -159,10 +158,7 @@ export default function TopBar() {
           body={`Delete “${active.name}”? Its chat history and model go with it — this can't be undone.`}
           confirmLabel="Delete project"
           danger
-          onConfirm={() => {
-            setConfirmDelete(false)
-            deleteProject(active.id)
-          }}
+          onConfirm={() => { setConfirmDelete(false); deleteProject(active.id) }}
           onCancel={() => setConfirmDelete(false)}
         />
       )}
@@ -188,47 +184,75 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const hasPlates = params.some((p) => p.name === 'part' && p.kind === 'enum')
   const qualityLabel = QUALITY_PRESETS.find((q) => q.id === quality)?.label ?? 'Standard'
 
-  const run = (fn: () => void) => () => {
+  const run = (fn: () => void | Promise<unknown>) => () => {
     setOpen(false)
-    fn()
+    const fail = (e: unknown) => {
+      console.error('[vibemesh] export failed:', e)
+      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    try {
+      const r = fn()
+      if (r instanceof Promise) void r.catch(fail)
+    } catch (e) {
+      fail(e)
+    }
   }
 
   return (
     <div className="menu-wrap" ref={ref}>
       <button
-        className="btn primary"
+        id="topbar-export"
+        className="btn btn-primary"
         disabled={exportingPlates || (!stl && !code.trim())}
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        {exportingPlates ? <><i className="spin" /> Exporting…</> : <><IconDownload /> Export</>}
+        <DDownload /> {exportingPlates ? 'Exporting…' : 'Export'}
       </button>
       {open && (
-        <div className="dropdown export-menu" role="menu">
-          <button className="dropdown-item rich" role="menuitem" onClick={run(() => void export3mf(fileBase))}>
-            <strong>.3mf — recommended</strong>
-            <span>Opens ready to print in Bambu Studio / PrusaSlicer / Orca{hasPlates ? ' — all parts included' : ''}</span>
+        <div className="menu align-right" role="menu">
+          <div className="menu-label">Export model</div>
+          <button className="menu-item" role="menuitem" onClick={run(() => export3mf(fileBase))}>
+            <span className="mi-icon"><DLayers /></span>
+            <span className="mi-text">
+              <span className="mi-title">3MF <span className="ext">.3mf</span></span>
+              <span className="mi-sub">Recommended — parts + colors + metadata{hasPlates ? ', all parts included' : ''}</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
           </button>
-          <button className="dropdown-item rich" role="menuitem" disabled={!stl} onClick={run(() => void exportStlSmart(fileBase))}>
-            <strong>.stl</strong>
-            <span>Universal mesh format — exactly what you see now</span>
+          <button className="menu-item" role="menuitem" disabled={!stl} onClick={run(() => exportStlSmart(fileBase))}>
+            <span className="mi-icon"><DBox /></span>
+            <span className="mi-text">
+              <span className="mi-title">STL <span className="ext">.stl</span></span>
+              <span className="mi-sub">Universal mesh — exactly what you see now</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
           </button>
           {hasPlates && (
-            <button className="dropdown-item rich" role="menuitem" onClick={run(() => void exportPlates(fileBase))}>
-              <strong>Parts as separate .stl files</strong>
-              <span>One file per piece, named after each part</span>
+            <button className="menu-item" role="menuitem" onClick={run(() => exportPlates(fileBase))}>
+              <span className="mi-icon"><DLayers /></span>
+              <span className="mi-text">
+                <span className="mi-title">Parts as separate <span className="ext">.stl</span></span>
+                <span className="mi-sub">One file per piece, named after each part</span>
+              </span>
+              <span className="mi-check"><DArrowRight /></span>
             </button>
           )}
           <button
-            className="dropdown-item rich"
+            className="menu-item"
             role="menuitem"
             disabled={!code.trim()}
             onClick={run(() => downloadBlob(applyValuesToCode(code, params, paramValues), `${fileBase}.scad`, 'text/plain'))}
           >
-            <strong>.scad source</strong>
-            <span>The editable program behind the model (OpenSCAD)</span>
+            <span className="mi-icon"><DCode /></span>
+            <span className="mi-text">
+              <span className="mi-title">OpenSCAD <span className="ext">.scad</span></span>
+              <span className="mi-sub">The editable program behind the model</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
           </button>
-          <div className="dropdown-note">Files use the current quality: {qualityLabel}</div>
+          <div className="menu-sep" />
+          <div className="menu-note">Files use the current quality: {qualityLabel}</div>
         </div>
       )}
     </div>

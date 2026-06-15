@@ -6,9 +6,14 @@ import { applyRuntimeSetting, providerStatus, streamChat, testEngine, UserFacing
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
+// Bind to loopback by default so a casual `npm start` is not exposed on the LAN/internet.
+// Set HOST=0.0.0.0 to opt into external exposure (only do so behind auth — see SECURITY.md).
+const HOST = process.env.HOST || '127.0.0.1'
 
 const app = express()
-app.use(express.json({ limit: '30mb' }))
+// Body parsing is per-route so the large (base64 image) limit applies ONLY to /api/generate.
+const jsonSmall = express.json({ limit: '64kb' })
+const jsonLarge = express.json({ limit: '30mb' })
 
 app.get('/api/health', async (_req, res) => {
   const providers = await providerStatus()
@@ -16,7 +21,7 @@ app.get('/api/health', async (_req, res) => {
 })
 
 /** Save a connection setting (API key / base URL) — applied live, persisted to .env. */
-app.post('/api/connect', async (req, res) => {
+app.post('/api/connect', jsonSmall, async (req, res) => {
   const { key, value } = req.body ?? {}
   try {
     applyRuntimeSetting(key, value)
@@ -28,7 +33,7 @@ app.post('/api/connect', async (req, res) => {
 })
 
 /** Cheap 1-token connectivity test for an engine. */
-app.post('/api/test', async (req, res) => {
+app.post('/api/test', jsonSmall, async (req, res) => {
   const { engine } = req.body ?? {}
   if (typeof engine !== 'string') {
     res.status(400).json({ ok: false, message: 'engine is required' })
@@ -42,7 +47,7 @@ app.post('/api/test', async (req, res) => {
  * body: { engine: string, messages: [{ role, content }] }
  * Streams SSE: {type:'delta', text}, {type:'done'}, {type:'error', message}
  */
-app.post('/api/generate', async (req, res) => {
+app.post('/api/generate', jsonLarge, async (req, res) => {
   const { engine, model, messages, context } = req.body ?? {}
   if (!Array.isArray(messages) || messages.length === 0 || typeof engine !== 'string') {
     res.status(400).json({ error: 'bad_request', message: 'engine and messages are required' })
@@ -87,15 +92,43 @@ app.post('/api/generate', async (req, res) => {
 // Production: serve the built frontend
 if (process.env.NODE_ENV === 'production') {
   const dist = path.resolve(__dirname, '../dist')
-  app.use(express.static(dist))
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('X-Frame-Options', 'DENY')
+    next()
+  })
+  app.use(
+    express.static(dist, {
+      // Vite content-hashes asset filenames, so they're safe to cache immutably.
+      maxAge: '1y',
+      immutable: true,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache')
+      },
+    }),
+  )
   app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(dist, 'index.html')))
 }
 
-app.listen(PORT, () => {
-  console.log(`[vibemesh] api on http://localhost:${PORT}`)
+const server = app.listen(PORT, HOST, () => {
+  console.log(`[vibemesh] api on http://${HOST}:${PORT}`)
   providerStatus().then((providers) => {
     for (const p of providers) {
       console.log(`[vibemesh]   ${p.available ? '●' : '○'} ${p.label} — ${p.detail}`)
     }
   })
 })
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') console.error(`[vibemesh] port ${PORT} is already in use — set PORT to a free port.`)
+  else console.error('[vibemesh] server error:', err)
+  process.exit(1)
+})
+
+// Drain on container/orchestrator stop; force-exit if streams keep the socket open.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    server.close(() => process.exit(0))
+    setTimeout(() => process.exit(0), 5000).unref()
+  })
+}

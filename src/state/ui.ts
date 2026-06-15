@@ -12,12 +12,12 @@ interface UiState {
   setEnginesOpen: (open: boolean) => void
   helpOpen: boolean
   setHelpOpen: (open: boolean) => void
-  /** advanced mode shows the Code tab, render times and triangle counts */
-  advanced: boolean
-  setAdvanced: (v: boolean) => void
-  /** narrow-viewport bottom sheet for the right panel */
-  sheetOpen: boolean
-  setSheetOpen: (v: boolean) => void
+  /** active mobile tab (viewport-first layout under 720px) */
+  mobileTab: 'model' | 'params' | 'chat'
+  setMobileTab: (t: 'model' | 'params' | 'chat') => void
+  /** auto-repair: silently re-prompt once when a generated model fails to render (kill switch) */
+  autoRepair: boolean
+  setAutoRepair: (v: boolean) => void
 
   /* ── viewport display preferences ── */
   shading: Shading
@@ -48,13 +48,13 @@ export const useUi = create<UiState>((set) => ({
   setEnginesOpen: (enginesOpen) => set({ enginesOpen }),
   helpOpen: false,
   setHelpOpen: (helpOpen) => set({ helpOpen }),
-  advanced: localStorage.getItem('vibemesh.advanced.v1') === '1',
-  setAdvanced: (advanced) => {
-    localStorage.setItem('vibemesh.advanced.v1', advanced ? '1' : '0')
-    set({ advanced })
+  mobileTab: 'model',
+  setMobileTab: (mobileTab) => set({ mobileTab }),
+  autoRepair: localStorage.getItem('vibemesh.autoRepair.v1') !== '0',
+  setAutoRepair: (autoRepair) => {
+    localStorage.setItem('vibemesh.autoRepair.v1', autoRepair ? '1' : '0')
+    set({ autoRepair })
   },
-  sheetOpen: false,
-  setSheetOpen: (sheetOpen) => set({ sheetOpen }),
 
   shading: 'solid',
   setShading: (shading) => set({ shading }),

@@ -24,120 +24,6 @@ function I({ children, ...rest }: SVGProps<SVGSVGElement> & { children: ReactNod
   )
 }
 
-/* isometric cube hull shared by the shading trio */
-const CUBE = 'M8 1.6 13.5 4.8v6.4L8 14.4 2.5 11.2V4.8z'
-const CUBE_TOP = 'M8 1.6 13.5 4.8 8 8 2.5 4.8z'
-const CUBE_LEFT = 'M2.5 4.8 8 8v6.4L2.5 11.2z'
-
-export const IconSolid = () => (
-  <I>
-    <path d={CUBE} />
-    <path d={CUBE_TOP} fill="currentColor" fillOpacity="0.85" stroke="none" />
-    <path d={CUBE_LEFT} fill="currentColor" fillOpacity="0.4" stroke="none" />
-  </I>
-)
-
-export const IconEdges = () => (
-  <I>
-    <path d={CUBE} />
-    <path d={CUBE_TOP} fill="currentColor" fillOpacity="0.18" stroke="none" />
-    <path d="M8 8v6.4M8 8l5.5-3.2M8 8 2.5 4.8" />
-  </I>
-)
-
-export const IconWire = () => (
-  <I>
-    <path d={CUBE} />
-    <path d="M8 8v6.4M8 8l5.5-3.2M8 8 2.5 4.8" />
-    <path d="M2.5 4.8l11 6.4M13.5 4.8l-11 6.4" strokeOpacity="0.4" strokeWidth="1.1" />
-  </I>
-)
-
-/** the build plate as an isometric slab */
-export const IconBed = () => (
-  <I>
-    <path d="M8 5.4 14.2 8.4 8 11.4 1.8 8.4z" fill="currentColor" fillOpacity="0.25" />
-    <path d="M1.8 8.4v1.7L8 13.1l6.2-3V8.4M8 11.4v1.7" strokeOpacity="0.8" />
-  </I>
-)
-
-export const IconPersp = () => (
-  <I>
-    <path d="M3.4 3.2h9.2l2 9.6H1.4z" />
-    <path d="M5.7 6.1h4.6l1 4.7H4.7z" fill="currentColor" fillOpacity="0.15" strokeOpacity="0.55" strokeWidth="1.1" />
-  </I>
-)
-
-export const IconOrtho = () => (
-  <I>
-    <path d="M2.4 4.9 5.3 2h8.2l-2.9 2.9z" fill="currentColor" fillOpacity="0.22" />
-    <path d="M13.5 2v8.2l-2.9 2.9V4.9z" fill="currentColor" fillOpacity="0.12" />
-    <rect x="2.4" y="4.9" width="8.2" height="8.2" />
-    <path d="M2.4 4.9 5.3 2h8.2l-2.9 2.9M13.5 2v8.2l-2.9 2.9" />
-  </I>
-)
-
-/** a cutting plane passing through the part */
-export const IconSection = () => (
-  <I>
-    <path d={CUBE} strokeOpacity="0.4" />
-    <path d="M1.6 8 8 4.9 14.4 8 8 11.1z" fill="currentColor" fillOpacity="0.2" />
-  </I>
-)
-
-/** engineering dimension line: |←———→| */
-export const IconMeasure = () => (
-  <I>
-    <path d="M2.2 4.8v6.4M13.8 4.8v6.4" />
-    <path d="M2.2 8h11.6" strokeWidth="1.3" />
-    <path d="M4.9 5.9 2.8 8l2.1 2.1M11.1 5.9 13.2 8l-2.1 2.1" strokeWidth="1.3" />
-  </I>
-)
-
-/** camera with a hex lens */
-export const IconCamera = () => (
-  <I>
-    <rect x="1.8" y="4.6" width="12.4" height="8.8" rx="1.2" />
-    <path d="M5.5 4.6 6.5 2.8h3l1 1.8" />
-    <path d="M8 6.5l2 1.15v2.3L8 11.1 6 9.95v-2.3z" fill="currentColor" fillOpacity="0.22" />
-  </I>
-)
-
-export const IconUndo = () => (
-  <I>
-    <path d="M5.4 2.9 2.6 5.7l2.8 2.8" />
-    <path d="M2.6 5.7h6.7a4.1 4.1 0 0 1 0 8.2H6.5" />
-  </I>
-)
-
-export const IconRedo = () => (
-  <I>
-    <path d="M10.6 2.9l2.8 2.8-2.8 2.8" />
-    <path d="M13.4 5.7H6.7a4.1 4.1 0 0 0 0 8.2h2.8" />
-  </I>
-)
-
-/** hexagon badge, not a circle */
-export const IconHelp = () => (
-  <I>
-    <path d="M8 1.6 13.6 4.8v6.4L8 14.4 2.4 11.2V4.8z" />
-    <path d="M6.4 6.3a1.6 1.6 0 1 1 2.45 1.35c-.5.32-.85.65-.85 1.25" />
-    <circle cx="8" cy="11.2" r="0.65" fill="currentColor" stroke="none" />
-  </I>
-)
-
-export const IconChevronDown = () => (
-  <I>
-    <path d="M4.2 6.3l3.8 3.8 3.8-3.8" />
-  </I>
-)
-
-export const IconChevronUp = () => (
-  <I>
-    <path d="M4.2 9.7l3.8-3.8 3.8 3.8" />
-  </I>
-)
-
 export const IconX = () => (
   <I>
     <path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" />
@@ -151,30 +37,6 @@ export const IconTrash = () => (
   </I>
 )
 
-/** settings = a hex nut, not a gear */
-export const IconGear = () => (
-  <I>
-    <path d="M2 8l3-5.2h6L14 8l-3 5.2H5z" fill="currentColor" fillOpacity="0.14" />
-    <circle cx="8" cy="8" r="2.2" />
-  </I>
-)
-
-export const IconDownload = () => (
-  <I>
-    <path d="M8 2v7.4M4.8 6.6 8 9.8l3.2-3.2" />
-    <path d="M2.4 10.6v1.8a1.1 1.1 0 0 0 1.1 1.1h9a1.1 1.1 0 0 0 1.1-1.1v-1.8" />
-  </I>
-)
-
-/** faceted mountains + node-dot sun */
-export const IconImage = () => (
-  <I>
-    <rect x="1.8" y="3" width="12.4" height="10" rx="1.2" />
-    <path d="M3.3 11.3l3-3.4 2 2.2 2.1-2.9 2.4 3" />
-    <circle cx="5.7" cy="5.9" r="1.05" fill="currentColor" stroke="none" />
-  </I>
-)
-
 export const IconWarning = () => (
   <I>
     <path d="M8 2.3 14 12.9H2z" />
@@ -183,57 +45,10 @@ export const IconWarning = () => (
   </I>
 )
 
-export const IconCompare = () => (
-  <I>
-    <path d="M2.4 5.4h8.2M8.4 3l2.6 2.4L8.4 7.8" />
-    <path d="M13.6 10.6H5.4M7.6 8.2 5 10.6l2.6 2.4" />
-  </I>
-)
-
-export const IconPencil = () => (
-  <I>
-    <path d="M3 13l.9-3.1 7-7a1.55 1.55 0 0 1 2.2 2.2l-7 7L3 13z" />
-    <path d="M9.7 4.1l2.2 2.2" strokeOpacity="0.6" strokeWidth="1.2" />
-  </I>
-)
-
-export const IconStop = () => (
-  <I>
-    <rect x="4.5" y="4.5" width="7" height="7" rx="1.2" fill="currentColor" stroke="none" />
-  </I>
-)
-
 export const IconRefresh = () => (
   <I>
     <path d="M13.4 8a5.4 5.4 0 1 1-1.7-3.9" />
     <path d="M13.6 2.3v3.1h-3.1" />
-  </I>
-)
-
-export const IconClock = () => (
-  <I>
-    <circle cx="8" cy="8" r="5.8" />
-    <path d="M8 4.6V8l2.3 1.5" />
-  </I>
-)
-
-export const IconCheck = () => (
-  <I>
-    <path d="M2.8 8.6l3.2 3.2 7.2-7.2" />
-  </I>
-)
-
-export const IconMove = () => (
-  <I>
-    <path d="M8 2v12M2 8h12" />
-    <path d="M6.2 3.8 8 2l1.8 1.8M6.2 12.2 8 14l1.8-1.8M3.8 6.2 2 8l1.8 1.8M12.2 6.2 14 8l-1.8 1.8" />
-  </I>
-)
-
-export const IconRotate = () => (
-  <I>
-    <path d="M2.6 8a5.4 5.4 0 1 0 1.7-3.9" />
-    <path d="M2.4 2.3v3.1h3.1" />
   </I>
 )
 
@@ -253,36 +68,71 @@ export const IconDrop = () => (
   </I>
 )
 
-export const IconCopy = () => (
-  <I>
-    <rect x="5.6" y="5.6" width="8" height="8" rx="1.2" />
-    <path d="M3.2 10.6v-7a1.2 1.2 0 0 1 1.2-1.2h7" />
-  </I>
-)
+/* ───────────────────────────────────────────────────────────────
+   "Machined" design icon set.
+   24px viewBox · 1.7 stroke · round caps/joins · currentColor.
+   Used by the redesigned cockpit chrome (topbar, tool rail, HUD,
+   empty state, chat, menus).
+   ─────────────────────────────────────────────────────────────── */
+function D({ children, ...rest }: SVGProps<SVGSVGElement> & { children: ReactNode }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden {...rest}>
+      {children}
+    </svg>
+  )
+}
 
-export const IconWrench = () => (
-  <I>
-    <path d="M13.6 4.6a3.4 3.4 0 0 1-4.4 4L5 12.8a1.55 1.55 0 0 1-2.2-2.2L7 6.4a3.4 3.4 0 0 1 4-4.4L8.8 4.2l.4 2.6 2.6.4 2.2-2.2z" />
-  </I>
+export const DLogo = () => (
+  <D>
+    <path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" />
+    <path d="M3 7l9 5 9-5" />
+    <path d="M12 12v10" />
+  </D>
 )
-
-export const IconBulb = () => (
-  <I>
-    <path d="M8 1.8a4.1 4.1 0 0 1 2.4 7.4c-.5.4-.7 1-.7 1.5H6.3c0-.5-.2-1.1-.7-1.5A4.1 4.1 0 0 1 8 1.8z" />
-    <path d="M6.3 12.6h3.4M6.9 14.2h2.2" />
-  </I>
+export const DSpark = () => (
+  <D>
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" />
+  </D>
 )
-
-/** two isometric parts side by side */
-export const IconParts = () => (
-  <I>
-    <path d="M5.2 3.2l2.7 1.6v3.1L5.2 9.5 2.5 7.9V4.8z" fill="currentColor" fillOpacity="0.18" />
-    <path d="M10.8 6.4l2.7 1.6v3.1l-2.7 1.6-2.7-1.6V8z" />
-  </I>
+export const DSparkFill = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+    <path d="M12 2l1.7 5.1 5.1 1.7-5.1 1.7L12 16l-1.7-5.5L5.2 8.8l5.1-1.7L12 2Z" />
+  </svg>
 )
-
-export const IconSend = () => (
-  <I>
-    <path d="M13.9 2.1 7.5 8.5M13.9 2.1 9.6 13.8 7.5 8.5 2.2 6.4z" />
-  </I>
+export const DUser = () => (
+  <D>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 20a8 8 0 0 1 16 0" />
+  </D>
 )
+export const DSend = () => (<D><path d="M4 12h14M12 5l7 7-7 7" /></D>)
+export const DPlus = () => (<D><path d="M12 5v14M5 12h14" /></D>)
+export const DHistory = () => (<D><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 8v4l3 2" /></D>)
+export const DChevDown = () => (<D><path d="M6 9l6 6 6-6" /></D>)
+export const DChevRight = () => (<D><path d="M9 6l6 6-6 6" /></D>)
+export const DCheck = () => (<D><path d="M5 12.5 10 17l9-10" /></D>)
+export const DDownload = () => (<D><path d="M12 4v11M7 11l5 5 5-5M5 20h14" /></D>)
+export const DImage = () => (<D><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m4 17 4.5-4.5 4 4L16 13l4 4" /></D>)
+export const DCode = () => (<D><path d="M9 8l-4 4 4 4M15 8l4 4-4 4" /></D>)
+export const DSliders = () => (<D><path d="M4 8h9M17 8h3M4 16h3M11 16h9M14 5v6M8 13v6" /></D>)
+export const DReset = () => (<D><path d="M3.5 9a9 9 0 1 1-.6 5" /><path d="M3 4v5h5" /></D>)
+export const DCopy = () => (<D><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></D>)
+export const DRestore = () => (<D><path d="M3.5 9a9 9 0 1 1-.6 5" /><path d="M3 4v5h5" /></D>)
+export const DGauge = () => (<D><path d="M12 13l4-4" /><path d="M4.5 18a9 9 0 1 1 15 0" /><circle cx="12" cy="13" r="1.4" fill="currentColor" stroke="none" /></D>)
+export const DPrinter = () => (<D><path d="M6 9V3h12v6" /><rect x="4" y="9" width="16" height="8" rx="2" /><path d="M8 17h8v4H8z" /><circle cx="17" cy="12" r="1" fill="currentColor" stroke="none" /></D>)
+export const DMove = () => (<D><path d="M12 3v18M3 12h18M8 6l4-3 4 3M8 18l4 3 4-3M6 8l-3 4 3 4M18 8l3 4-3 4" /></D>)
+export const DRotate = () => (<D><path d="M3.5 9a9 9 0 1 1-.6 5" /><path d="M3 4v5h5" /></D>)
+export const DZoom = () => (<D><circle cx="11" cy="11" r="7" /><path d="M16 16l4 4M9 11h4M11 9v4" /></D>)
+export const DRuler = () => (<D><path d="M3 16h18M6 16v-3M10 16v-5M14 16v-3M18 16v-5" /></D>)
+export const DSection = () => (<D><path d="M4 12h16M4 12l4-4M4 12l4 4" /><rect x="4" y="4" width="16" height="16" rx="2" opacity=".4" /></D>)
+export const DGrid = () => (<D><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></D>)
+export const DCube = () => (<D><path d="M12 2.5 21 7v10l-9 4.5L3 17V7l9-4.5Z" /><path d="M3 7l9 4.5L21 7M12 11.5V22" /></D>)
+export const DArrowRight = () => (<D><path d="M5 12h14M13 6l6 6-6 6" /></D>)
+export const DBox = () => (<D><path d="M3 8l9-5 9 5v8l-9 5-9-5V8Z" /><path d="M3 8l9 5 9-5M12 13v8" /></D>)
+export const DCamera = () => (<D><rect x="3" y="6" width="18" height="14" rx="2" /><circle cx="12" cy="13" r="3.5" /><path d="M8 6l1.5-2h5L16 6" /></D>)
+export const DCylinder = () => (<D><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v12a7 3 0 0 0 14 0V6" /></D>)
+export const DLayers = () => (<D><path d="M12 3 3 8l9 5 9-5-9-5Z" /><path d="M3 13l9 5 9-5M3 16.5l9 5 9-5" opacity=".55" /></D>)
+export const DChip = () => (<D><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" /></D>)
+export const DRefresh = () => (<D><path d="M21 12a9 9 0 1 1-2.6-6.3" /><path d="M21 4v5h-5" /></D>)
+export const DWrench = () => (<D><path d="M15 6a4 4 0 0 0-5 5L4 17l3 3 6-6a4 4 0 0 0 5-5l-2.5 2.5L13 9l1.5-3Z" /></D>)
+export const DUndo = () => (<D><path d="M9 14 4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-1" /></D>)

@@ -4,8 +4,13 @@
 
 Vibemesh turns plain-language descriptions (optionally with reference photos) into parametric
 3D models, renders them **entirely in your browser**, exposes every dimension as a live slider,
-and exports slicer-ready files (`.3mf` / `.stl`). Local-first: your projects, keys and models
-never leave your machine.
+and exports slicer-ready files (`.3mf` / `.stl`). Local-first: your projects and keys live on
+your own machine.
+
+> **Privacy.** Everything is local except the AI call itself: when you press Send, your prompt
+> (and any attached reference images) goes to the **AI provider you picked** — Anthropic, Kimi,
+> or your own local Ollama/LM Studio endpoint. Rendering, parameters and exports never leave the
+> browser. **No analytics, no telemetry, no tracking** — see [SECURITY.md](SECURITY.md).
 
 > **Origins.** Vibemesh began as a quick experiment inspired by an existing text-to-CAD project
 > (and was briefly named "VibeSCAD"). It has since been redesigned and rebuilt end-to-end — its
@@ -74,7 +79,27 @@ Local models: 7B-class models produce simple parts fine but struggle with comple
 ```sh
 npm run build
 npm start                # serves dist/ + API on :5175
+npm run preview          # optional: preview the built dist/ statically (no AI backend)
 ```
+
+### Hosting
+
+The frontend is fully client-side — examples, parameter sliders, in-browser
+openscad-wasm rendering, and STL/3MF/SCAD export all run with **no server**. So
+two deployment shapes are possible:
+
+- **Static demo (e.g. GitHub Pages).** `npm run build` and serve `dist/` from any
+  static host. Everything works *except* AI generation; the app detects the
+  missing backend and shows a "demo mode" notice. A ready-to-use workflow lives at
+  [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — enable Pages
+  (Settings → Pages → *GitHub Actions*) and it publishes on every push to `main`.
+- **Full app (with AI).** Run `npm start` (or any Node host) so the Express server
+  can dispatch to the AI engines. The server binds to `127.0.0.1` by default and has
+  **no auth or rate limiting** — it's built for local single-user use. **Don't expose
+  it directly to the public internet:** anyone who can reach it can spend your API keys.
+  A multi-user hosted build should sit behind your own auth/proxy and switch to per-user
+  API keys — the current `.env` model is single-tenant (local-first). See
+  [SECURITY.md](SECURITY.md#self-hosting-note).
 
 ## Architecture
 
@@ -101,8 +126,21 @@ browser ────────────────────────
 
 ## Roadmap ideas
 
-- Manifold-backend OpenSCAD build (openscad-playground fork) for 10–100× faster renders
 - BOSL2/MCAD library support (mount into the worker FS)
 - Per-part print quantities (`wheel ×4`) baked into the 3MF
 - Supabase auth + cloud project sync for sharing
 - STL/STEP import as reference geometry
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup,
+the build/lint/bench checks, and project layout. Please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). For security issues, see
+[SECURITY.md](SECURITY.md) (don't open a public issue).
+
+## License
+
+[MIT](LICENSE) for Vibemesh's own code. Vibemesh bundles **OpenSCAD** (via
+`openscad-wasm`) which is **GPL-2.0**, invoked as a separate program — see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for what that means if you
+redistribute.

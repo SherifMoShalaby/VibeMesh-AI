@@ -111,6 +111,8 @@ function mergeContent(a: ApiMessage['content'], b: ApiMessage['content']): ApiMe
 
 export interface GenerateContext {
   bed?: { x: number; y: number; z: number; label?: string }
+  /** the latest prompt reads as a buildable kit — reinforces the multi-part/connector rules */
+  kit?: boolean
 }
 
 export interface StreamCallbacks {

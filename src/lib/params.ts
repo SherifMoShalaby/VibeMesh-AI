@@ -52,6 +52,9 @@ function buildParam(
   group: string,
   description: string | undefined,
 ): ScadParameter | null {
+  // never let a reserved identifier become a param name (prototype-pollution guard)
+  if (name === '__proto__' || name === 'constructor' || name === 'prototype') return null
+
   // booleans
   if (rawValue === 'true' || rawValue === 'false') {
     return { name, kind: 'bool', group, description, defaultValue: rawValue === 'true' }
@@ -95,11 +98,20 @@ function parseRange(annotation?: string): { min: number; max: number; step: numb
   const a = Number(m[1])
   const b = Number(m[2])
   const c = m[3] !== undefined ? Number(m[3]) : undefined
+  let min: number, max: number, step: number
   if (c !== undefined) {
-    return { min: a, step: b, max: c }
+    min = a
+    step = b
+    max = c
+  } else {
+    min = a
+    max = b
+    step = Number.isInteger(a) && Number.isInteger(b) ? 1 : 0.1
   }
-  const step = Number.isInteger(a) && Number.isInteger(b) ? 1 : 0.1
-  return { min: a, max: b, step }
+  // sanitize malformed AI-authored ranges so sliders never break
+  if (min > max) [min, max] = [max, min]
+  if (!(step > 0)) step = Number.isInteger(min) && Number.isInteger(max) ? 1 : 0.1
+  return { min, max, step }
 }
 
 /** "[a, b, c]" — enum options (no colon) */
@@ -121,6 +133,7 @@ export function buildDefines(params: ScadParameter[], values: ParamValues): stri
   for (const p of params) {
     const value = values[p.name]
     if (value === undefined || value === p.defaultValue) continue
+    if (typeof value === 'number' && !Number.isFinite(value)) continue // never emit -D x=NaN/Infinity
     args.push('-D', `${p.name}=${scadLiteral(value)}`)
   }
   return args

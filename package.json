@@ -1,8 +1,34 @@
 {
   "name": "vibemesh",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
+  "description": "AI text/image-to-CAD for 3D printing — plain-language prompts become parametric OpenSCAD, rendered in-browser via openscad-wasm with live parameter sliders and slicer-ready .3mf/.stl export. Local-first.",
+  "license": "MIT",
+  "author": "Sherif Mo. Shalaby <sherif2222222@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SherifMoShalaby/vibemesh.git"
+  },
+  "homepage": "https://github.com/SherifMoShalaby/vibemesh#readme",
+  "bugs": {
+    "url": "https://github.com/SherifMoShalaby/vibemesh/issues"
+  },
+  "keywords": [
+    "openscad",
+    "3d-printing",
+    "cad",
+    "text-to-cad",
+    "ai",
+    "parametric",
+    "wasm",
+    "react",
+    "stl",
+    "3mf"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "PORT=5175 node server/index.mjs",

@@ -4,37 +4,31 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { Line, OrbitControls, TransformControls } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useStore } from '../state/store'
-import { useUi, type Shading } from '../state/ui'
+import { useUi } from '../state/ui'
 import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
 import { canvasToChatImage, registerCanonicalCapture, registerViewportCanvas } from '../lib/capture'
 import EmptyState from './EmptyState'
 import { CustomBedDialog } from './Dialogs'
 import {
-  IconBed,
-  IconBulb,
-  IconCamera,
   IconCenter,
-  IconCheck,
   IconDrop,
-  IconEdges,
-  IconHelp,
-  IconMeasure,
-  IconMove,
-  IconOrtho,
-  IconParts,
-  IconPencil,
-  IconPersp,
-  IconRedo,
-  IconRotate,
-  IconSection,
-  IconSolid,
   IconTrash,
-  IconUndo,
   IconWarning,
-  IconWire,
-  IconWrench,
-  IconX,
+  DRotate,
+  DMove,
+  DZoom,
+  DSection,
+  DRuler,
+  DGrid,
+  DCube,
+  DReset,
+  DCamera,
+  DGauge,
+  DPrinter,
+  DChevDown,
+  DUndo,
+  DWrench,
 } from './icons'
 
 type ViewName = 'iso' | 'top' | 'front' | 'right'
@@ -45,8 +39,6 @@ interface ViewApi {
   snapshot: () => void
 }
 
-const SHADING_CYCLE: Record<Shading, Shading> = { solid: 'edges', edges: 'wireframe', wireframe: 'solid' }
-const SHADING_LABEL: Record<Shading, string> = { solid: 'Solid', edges: 'Solid + edges', wireframe: 'Wireframe' }
 const SELECT_HINT_KEY = 'vibemesh.hint.select.v1'
 
 export default function Viewport() {
@@ -54,7 +46,6 @@ export default function Viewport() {
   const stlVersion = useStore((s) => s.stlVersion)
   const fitVersion = useStore((s) => s.fitVersion)
   const compileStatus = useStore((s) => s.compileStatus)
-  const compileError = useStore((s) => s.compileError)
   const compileNote = useStore((s) => s.compileNote)
   const compileMs = useStore((s) => s.compileMs)
   const generating = useStore((s) => s.generating)
@@ -80,7 +71,6 @@ export default function Viewport() {
   const vpRedo = useStore((s) => s.vpRedo)
 
   const shading = useUi((s) => s.shading)
-  const setShading = useUi((s) => s.setShading)
   const bedVisible = useUi((s) => s.bedVisible)
   const setBedVisible = useUi((s) => s.setBedVisible)
   const ortho = useUi((s) => s.ortho)
@@ -95,7 +85,6 @@ export default function Viewport() {
   const setSelected = useUi((s) => s.setSelected)
   const gizmoMode = useUi((s) => s.gizmoMode)
   const setGizmoMode = useUi((s) => s.setGizmoMode)
-  const advanced = useUi((s) => s.advanced)
 
   const [measurePts, setMeasurePts] = useState<THREE.Vector3[]>([])
   const groupRef = useRef<THREE.Group>(null)
@@ -111,6 +100,7 @@ export default function Viewport() {
   useEffect(() => {
     if (selected && !selectHintDone) {
       localStorage.setItem(SELECT_HINT_KEY, '1')
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectHintDone(true)
     }
   }, [selected, selectHintDone])
@@ -129,14 +119,15 @@ export default function Viewport() {
   // deselect + clear measurements when geometry changes
   useEffect(() => {
     setSelected(false)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMeasurePts([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stlVersion])
 
   /** bbox of the model AFTER the viewport transform — drives dims, warnings, actions */
   const tbox = useMemo(() => {
-    if (!model) return null
-    const box = model.geometry.boundingBox!.clone()
+    if (!model?.geometry.boundingBox) return null
+    const box = model.geometry.boundingBox.clone()
     if (meshTransform) box.applyMatrix4(matrixOf(meshTransform))
     const size = new THREE.Vector3()
     box.getSize(size)
@@ -157,23 +148,24 @@ export default function Viewport() {
     setOutOfView(false)
   }
   const markFittedRef = useRef(markFitted)
-  markFittedRef.current = markFitted
+  useEffect(() => {
+    markFittedRef.current = markFitted
+  })
   const doFit = () => {
     viewApi.current?.fit()
     markFitted()
   }
   useEffect(() => {
     markFittedRef.current() // auto-fit just framed the model
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitVersion])
   useEffect(() => {
     if (!tbox) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setOutOfView(false)
       return
     }
     if (fitRadiusRef.current === 0) fitRadiusRef.current = radiusOf(tbox)
     setOutOfView(radiusOf(tbox) > fitRadiusRef.current * 1.8)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tbox])
 
   // multi-part designs expose an enum parameter named `part`
@@ -268,6 +260,7 @@ export default function Viewport() {
   const measureDistance = measurePts.length === 2 ? measurePts[0].distanceTo(measurePts[1]) : null
 
   return (
+    <section className="pane viewport-pane">
     <main
       className="viewport"
       onDoubleClick={(e) => {
@@ -275,6 +268,9 @@ export default function Viewport() {
         if ((e.target as HTMLElement).tagName === 'CANVAS') doFit()
       }}
     >
+      <div className="bed" />
+      <div className="viewport-vignette" />
+      <div className="model-wrap">
       <Canvas
         camera={{ up: [0, 0, 1], position: [180, -180, 140], fov: 40, near: 0.5, far: 5000 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
@@ -355,210 +351,297 @@ export default function Viewport() {
 
         <CameraFit tbox={tbox} version={fitVersion} />
         <CaptureRig tbox={tbox} hasModel={Boolean(model)} />
-        <ViewRig tbox={tbox} api={viewApi} fileBase="viewport" />
+        <ViewRig tbox={tbox} apiRef={viewApi} fileBase="viewport" />
         <OrbitControlsZUp />
       </Canvas>
+      </div>
 
-      {/* ── left toolbar ── */}
+      {/* ── vertical tool rail ── */}
       {!showEmpty && (
-        <div className="vp-toolbar">
-          <button className="vp-btn" disabled={!canUndo} title="Undo placement change (⌘Z)" aria-label="Undo placement change" onClick={vpUndo}>
-            <IconUndo />
-          </button>
-          <button className="vp-btn" disabled={!canRedo} title="Redo placement change (⇧⌘Z)" aria-label="Redo placement change" onClick={vpRedo}>
-            <IconRedo />
-          </button>
-          <span className="vp-sep" />
+        <div className="tool-rail" role="toolbar" aria-label="Viewport tools">
           <button
-            className="vp-btn"
-            title={`Shading: ${SHADING_LABEL[shading]} — click to cycle`}
-            aria-label={`Shading: ${SHADING_LABEL[shading]} — click to cycle`}
-            onClick={() => setShading(SHADING_CYCLE[shading])}
+            className={`tool-btn${!measureMode && !selected ? ' active' : ''}`}
+            data-tip="Orbit"
+            aria-label="Orbit"
+            onClick={() => {
+              setMeasureMode(false)
+              setMeasurePts([])
+              setSelected(false)
+            }}
           >
-            {shading === 'solid' ? <IconSolid /> : shading === 'edges' ? <IconEdges /> : <IconWire />}
+            <DRotate />
           </button>
           <button
-            className={`vp-btn${bedVisible ? ' on' : ''}`}
-            title="Show / hide the build plate"
-            aria-label="Show or hide the build plate"
-            onClick={() => setBedVisible(!bedVisible)}
+            className={`tool-btn${selected ? ' active' : ''}`}
+            data-tip="Move / rotate part"
+            aria-label="Move or rotate part"
+            disabled={!model}
+            onClick={() => setSelected(true)}
           >
-            <IconBed />
+            <DMove />
           </button>
-          <button
-            className={`vp-btn${ortho ? ' on' : ''}`}
-            title={ortho ? 'Orthographic — click for perspective' : 'Perspective — click for orthographic'}
-            aria-label={ortho ? 'Switch to perspective view' : 'Switch to orthographic view'}
-            onClick={() => setOrtho(!ortho)}
-          >
-            {ortho ? <IconOrtho /> : <IconPersp />}
+          <button className="tool-btn" data-tip="Zoom to fit (F)" aria-label="Zoom to fit" onClick={doFit}>
+            <DZoom />
           </button>
-          <span className="vp-sep" />
-          <button className="vp-btn txt" title="Isometric view" onClick={() => viewApi.current?.setView('iso')}>ISO</button>
-          <button className="vp-btn txt" title="Top view" onClick={() => viewApi.current?.setView('top')}>TOP</button>
-          <button className="vp-btn txt" title="Front view" onClick={() => viewApi.current?.setView('front')}>FRONT</button>
-          <button className="vp-btn txt" title="Right view" onClick={() => viewApi.current?.setView('right')}>RIGHT</button>
-          <button className="vp-btn txt" title="Fit model in view (F)" onClick={doFit}>FIT</button>
-          <span className="vp-sep" />
+          <div className="rail-sep" />
           <button
-            className={`vp-btn${sectionOn ? ' on' : ''}`}
-            title="Section view — slice the model to inspect inside"
-            aria-label="Section view — slice the model to inspect inside"
+            className={`tool-btn${sectionOn ? ' active' : ''}`}
+            data-tip="Section view"
+            aria-label="Section view"
             onClick={() => setSectionOn(!sectionOn)}
           >
-            <IconSection />
+            <DSection />
           </button>
           <button
-            className={`vp-btn${measureMode ? ' on' : ''}`}
-            title="Measure — click two points on the model"
-            aria-label="Measure — click two points on the model"
+            className={`tool-btn${measureMode ? ' active' : ''}`}
+            data-tip="Measure"
+            aria-label="Measure"
             onClick={() => {
               setMeasureMode(!measureMode)
               setMeasurePts([])
             }}
           >
-            <IconMeasure />
+            <DRuler />
           </button>
-          <button className="vp-btn" title="Save a PNG snapshot of this view" aria-label="Save a PNG snapshot of this view" onClick={() => viewApi.current?.snapshot()}>
-            <IconCamera />
+          <button
+            className={`tool-btn${bedVisible ? ' active' : ''}`}
+            data-tip="Toggle bed grid"
+            aria-label="Toggle bed grid"
+            onClick={() => setBedVisible(!bedVisible)}
+          >
+            <DGrid />
           </button>
-          <span className="vp-sep" />
-          <button className="vp-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={() => useUi.getState().setHelpOpen(true)}>
-            <IconHelp />
+          <div className="rail-sep" />
+          <button className="tool-btn" data-tip="Reset to ISO" aria-label="Reset to ISO" onClick={() => viewApi.current?.setView('iso')}>
+            <DCube />
+          </button>
+          <button
+            className={`tool-btn${ortho ? ' active' : ''}`}
+            data-tip={ortho ? 'Orthographic' : 'Perspective'}
+            aria-label="Toggle projection"
+            onClick={() => setOrtho(!ortho)}
+          >
+            <DReset />
+          </button>
+          <button className="tool-btn" data-tip="Snapshot PNG" aria-label="Snapshot PNG" onClick={() => viewApi.current?.snapshot()}>
+            <DCamera />
+          </button>
+          <div className="rail-sep" />
+          <button className="tool-btn" disabled={!canUndo} data-tip="Undo (⌘Z)" aria-label="Undo placement" onClick={vpUndo}>
+            <DUndo />
+          </button>
+          <button className="tool-btn" disabled={!canRedo} data-tip="Redo (⇧⌘Z)" aria-label="Redo placement" onClick={vpRedo}>
+            <span style={{ display: 'grid', transform: 'scaleX(-1)' }}><DUndo /></span>
           </button>
         </div>
       )}
 
       {sectionOn && !showEmpty && (
         <div className="section-slider" title="Section height">
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={sectionZ}
-            onChange={(e) => setSectionZ(Number(e.target.value))}
-          />
+          <input type="range" min={0} max={1} step={0.01} value={sectionZ} onChange={(e) => setSectionZ(Number(e.target.value))} />
         </div>
       )}
 
-      {/* one status message at a time, most important first (UX-AUDIT F5) */}
-      <div className="hud hud-tl" role="status">
-        {(() => {
-          if (compileStatus === 'error')
-            return (
-              <span className="hud-chip err" title={compileError ?? ''}>
-                <IconX /> Render failed — open the Code tab to fix it
-              </span>
-            )
-          if (modelRemoved && !model && !generating && compileStatus === 'idle')
-            return (
-              <span className="hud-chip warn">
-                <IconX /> Removed from view — your design is kept ·{' '}
-                <button className="banner-link" onClick={vpUndo}>
-                  undo (⌘Z)
-                </button>
-              </span>
-            )
-          if (compileStatus === 'compiling')
-            return (
-              <span className="hud-chip busy">
-                <i className="spin" /> Rendering…
-              </span>
-            )
-          if (generating) return (
-            <span className="hud-chip busy">
-              <i className="spin" /> AI is designing…
-            </span>
-          )
-          if (compileStatus === 'ok' && compileNote)
-            return (
-              <span className="hud-chip warn">
-                <IconWarning /> {compileNote}
-              </span>
-            )
-          if (outOfView && model)
-            return (
-              <span className="hud-chip warn">
-                Model grew out of view ·{' '}
-                <button className="banner-link" onClick={doFit}>
-                  fit (F)
-                </button>
-              </span>
-            )
-          if (model && compileStatus === 'ok' && !selected && !selectHintDone)
-            return (
-              <span className="hud-chip teal">
-                <IconBulb /> Click the part to move or rotate it
-              </span>
-            )
-          if (compileStatus === 'ok' && compileMs !== null)
-            return (
-              <span className="hud-chip ok">
-                <IconCheck /> {advanced ? fmtMs(compileMs) : 'Ready'}
-              </span>
-            )
-          return null
-        })()}
-        {measureMode && (
-          <span className="hud-chip teal">
-            <IconMeasure /> {measureDistance !== null ? `${measureDistance.toFixed(2)} mm` : `click ${2 - measurePts.length} point${measurePts.length === 1 ? '' : 's'} on the model`}
-          </span>
-        )}
-      </div>
+      {/* ── perf readout (top-right) ── */}
+      {model && (
+        <div className="perf-chip">
+          <span>{model.triangles.toLocaleString()} tris</span>
+        </div>
+      )}
 
-      {!showEmpty && (
-        <div className="hud hud-tr">
-          <div className="hud-card">
-          <label className="hud-select">
-            <span>Quality</span>
-            <select
-              className="bed-select"
-              value={quality}
-              onChange={(e) => setQuality(e.target.value)}
-              title="Surface quality — curve smoothness for the viewport and exported files"
-            >
-              {QUALITY_PRESETS.map((q) => (
-                <option key={q.id} value={q.id}>
-                  ◇ {q.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="hud-select">
-            <span>Printer</span>
-          <select
-            ref={bedSelectRef}
-            className="bed-select"
-            value={bed.id}
-            onChange={(e) => {
-              if (e.target.value === CUSTOM_BED_ID) setBedDialog(true)
-              else setBed(e.target.value)
-            }}
-            title="Print bed preview"
-            aria-label="Print bed"
-          >
-            {PRINTER_BEDS.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label}
-              </option>
-            ))}
-            <option value={CUSTOM_BED_ID}>
-              {customBed ? `Custom — ${customBed.x}×${customBed.y}×${customBed.z}` : 'Custom…'}
-            </option>
-          </select>
-          </label>
-          </div>
-          {bed.id === CUSTOM_BED_ID && (
-            <button
-              className="icon-btn"
-              title="Edit custom bed size"
-              aria-label="Edit custom bed size"
-              onClick={() => setBedDialog(true)}
-            >
-              <IconPencil />
+      {/* ── assembly / placement readout (bottom-left) ── */}
+      {!showEmpty && (model || measureMode) && (
+        <div className="assembly-chip">
+          {measureMode ? (
+            <>
+              <span className="ac-label">Measure</span>
+              <span className="ac-hint">
+                {measureDistance !== null
+                  ? `${measureDistance.toFixed(2)} mm`
+                  : `click ${2 - measurePts.length} point${measurePts.length === 1 ? '' : 's'} on the model`}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="ac-label">
+                {isAssemblyPreview ? 'Assembly preview' : currentPart ? `Part · ${currentPart}` : 'Model'}
+              </span>
+              <span className="ac-hint">
+                Drag to orbit · <kbd>Scroll</kbd> zoom · <kbd>F</kbd> frame
+              </span>
+              {isAssemblyPreview && <span className="ac-hint">check each part below for bed fit</span>}
+              {meshTransform && <span className="ac-hint">moved — placement is saved into exports</span>}
+              {tbox && tbox.minZ < -0.01 && (
+                <span className="ac-warn">
+                  <IconWarning /> below bed (z={tbox.minZ.toFixed(1)}) ·{' '}
+                  <button className="banner-link" onClick={dropToBed}>drop to bed</button>
+                </span>
+              )}
+              {overBed && !isAssemblyPreview && engine && (
+                <button
+                  className="split-btn"
+                  disabled={generating}
+                  onClick={() =>
+                    void sendPrompt(
+                      partParam && currentPart
+                        ? `The piece "${currentPart}" is ${tbox!.size.x.toFixed(0)}×${tbox!.size.y.toFixed(0)}×${tbox!.size.z.toFixed(0)}mm and still exceeds my ${bed.x}×${bed.y}×${bed.z}mm print bed. Split this piece further (dovetail, pinned joint, or flat mating faces with screw bosses), keeping the existing "part" selector convention so every piece fits the bed.`
+                        : `This design is ${tbox!.size.x.toFixed(0)}×${tbox!.size.y.toFixed(0)}×${tbox!.size.z.toFixed(0)}mm and exceeds my ${bed.x}×${bed.y}×${bed.z}mm print bed. Split it into separately printable pieces using an enum parameter named "part" (with "all" as assembly preview), each piece flat at z=0 in print orientation and fitting the bed, with proper joint clearances.`,
+                      undefined,
+                      'Split request',
+                    )
+                  }
+                >
+                  <DWrench /> Ask AI to split into printable parts
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── selection toolbar (floats above HUD bar) ── */}
+      {selected && model && (
+        <div className="sel-bar">
+          <button className={`plate-chip${gizmoMode === 'translate' ? ' active' : ''}`} onClick={() => setGizmoMode('translate')} title="Move gizmo">
+            <DMove /> Move
+          </button>
+          <button className={`plate-chip${gizmoMode === 'rotate' ? ' active' : ''}`} onClick={() => setGizmoMode('rotate')} title="Rotate gizmo">
+            <DRotate /> Rotate
+          </button>
+          <button className="plate-chip" onClick={centerOnBed} title="Center on the bed (XY)">
+            <IconCenter /> Center
+          </button>
+          <button className="plate-chip" onClick={dropToBed} title="Sit flat on the bed (Z=0)">
+            <IconDrop /> Drop
+          </button>
+          {meshTransform && (
+            <button className="plate-chip" onClick={resetTransform} title="Reset placement to the code's position">
+              <DUndo /> Reset
             </button>
           )}
+          <button className="plate-chip danger" onClick={deleteModel} title="Remove from view only — your design is kept and undo brings it back">
+            <IconTrash /> Remove
+          </button>
+        </div>
+      )}
+
+      {/* ── UNIFIED HUD BAR ── */}
+      {!showEmpty && (
+        <div className="hud-bar">
+          <div className="hud-seg">
+            <div className="hud-status">
+              {(() => {
+                if (compileStatus === 'error')
+                  return (
+                    <>
+                      <span className="status-dot err" />
+                      <span>Render failed</span>
+                      <span className="time">· open Code to fix</span>
+                    </>
+                  )
+                if (compileStatus === 'compiling')
+                  return (<><span className="status-dot busy" /><span>Rendering…</span></>)
+                if (generating)
+                  return (<><span className="status-dot busy" /><span>AI is designing…</span></>)
+                if (modelRemoved && !model && compileStatus === 'idle')
+                  return (
+                    <>
+                      <span className="status-dot warn" />
+                      <span>Removed from view</span>
+                      <span className="time">· <button className="banner-link" onClick={vpUndo}>undo</button></span>
+                    </>
+                  )
+                if (compileStatus === 'ok' && compileNote)
+                  return (<><span className="status-dot warn" /><span>{compileNote}</span></>)
+                if (outOfView && model)
+                  return (
+                    <>
+                      <span className="status-dot warn" />
+                      <span>Grew out of view</span>
+                      <span className="time">· <button className="banner-link" onClick={doFit}>fit</button></span>
+                    </>
+                  )
+                if (model && compileStatus === 'ok')
+                  return (
+                    <>
+                      <span className="status-dot" />
+                      <span>Model ready</span>
+                      {compileMs !== null && <span className="time">· {fmtMs(compileMs)}</span>}
+                    </>
+                  )
+                return (<><span className="status-dot" /><span>Ready</span></>)
+              })()}
+            </div>
+          </div>
+
+          {tbox && (
+            <div className="hud-seg">
+              <div className={`hud-dims${overBed && !isAssemblyPreview ? ' over' : ''}`}>
+                <span className="dim-label">Bounds</span>
+                <span className="dim-val">
+                  {tbox.size.x.toFixed(1)}<span className="x">×</span>{tbox.size.y.toFixed(1)}<span className="x">×</span>{tbox.size.z.toFixed(1)}
+                </span>
+                <span className="unit">mm</span>
+              </div>
+            </div>
+          )}
+
+          {partParam && (
+            <div className="hud-seg hud-parts">
+              <span className="dim-label">Parts</span>
+              <div className="part-tog">
+                {(partParam.options ?? []).map((opt) => {
+                  const value = String(opt)
+                  return (
+                    <button
+                      key={value}
+                      className={currentPart === value ? 'active' : ''}
+                      onClick={() => setParamValue('part', value)}
+                    >
+                      {value === 'all' ? 'All' : value}
+                      {value === 'all' && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="hud-seg hud-quality">
+            <label className="hud-select">
+              <span className="hs-label">Quality</span>
+              <span className="hs-val"><DGauge /><span>{QUALITY_PRESETS.find((q) => q.id === quality)?.label ?? 'Standard'}</span></span>
+              <span className="chev"><DChevDown /></span>
+              <select value={quality} onChange={(e) => setQuality(e.target.value)} title="Surface quality" aria-label="Quality">
+                {QUALITY_PRESETS.map((q) => (
+                  <option key={q.id} value={q.id}>{q.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="hud-seg hud-printer">
+            <label className="hud-select">
+              <span className="hs-label">Printer</span>
+              <span className="hs-val"><DPrinter /><span>{bed.label.split(' — ')[0].replace('Bambu Lab ', '').replace('Creality ', '')}</span></span>
+              <span className="chev"><DChevDown /></span>
+              <select
+                ref={bedSelectRef}
+                value={bed.id}
+                onChange={(e) => {
+                  if (e.target.value === CUSTOM_BED_ID) setBedDialog(true)
+                  else setBed(e.target.value)
+                }}
+                title="Print bed"
+                aria-label="Print bed"
+              >
+                {PRINTER_BEDS.map((b) => (
+                  <option key={b.id} value={b.id}>{b.label}</option>
+                ))}
+                <option value={CUSTOM_BED_ID}>{customBed ? `Custom — ${customBed.x}×${customBed.y}×${customBed.z}` : 'Custom…'}</option>
+              </select>
+            </label>
+          </div>
         </div>
       )}
 
@@ -574,135 +657,9 @@ export default function Viewport() {
         />
       )}
 
-      {tbox && (
-        <div className="hud hud-bl">
-          <div className={`dims${overBed && !isAssemblyPreview ? ' over' : ''}`}>
-            <span className="dims-label">{isAssemblyPreview ? 'Assembly' : currentPart ? `Part · ${currentPart}` : 'Part'}</span>
-            <span>
-              {tbox.size.x.toFixed(1)} × {tbox.size.y.toFixed(1)} × {tbox.size.z.toFixed(1)} mm
-            </span>
-            {overBed && !isAssemblyPreview && <span className="dims-warn"><IconWarning /> Too big for this bed</span>}
-          </div>
-          {isAssemblyPreview && (
-            <div className="dims-note plain">assembly preview — check each part below for bed fit</div>
-          )}
-          {meshTransform && (
-            <div className="dims-note plain">moved — this placement is saved into the exported file</div>
-          )}
-          {overBed && !isAssemblyPreview && engine && (
-            <button
-              className="btn stop sm"
-              disabled={generating}
-              onClick={() =>
-                void sendPrompt(
-                  partParam && currentPart
-                    ? `The piece "${currentPart}" is ${tbox.size.x.toFixed(0)}×${tbox.size.y.toFixed(0)}×${tbox.size.z.toFixed(0)}mm and still exceeds my ${bed.x}×${bed.y}×${bed.z}mm print bed. Split this piece further (dovetail, pinned joint, or flat mating faces with screw bosses), keeping the existing "part" selector convention so every piece fits the bed.`
-                    : `This design is ${tbox.size.x.toFixed(0)}×${tbox.size.y.toFixed(0)}×${tbox.size.z.toFixed(0)}mm and exceeds my ${bed.x}×${bed.y}×${bed.z}mm print bed. Split it into separately printable pieces using an enum parameter named "part" (with "all" as assembly preview), each piece flat at z=0 in print orientation and fitting the bed, with proper joint clearances.`,
-                  undefined,
-                  'Split request',
-                )
-              }
-            >
-              <IconWrench /> Ask AI to split into printable parts
-            </button>
-          )}
-          {tbox.minZ < -0.01 && (
-            <div className="dims-note">
-              <IconWarning /> part extends below the bed (z={tbox.minZ.toFixed(1)}){' '}
-              <button className="banner-link" onClick={dropToBed}>
-                drop to bed
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* selection toolbar */}
-      {selected && model && (
-        <div className="hud hud-bc sel-bar-wrap">
-          <div className="sel-bar">
-            <button
-              className={`plate-chip${gizmoMode === 'translate' ? ' active' : ''}`}
-              onClick={() => setGizmoMode('translate')}
-              title="Move gizmo"
-            >
-              <IconMove /> Move
-            </button>
-            <button
-              className={`plate-chip${gizmoMode === 'rotate' ? ' active' : ''}`}
-              onClick={() => setGizmoMode('rotate')}
-              title="Rotate gizmo"
-            >
-              <IconRotate /> Rotate
-            </button>
-            <button className="plate-chip" onClick={centerOnBed} title="Center on the bed (XY)">
-              <IconCenter /> Center
-            </button>
-            <button className="plate-chip" onClick={dropToBed} title="Sit flat on the bed (Z=0)">
-              <IconDrop /> Drop
-            </button>
-            {meshTransform && (
-              <button className="plate-chip" onClick={resetTransform} title="Reset placement to the code's position">
-                <IconUndo /> Reset
-              </button>
-            )}
-            <button className="plate-chip danger" onClick={deleteModel} title="Remove from view only — your design is kept and undo brings it back">
-              <IconTrash /> Remove
-            </button>
-          </div>
-        </div>
-      )}
-
-      {partParam && !showEmpty && !selected && (
-        <div className="hud hud-bc">
-          <div className="plates-bar">
-            <span className="plates-label">Parts</span>
-            {(partParam.options ?? []).map((opt) => {
-              const value = String(opt)
-              return (
-                <button
-                  key={value}
-                  className={`plate-chip${currentPart === value ? ' active' : ''}`}
-                  onClick={() => setParamValue('part', value)}
-                >
-                  {value === 'all' ? <><IconParts /> All</> : value}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {model && advanced && (
-        <div className="hud hud-br">
-          <span className="hud-meta">{model.triangles.toLocaleString()} tris</span>
-        </div>
-      )}
-
-      {/* the layout's data flow, made visible: 1 describe → 2 adjust → 3 export (UX-AUDIT F2) */}
-      {!showEmpty && (
-        <div className="hud hud-tc">
-          <div className="flow-rail" aria-label="Workflow: describe, adjust, export">
-            <span className={`flow-step${code.trim() ? ' done' : ' current'}`} title="Describe the part in the chat on the left">
-              <i>1</i> Describe
-            </span>
-            <span className="flow-arrow">→</span>
-            <span
-              className={`flow-step${stl ? ' current' : ''}`}
-              title="Fine-tune with the sliders on the right — or move the part here"
-            >
-              <i>2</i> Adjust
-            </span>
-            <span className="flow-arrow">→</span>
-            <span className={`flow-step${stl ? ' ready' : ''}`} title="The Export button is in the top-right corner">
-              <i>3</i> Export
-            </span>
-          </div>
-        </div>
-      )}
-
       {showEmpty && <EmptyState />}
     </main>
+    </section>
   )
 }
 
@@ -725,7 +682,7 @@ function OrbitControlsZUp() {
 }
 
 /** Standard views + fit + snapshot, registered for the toolbar. */
-function ViewRig({ tbox, api }: { tbox: TBox; api: React.MutableRefObject<ViewApi | null>; fileBase: string }) {
+function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<ViewApi | null>; fileBase: string }) {
   const camera = useThree((s) => s.camera)
   const gl = useThree((s) => s.gl)
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
@@ -748,7 +705,7 @@ function ViewRig({ tbox, api }: { tbox: TBox; api: React.MutableRefObject<ViewAp
         controls.update()
       }
     }
-    api.current = {
+    apiRef.current = {
       setView: (v) => {
         if (v === 'iso') frame(new THREE.Vector3(1, -1, 0.75))
         if (v === 'top') frame(new THREE.Vector3(0.001, -0.001, 1))
@@ -771,9 +728,9 @@ function ViewRig({ tbox, api }: { tbox: TBox; api: React.MutableRefObject<ViewAp
       },
     }
     return () => {
-      api.current = null
+      apiRef.current = null
     }
-  }, [tbox, camera, gl, controls, size, api])
+  }, [tbox, camera, gl, controls, size, apiRef])
 
   return null
 }

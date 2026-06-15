@@ -33,7 +33,12 @@ async function render({ id, code, defines }: RenderRequest): Promise<void> {
 
     let exitCode = -1
     try {
-      exitCode = instance.callMain(['/input.scad', '-o', '/output.stl', '--export-format=binstl', ...defines])
+      // --backend=Manifold: OpenSCAD's fast CSG backend (this wasm build = OpenSCAD
+      // 2025.07.18, which ships it). 100–700× faster than the default CGAL/Nef backend
+      // on boolean-heavy models — turns multi-minute assembly renders into <1s. Honors
+      // $fa/$fs/$fn identically; needs manifold input (the system prompt mandates that);
+      // Minkowski auto-falls-back to Nef. (--enable=manifold is a no-op in this build.)
+      exitCode = instance.callMain(['/input.scad', '-o', '/output.stl', '--export-format=binstl', '--backend=Manifold', ...defines])
     } catch (err) {
       // Emscripten throws an ExitStatus-like value on abnormal exit
       exitCode = typeof err === 'number' ? err : (err as { status?: number })?.status ?? -1

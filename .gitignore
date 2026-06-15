@@ -1,5 +1,21 @@
+# dependencies & build output
 node_modules/
 dist/
+*.tsbuildinfo
+
+# local environment & secrets (never commit real keys)
 .env
 *.local
+
+# OS / editor / agent
 .DS_Store
+.claude/
+
+# generated artifacts — not part of the source (regenerate locally)
+graphify-out/
+bench/results/
+.playwright-mcp/
+
+# stray local screenshots
+/final-cockpit.png
+/verify-*.png

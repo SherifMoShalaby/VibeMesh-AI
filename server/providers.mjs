@@ -5,15 +5,28 @@ import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
+import { KIT_EXEMPLAR } from './exemplars.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
 
 /** Settings the UI may write at runtime (persisted to .env, applied immediately). */
-const SETTABLE_KEYS = new Set(['KIMI_API_KEY', 'ANTHROPIC_API_KEY', 'LOCAL_LLM_BASE_URL'])
+const SETTABLE_KEYS = new Set(['KIMI_API_KEY', 'KIMI_MODELS', 'ANTHROPIC_API_KEY', 'LOCAL_LLM_BASE_URL'])
 
 export function applyRuntimeSetting(key, value) {
   if (!SETTABLE_KEYS.has(key)) throw new UserFacingError(`Setting "${key}" is not configurable.`)
   const trimmed = String(value ?? '').trim()
+  // Reject control chars / newlines so a value can't inject extra KEY=value lines into .env.
+  if (Array.from(trimmed).some((c) => c.charCodeAt(0) < 0x20)) throw new UserFacingError('Value contains invalid characters.')
+  // The base URL is used as a server-side fetch target — require a real http(s) URL (SSRF guard).
+  if (key === 'LOCAL_LLM_BASE_URL' && trimmed) {
+    let u
+    try {
+      u = new URL(trimmed)
+    } catch {
+      throw new UserFacingError('Base URL must be a valid http(s) URL.')
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new UserFacingError('Base URL must use http or https.')
+  }
   if (trimmed) process.env[key] = trimmed
   else delete process.env[key]
 
@@ -32,6 +45,38 @@ export function applyRuntimeSetting(key, value) {
 
 const kimiBaseUrl = () => process.env.KIMI_BASE_URL || 'https://api.kimi.com/coding'
 const kimiModel = () => process.env.KIMI_MODEL || 'kimi-for-coding'
+
+/** Live model list from Kimi's /v1/models — so new models appear with NO code change.
+ *  The coding endpoint advertises an auto-updating alias (kimi-for-coding) that already
+ *  tracks the latest coding model; any models it lists are picked up automatically. */
+async function listKimiModels() {
+  const key = process.env.KIMI_API_KEY
+  if (!key) return null // listing needs a console key (the CLI login token can't list)
+  try {
+    const res = await fetch(`${kimiBaseUrl()}/v1/models`, { headers: { 'x-api-key': key }, signal: AbortSignal.timeout(2500) })
+    if (!res.ok) return null
+    const body = await res.json()
+    return (body.data ?? body.models ?? []).map((m) => m.id ?? m.name).filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+/** Build the Kimi picker: 'default' + live-discovered ∪ KIMI_MODELS env ∪ known pins, deduped.
+ *  No code change needed as Kimi ships models — they arrive via the endpoint or KIMI_MODELS. */
+function kimiModelChoices(discovered) {
+  const envExtra = (process.env.KIMI_MODELS || '').split(',').map((s) => s.trim()).filter(Boolean)
+  const known = ['kimi-k2.7-code'] // pinnable specific versions the alias endpoint may not list
+  const out = [{ id: 'default', label: `default (${kimiModel()})` }]
+  const seen = new Set(['default'])
+  for (const id of [...(discovered ?? []), ...envExtra, ...known]) {
+    if (id && !seen.has(id)) {
+      seen.add(id)
+      out.push({ id, label: id })
+    }
+  }
+  return out
+}
 const localBaseUrl = () => process.env.LOCAL_LLM_BASE_URL || 'http://localhost:11434'
 const anthropicModel = () => process.env.VIBEMESH_MODEL || process.env.VIBESCAD_MODEL || 'claude-opus-4-8'
 
@@ -155,7 +200,7 @@ async function listLocalModels() {
    ──────────────────────────────────────────────────────────────── */
 
 export async function providerStatus() {
-  const [claudeBin, localModels] = await Promise.all([claudeBinaryAvailable(), listLocalModels()])
+  const [claudeBin, localModels, kimiModelIds] = await Promise.all([claudeBinaryAvailable(), listLocalModels(), listKimiModels()])
   const kimi = kimiAuth()
 
   const providers = [
@@ -184,7 +229,7 @@ export async function providerStatus() {
     },
     {
       id: 'kimi',
-      label: 'Kimi K2.6',
+      label: 'Kimi',
       // the CLI login token is rejected by Kimi's coding API — only console keys work
       available: Boolean(process.env.KIMI_API_KEY),
       detail: process.env.KIMI_API_KEY
@@ -194,6 +239,7 @@ export async function providerStatus() {
           : 'connect with a Kimi Code console key (included in the Kimi subscription)',
       model: kimiModel(),
       vision: true,
+      models: kimiModelChoices(kimiModelIds),
       connect: { envKey: 'KIMI_API_KEY', placeholder: 'Kimi Code console key…', url: 'https://www.kimi.com/code', urlLabel: 'Get a key in the Kimi Code console' },
     },
   ]
@@ -267,18 +313,31 @@ export async function testEngine(engine) {
    Each returns when the stream completes; deltas go to onDelta.
    ──────────────────────────────────────────────────────────────── */
 
-/** Per-request context (bed size etc.) appended to the system prompt. */
+/** Per-request context (bed size, kit intent) appended to the system prompt. */
 function contextText(context) {
-  if (!context?.bed) return ''
-  const { x, y, z, label } = context.bed
-  if (![x, y, z].every((n) => Number.isFinite(n))) return ''
-  return `\n\n# Session context\n\nTarget printer bed: ${x} × ${y} × ${z} mm${label ? ` (${label})` : ''}. Every individually printed piece must fit it.`
+  let out = ''
+  if (context?.bed) {
+    const { x, y, z, label } = context.bed
+    if ([x, y, z].every((n) => Number.isFinite(n))) {
+      out += `\n\n# Session context\n\nTarget printer bed: ${x} × ${y} × ${z} mm${label ? ` (${label})` : ''}. Every individually printed piece must fit it.`
+    }
+  }
+  if (context?.kit) {
+    out +=
+      '\n\n# Build as a KIT\n\nThis request is for a buildable kit. Produce SEPARATE connectable parts, not one fused solid: use the part enum (one module per piece), design real inline mating connectors (studs/tubes, pegs/sockets, snaps, axles/bores) with the fit clearance exposed as a parameter, and render each selected piece flat on z=0 in print orientation.'
+    // task-routed few-shot: a compile-verified kit in the exact required style. Pattern only —
+    // the model still outputs its own single complete program for the user's request.
+    out +=
+      '\n\nReference example of a buildable kit in the exact required style (part enum, one module per piece, inline connectors where every female size = the male size plus ONE shared clearance parameter, each piece flat on z=0). Follow this STRUCTURE; do not copy it literally — design for what the user asked:\n\n' +
+      KIT_EXEMPLAR
+  }
+  return out
 }
 
 export async function streamChat({ engine, model, messages, context, onDelta, signal }) {
   const ctx = contextText(context)
   if (engine === 'anthropic') return streamAnthropic({ messages, ctx, onDelta, signal })
-  if (engine === 'kimi') return streamKimi({ messages, ctx, onDelta, signal })
+  if (engine === 'kimi') return streamKimi({ messages, ctx, onDelta, signal, model })
   if (engine === 'claude-code') return streamClaudeCode({ messages, model, ctx, onDelta, signal })
   if (engine.startsWith('local:')) return streamLocal({ model: engine.slice(6), messages, ctx, onDelta, signal })
   throw new UserFacingError(`Unknown engine "${engine}".`)
@@ -297,6 +356,10 @@ async function streamAnthropic({ messages, ctx, onDelta, signal }) {
       model: anthropicModel(),
       max_tokens: 32000,
       thinking: { type: 'adaptive' },
+      // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking;
+      // xhigh is the documented sweet spot for coding/agentic work. Anthropic engine ONLY —
+      // Kimi 400s on effort and local is OpenAI-shaped, so this stays in streamAnthropic.
+      output_config: { effort: 'xhigh' },
       system,
       messages,
     },
@@ -312,8 +375,9 @@ async function streamAnthropic({ messages, ctx, onDelta, signal }) {
 
 /* ── Kimi K2.6 via Anthropic-compatible endpoint ── */
 
-async function streamKimi({ messages, ctx, onDelta, signal }) {
+async function streamKimi({ messages, ctx, onDelta, signal, model }) {
   const auth = kimiAuth()
+  const useModel = model && model !== 'default' ? model : kimiModel()
   if (!auth) {
     throw new UserFacingError('Kimi is not connected. Log in with the kimi CLI, or create an API key in the Kimi Code console and set KIMI_API_KEY in .env.')
   }
@@ -330,7 +394,7 @@ async function streamKimi({ messages, ctx, onDelta, signal }) {
     // keep the payload protocol-portable: no thinking, no cache_control
     const stream = client.messages.stream(
       {
-        model: kimiModel(),
+        model: useModel,
         max_tokens: 16000,
         system: SYSTEM_PROMPT + ctx,
         messages,
@@ -487,9 +551,17 @@ function collectImages(content) {
 /* ── Local LLM (Ollama / LM Studio, OpenAI-compatible) ── */
 
 async function streamLocal({ model, messages, ctx, onDelta, signal }) {
+  // Without these, Ollama's ~2-4K default context truncates the system prompt
+  // before the model sees the multi-part/connector rules, and its ~128-token
+  // output default cuts programs off mid-module — guaranteeing blobs. Both knobs
+  // are belt-and-suspenders: LM Studio honors top-level max_tokens; Ollama reads
+  // options.num_ctx/num_predict and ignores unknown keys.
   const body = {
     model,
     stream: true,
+    max_tokens: 8192,
+    temperature: 0.2,
+    options: { num_ctx: 8192, num_predict: 8192, temperature: 0.2 },
     messages: [{ role: 'system', content: SYSTEM_PROMPT + ctx }, ...messages.map(toOpenAiMessage)],
   }
 
