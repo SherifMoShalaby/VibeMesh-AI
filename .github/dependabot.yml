@@ -16,3 +16,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      # One PR for all GitHub Actions bumps — version-coupled actions (e.g. the
+      # Pages trio configure/upload/deploy) must move together, not piecemeal.
+      actions:
+        patterns:
+          - "*"
