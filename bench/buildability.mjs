@@ -25,10 +25,21 @@ export function extractPartEnum(code) {
   return { found: false, default: null, options: [], pieces: [] }
 }
 
-const CONNECTOR_RE = /\b(anti[_-]?stud|stud|peg|socket|dovetail|snap|clip|mortise|tenon|tongue|groove|boss|lug|bore|tube|dowel|alignment|register|interlock)\b/i
+// match the token, an optional plural `s`, then require a boundary that is `_`,
+// a digit, or a word boundary — so suffixed identifiers (`stud_d`, `peg_h`,
+// `bore_dia`, `studs`, `stud2`) match, but bare prefixes (`studio`, `clipboard`,
+// `snapshot`, `bored_out`, `tubed`) do NOT inflate the connector score.
+const CONNECTOR_RE = /\b(anti[_-]?stud|stud|peg|socket|dovetail|snap|clip|mortise|tenon|tongue|groove|boss|lug|bore|tube|dowel|alignment|register|interlock)s?(?=_|\d|\b)/i
 // matches a parameter whose NAME contains a clearance token, incl. suffixed
 // names like `stud_fit` / `spin_fit` / `wheel_gap` (\bfit\b would miss those)
 const CLEARANCE_RE = /\b\w*(?:clearance|tolerance|fit|gap|slop|kerf|play)\w*\s*=/i
+
+/** Strip // and /* *\/ comments so connector detection sees GEOMETRY, not the
+ *  prompt-mandated `// KIT:` / `// JOINTS:` plan comment — otherwise two disjoint
+ *  cubes carrying that comment score a perfect connector grade (gameable). */
+function stripComments(code) {
+  return code.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+}
 
 /** numeric top-level params (name = number) from the parameter block */
 function numericParams(code) {
@@ -45,16 +56,23 @@ function numericParams(code) {
 const MALE_RE = /(stud|peg|pin|dowel|tenon|tongue|boss|lug|male|shaft|axle)/i
 const FEMALE_RE = /(socket|tube|bore|hole|mortise|groove|slot|female|cavity|sleeve)/i
 
-/** flag mating pairs whose nominal sizes are EXACTLY equal (zero clearance → parts fuse) */
-function zeroClearancePairs(code) {
+// a parameter whose NAME is a clearance/fit value (matched against the param name)
+const CLEARANCE_PARAM_RE = /^\w*(?:clearance|tolerance|fit|gap|slop|kerf|play)\w*$/i
+
+/** Numeric clearance problems (verified from the numbers, not just keyword presence):
+ *  (a) a male/female pair sized EXACTLY equal → zero clearance, parts fuse;
+ *  (b) clearance/fit params exist but are ALL exactly 0 → declared but no real fit. */
+function clearanceProblems(code) {
   const p = numericParams(code)
   const males = Object.keys(p).filter((k) => MALE_RE.test(k))
   const females = Object.keys(p).filter((k) => FEMALE_RE.test(k))
-  const flags = []
+  const problems = []
   for (const a of males)
     for (const b of females)
-      if (p[a] === p[b] && p[a] > 0) flags.push(`${a}=${b}=${p[a]} (zero clearance)`)
-  return flags
+      if (p[a] === p[b] && p[a] > 0) problems.push(`${a}=${b}=${p[a]} (zero clearance → fuse)`)
+  const fits = Object.keys(p).filter((k) => CLEARANCE_PARAM_RE.test(k))
+  if (fits.length && fits.every((k) => p[k] === 0)) problems.push(`clearance params all 0 (${fits.join(', ')}) → no real fit`)
+  return problems
 }
 
 /**
@@ -96,22 +114,24 @@ export function scoreBuildability(code, partEnum, pieces, bed) {
   const tooBig = pieces.filter((p) => p.ok && p.size && (p.size[0] > bed[0] || p.size[1] > bed[1] || p.size[2] > bed[2]))
   if (tooBig.length) notes.push(`exceeds bed ${bed.join('×')}: ${tooBig.map((p) => `${p.piece}(${p.size.join('×')})`).join(', ')}`)
 
-  // connectorsPresent — mating geometry AND a clearance/fit parameter
-  const hasConnector = CONNECTOR_RE.test(code)
-  const hasClearance = CLEARANCE_RE.test(code)
+  // connectorsPresent — mating geometry AND a clearance/fit parameter.
+  // match against comment-stripped code so the plan comment can't fake a connector.
+  const geom = stripComments(code)
+  const hasConnector = CONNECTOR_RE.test(geom)
+  const hasClearance = CLEARANCE_RE.test(geom)
   breakdown.connectorsPresent = hasConnector && hasClearance ? 1 : hasConnector ? 0.5 : 0
   if (!hasConnector) notes.push('no connector geometry detected (stud/peg/socket/snap/…) — parts may not join')
   else if (!hasClearance) notes.push('connectors present but no clearance/fit parameter — fit may be wrong')
 
-  // clearanceSanity — penalty, not a gate
-  const zero = zeroClearancePairs(code)
-  breakdown.clearanceSanity = zero.length === 0 ? 1 : 0
-  if (zero.length) notes.push(`mating parts with ZERO clearance (will fuse): ${zero.join('; ')}`)
+  // clearanceSanity — numeric clearance check; penalty, not a gate
+  const problems = clearanceProblems(code)
+  breakdown.clearanceSanity = problems.length === 0 ? 1 : 0
+  if (problems.length) notes.push(`clearance problem(s): ${problems.join('; ')}`)
 
   // composite: average the four core checks, minus a small clearance-sanity penalty
   const core = [breakdown.allPartsRender, breakdown.printsFlat, breakdown.fitsBed, breakdown.connectorsPresent]
   let score = core.reduce((a, b) => a + b, 0) / core.length
-  if (zero.length) score = Math.max(0, score - 0.1)
+  if (problems.length) score = Math.max(0, score - 0.1)
   return { score: round(score), breakdown, notes, hardFail: false }
 }
 
