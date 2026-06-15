@@ -24,15 +24,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # Use `npm install`, not `npm ci`: platform + npm-version differences in
+        # optional deps (the @emnapi wasm-fallback subtree pulled by the bundler's
+        # native bindings) make a lock generated on one toolchain fail `npm ci`'s
+        # strict check on another. `npm install` reconciles that gap and still
+        # honors the committed lock.
+        run: npm install --no-audit --no-fund
 
       - name: Build
         run: npm run build
