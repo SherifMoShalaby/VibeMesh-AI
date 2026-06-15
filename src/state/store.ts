@@ -90,6 +90,9 @@ interface VibeState {
   retryLast: () => Promise<void>
   abortGeneration: () => void
   setParamValue: (name: string, value: ParamValue) => void
+  /** select a multi-part piece (or 'all'): compiles immediately (no slider debounce) and
+   *  re-fits the camera — a part switch is navigation, not a slider tweak */
+  selectPart: (value: string) => Promise<void>
   resetParams: () => void
   setCode: (code: string) => void
   recompile: () => void
@@ -626,6 +629,18 @@ export const useStore = create<VibeState>((set, get) => {
         void compile(code, buildDefines(params, values))
         persist()
       }, 350)
+    },
+
+    selectPart: async (value) => {
+      clearParamTimer() // a pending slider render must not clobber the part switch
+      const paramValues = { ...get().paramValues, part: value }
+      set({ paramValues })
+      const { code, params } = get()
+      const result = await compile(code, buildDefines(params, paramValues))
+      // re-frame on a part switch (compile only auto-fits empty→full; a switch is full→full).
+      // This lives HERE, not in setParamValue, so slider drags never yank the camera.
+      if (result.ok) set((s) => ({ fitVersion: s.fitVersion + 1 }))
+      persist()
     },
 
     resetParams: () => {

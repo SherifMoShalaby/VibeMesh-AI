@@ -56,7 +56,7 @@ export default function Viewport() {
   const code = useStore((s) => s.code)
   const params = useStore((s) => s.params)
   const paramValues = useStore((s) => s.paramValues)
-  const setParamValue = useStore((s) => s.setParamValue)
+  const selectPart = useStore((s) => s.selectPart)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const engine = useStore((s) => s.engine)
   const meshTransform = useStore((s) => s.meshTransform)
@@ -592,14 +592,17 @@ export default function Viewport() {
               <div className="part-tog">
                 {(partParam.options ?? []).map((opt) => {
                   const value = String(opt)
+                  const busy = currentPart === value && compileStatus === 'compiling'
                   return (
                     <button
                       key={value}
-                      className={currentPart === value ? 'active' : ''}
-                      onClick={() => setParamValue('part', value)}
+                      className={`${currentPart === value ? 'active' : ''}${busy ? ' busy' : ''}`}
+                      disabled={busy}
+                      onClick={() => void selectPart(value)}
                     >
                       {value === 'all' ? 'All' : value}
                       {value === 'all' && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
+                      {busy && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
                     </button>
                   )
                 })}
