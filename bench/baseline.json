@@ -64,11 +64,11 @@
       },
       {
         "task": "T6-vision",
-        "compiled": true,
-        "errored": false,
-        "dimScore": 1,
-        "iou": 0.916,
-        "placementScore": 1,
+        "compiled": false,
+        "errored": true,
+        "dimScore": null,
+        "iou": null,
+        "placementScore": null,
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
@@ -85,18 +85,13 @@
         "buildabilityHardFail": false,
         "overSplit": false,
         "judgeScore": null
-      }
-    ]
-  },
-  {
-    "engine": "kimi",
-    "results": [
+      },
       {
-        "task": "T1-cube",
+        "task": "T8-knob",
         "compiled": true,
         "errored": false,
         "dimScore": 1,
-        "iou": 0.998,
+        "iou": 0.988,
         "placementScore": 1,
         "buildabilityScore": null,
         "buildabilityHardFail": null,
@@ -104,74 +99,14 @@
         "judgeScore": null
       },
       {
-        "task": "T2-stand",
+        "task": "T9-pressfit",
         "compiled": true,
         "errored": false,
-        "dimScore": 1,
-        "iou": null,
-        "placementScore": 1,
-        "buildabilityScore": null,
-        "buildabilityHardFail": null,
-        "overSplit": false,
-        "judgeScore": null
-      },
-      {
-        "task": "T3-clip",
-        "compiled": true,
-        "errored": false,
-        "dimScore": 1,
-        "iou": null,
-        "placementScore": 0,
-        "buildabilityScore": null,
-        "buildabilityHardFail": null,
-        "overSplit": false,
-        "judgeScore": null
-      },
-      {
-        "task": "T4-iterate",
-        "compiled": true,
-        "errored": false,
-        "dimScore": 1,
-        "iou": 0.975,
-        "placementScore": 1,
-        "buildabilityScore": null,
-        "buildabilityHardFail": null,
-        "overSplit": false,
-        "judgeScore": null
-      },
-      {
-        "task": "T5-fix",
-        "compiled": true,
-        "errored": false,
-        "dimScore": 1,
-        "iou": 1,
-        "placementScore": 1,
-        "buildabilityScore": null,
-        "buildabilityHardFail": null,
-        "overSplit": false,
-        "judgeScore": null
-      },
-      {
-        "task": "T6-vision",
-        "compiled": true,
-        "errored": false,
-        "dimScore": 1,
-        "iou": 0.916,
-        "placementScore": 1,
-        "buildabilityScore": null,
-        "buildabilityHardFail": null,
-        "overSplit": false,
-        "judgeScore": null
-      },
-      {
-        "task": "T7-kit",
-        "compiled": false,
-        "errored": true,
         "dimScore": null,
         "iou": null,
         "placementScore": null,
-        "buildabilityScore": null,
-        "buildabilityHardFail": null,
+        "buildabilityScore": 1,
+        "buildabilityHardFail": false,
         "overSplit": false,
         "judgeScore": null
       }
