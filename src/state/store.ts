@@ -178,7 +178,10 @@ function composeMatrix(p: [number, number, number], r: [number, number, number])
 function detectKitIntent(text: string): boolean {
   const t = text.toLowerCase()
   return (
-    /\bkit\b|\bbuildable\b|\bmodular\b|\binterlock/.test(t) ||
+    // "modular" alone is too weak — "modular fidget spinner" is ONE solid, not a kit;
+    // require a kit noun nearby (allowing an adjective between, e.g. "modular building blocks").
+    /\bkit\b|\bbuildable\b|\binterlock/.test(t) ||
+    /\bmodular\b[^.?!]{0,20}?\b(kit|set|system|parts|pieces|blocks?|bricks?)\b/.test(t) ||
     /\b(snaps?|clips?)[\s-]?together\b/.test(t) ||
     /\b(set|kit)\s+of\s+(parts|pieces)\b/.test(t) ||
     /\bparts?\s+(that|which|to|so)\b/.test(t) ||
