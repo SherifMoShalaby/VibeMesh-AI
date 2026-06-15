@@ -52,6 +52,10 @@ function metricsOf(row) {
     buildabilityScore: row.buildability ? row.buildability.score : null,
     buildabilityHardFail: row.buildability ? Boolean(row.buildability.hardFail) : null,
     overSplit: row.overSplit === true,
+    // fidelity / functional metrics (Wave 2) — present only on the tasks that ask for them
+    asymmetryScore: typeof row.asymmetryScore === 'number' ? row.asymmetryScore : null,
+    moduleDistinctness: typeof row.moduleDistinctness === 'number' ? row.moduleDistinctness : null,
+    assembledScore: typeof row.assembledScore === 'number' ? row.assembledScore : null,
     // advisory LLM-judge — displayed for visibility, never gated (nondeterministic)
     judgeScore: row.judge && !row.judge.error && typeof row.judge.score === 'number' ? row.judge.score : null,
   }
@@ -63,6 +67,9 @@ const NUMERIC = [
   { key: 'iou', label: 'IoU', tol: 0.03 }, // wide: live-API non-determinism (tighten once repeat-sampling lands)
   { key: 'placementScore', label: 'place', tol: 0.1 },
   { key: 'buildabilityScore', label: 'kit', tol: 0.05 },
+  { key: 'asymmetryScore', label: 'asym', tol: 0.15 }, // geometric self-similarity is noisy → wide tol
+  { key: 'moduleDistinctness', label: 'mods', tol: 1 }, // distinct-module count
+  { key: 'assembledScore', label: 'asm', tol: 0.25 }, // stepped 0/0.5/1 → tolerate one step
 ]
 
 function readJson(p, what) {
