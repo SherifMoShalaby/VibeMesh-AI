@@ -52,6 +52,22 @@ surfaces — update it when you change those.
 
 See `CLAUDE.md` for a deeper architecture tour.
 
+## Working with Claude Code
+
+This repo ships a [Claude Code](https://claude.com/claude-code) setup so you get
+project-aware help immediately — no configuration needed. Highlights:
+
+- **Commands:** `/check` (lint + build gate), `/dev`, `/bench`, `/add-engine`,
+  `/release-check`.
+- **Skills:** `openscad-contract` (the response/printability contract) and
+  `add-ai-engine` (provider how-to) load automatically when relevant.
+- **Review agents:** `geometry-reviewer` and `architecture-reviewer` check changes
+  against the geometry contract and the two-process architecture invariants.
+
+Shared config lives in `.claude/` (committed); your personal `settings.local.json`
+stays git-ignored. The committed `settings.json` denies reading `.env`. See
+[`.claude/README.md`](.claude/README.md) for the full list.
+
 ## Coding style
 
 - Match the surrounding code's conventions, comment density, and naming.

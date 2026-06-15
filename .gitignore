@@ -7,9 +7,17 @@ dist/
 .env
 *.local
 
-# OS / editor / agent
+# OS / editor
 .DS_Store
-.claude/
+
+# Claude Code — share team config (commands/skills/agents/settings),
+# keep personal & local files (settings.local.json, launch.json) private
+.claude/*
+!.claude/commands/
+!.claude/skills/
+!.claude/agents/
+!.claude/settings.json
+!.claude/README.md
 
 # generated artifacts — not part of the source (regenerate locally)
 graphify-out/
