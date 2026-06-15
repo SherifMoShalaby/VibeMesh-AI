@@ -1,4 +1,4 @@
-# Vibemesh — UX Audit
+# Vibemesh-AI — UX Audit
 
 **Date:** 2026-06-12 · **Scope:** full product walkthrough (live app at 1440×900 + source review of `src/styles.css`, all components, `docs/SPEC.md`)
 **Method:** first-run novice walkthrough (7 captured states), 3 task walkthroughs, full copy/jargon inventory from source, type-scale audit, IA audit.
@@ -47,7 +47,7 @@ Effort: **S** = hours · **M** = 1–3 days · **L** = >3 days.
 | F15 | minor | S | **Growth pushes the model off-frame with no cue.** Camera-keep (correct per SPEC §8) means slider-driven growth runs off-screen; in testing, a 230mm part filled/escaped the view while only a 9.5px "⚠ EXCEEDS BED" chip reacted. The geometry itself never signals overflow. | live slider test screens | When the post-render bbox exceeds the frustum, show "out of view — press F to fit" chip; tint the portion outside the bed red/striped (slicer convention Bambu/Prusa users already know). |
 | F16 | minor | S | **Top-right selects read as status, not controls.** "◇ Standard" and "Ender 3 / S1 — 220×220×250" float unlabeled in the HUD; quality affects export fidelity (SPEC §5) but nothing says so on-surface. | `Viewport.tsx:386–429` | Tiny persistent labels ("QUALITY", "PRINTER") above/inside the selects; move the export-fidelity note from tooltip to the Export menu (F3). |
 | F17 | minor | S | **Version history is illegible as history.** Every restorable state is an identical "MODEL CODE UPDATED · RESTORE" chip — no numbering, no diff hint, no current-version marker. The mechanism (excellent per SPEC §3) reads as noise. | `ChatPanel.tsx:228–237` | "v1 · v2 · v3 — current" numbering; label the chip with what changed when known ("Version 4 · taller walls"). |
-| F18 | minor | S | **Engines modal is a developer panel.** ".env", "sk-ant-…", "console.anthropic.com", "http://localhost:11434 — 1 model(s)", "RE-SCAN", "run `claude` and use `/login`". Partly inherent to a local-first tool, but no framing for non-developers. | `EnginesModal.tsx:71,139–163` · modal screen | Keep the content; add one orienting sentence per row ("This lets Vibemesh design parts for you — pick whichever you have"), and a "What is an AI engine?" link/expander. |
+| F18 | minor | S | **Engines modal is a developer panel.** ".env", "sk-ant-…", "console.anthropic.com", "http://localhost:11434 — 1 model(s)", "RE-SCAN", "run `claude` and use `/login`". Partly inherent to a local-first tool, but no framing for non-developers. | `EnginesModal.tsx:71,139–163` · modal screen | Keep the content; add one orienting sentence per row ("This lets Vibemesh-AI design parts for you — pick whichever you have"), and a "What is an AI engine?" link/expander. |
 
 ---
 

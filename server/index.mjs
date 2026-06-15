@@ -83,7 +83,7 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
       return
     }
     const message = error instanceof UserFacingError ? error.message : 'Generation failed. Please try again.'
-    if (!(error instanceof UserFacingError)) console.error('[vibemesh] generate error:', error)
+    if (!(error instanceof UserFacingError)) console.error('[vibemesh-ai] generate error:', error)
     send({ type: 'error', message })
   }
   res.end()
@@ -111,17 +111,17 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const server = app.listen(PORT, HOST, () => {
-  console.log(`[vibemesh] api on http://${HOST}:${PORT}`)
+  console.log(`[vibemesh-ai] api on http://${HOST}:${PORT}`)
   providerStatus().then((providers) => {
     for (const p of providers) {
-      console.log(`[vibemesh]   ${p.available ? '●' : '○'} ${p.label} — ${p.detail}`)
+      console.log(`[vibemesh-ai]   ${p.available ? '●' : '○'} ${p.label} — ${p.detail}`)
     }
   })
 })
 
 server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') console.error(`[vibemesh] port ${PORT} is already in use — set PORT to a free port.`)
-  else console.error('[vibemesh] server error:', err)
+  if (err.code === 'EADDRINUSE') console.error(`[vibemesh-ai] port ${PORT} is already in use — set PORT to a free port.`)
+  else console.error('[vibemesh-ai] server error:', err)
   process.exit(1)
 })
 

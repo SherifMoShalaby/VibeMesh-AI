@@ -15,7 +15,7 @@ window to investigate and ship a fix before any public disclosure.
 
 ## Scope & good to know
 
-Vibemesh is **local-first**: it runs on your own machine, projects are stored in
+Vibemesh-AI is **local-first**: it runs on your own machine, projects are stored in
 your browser's `localStorage`, and AI keys live in a local `.env` that is never
 committed. There is no hosted multi-tenant service.
 
@@ -29,7 +29,7 @@ endpoint (which stays on your network). Generated OpenSCAD comes back the same w
 Nothing is sent until you press Send, and the static demo build (no backend) sends
 nothing at all.
 
-- **No analytics, no telemetry, no tracking.** Vibemesh ships no analytics SDK,
+- **No analytics, no telemetry, no tracking.** Vibemesh-AI ships no analytics SDK,
   beacons, or phone-home. The only outbound requests are the AI calls described
   above and (in dev) Google Fonts.
 
@@ -63,4 +63,4 @@ issue, `GHSA-gv7w-rqvm-qjhr`) that come from the Vite toolchain. These affect th
 local dev server only and are **not** present in the shipped `dist/` bundle. CI gates
 on `npm audit --omit=dev --audit-level=high`, i.e. production dependencies only.
 
-Thanks for helping keep Vibemesh and its users safe.
+Thanks for helping keep Vibemesh-AI and its users safe.

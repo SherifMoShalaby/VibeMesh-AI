@@ -2,7 +2,7 @@
 
 **Describe a part. Get a print-ready part.** — AI parametric CAD for 3D-printing folks.
 
-Vibemesh turns plain-language descriptions (optionally with reference photos) into parametric
+Vibemesh-AI turns plain-language descriptions (optionally with reference photos) into parametric
 3D models, renders them **entirely in your browser**, exposes every dimension as a live slider,
 and exports slicer-ready files (`.3mf` / `.stl`). Local-first: your projects and keys live on
 your own machine.
@@ -12,7 +12,7 @@ your own machine.
 > or your own local Ollama/LM Studio endpoint. Rendering, parameters and exports never leave the
 > browser. **No analytics, no telemetry, no tracking** — see [SECURITY.md](SECURITY.md).
 
-> **Origins.** Vibemesh began as a quick experiment inspired by an existing text-to-CAD project
+> **Origins.** Vibemesh-AI began as a quick experiment inspired by an existing text-to-CAD project
 > (and was briefly named "VibeSCAD"). It has since been redesigned and rebuilt end-to-end — its
 > own UX and design system, multi-engine AI integration, refine loop, viewport tooling and export
 > pipeline — and is an independent product that does not track, share code with, or rely on any
@@ -140,7 +140,7 @@ the build/lint/bench checks, and project layout. Please follow the
 
 ## License
 
-[MIT](LICENSE) for Vibemesh's own code. Vibemesh bundles **OpenSCAD** (via
+[MIT](LICENSE) for Vibemesh-AI's own code. Vibemesh-AI bundles **OpenSCAD** (via
 `openscad-wasm`) which is **GPL-2.0**, invoked as a separate program — see
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for what that means if you
 redistribute.

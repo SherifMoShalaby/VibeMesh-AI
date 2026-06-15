@@ -2,7 +2,7 @@
 description: Pre-PR readiness checklist (lint/build, SPEC, secrets, branding)
 allowed-tools: Read, Grep, Glob, Bash(git status:*), Bash(git diff:*), Bash(npm run lint:*), Bash(npm run build:*)
 ---
-Run a pre-PR readiness check for Vibemesh and report a pass/fail line per item. This is
+Run a pre-PR readiness check for Vibemesh-AI and report a pass/fail line per item. This is
 inspection + the verification gate — do not commit, push, or open a PR.
 
 Gather the diff first: `git status` and `git diff --stat`, plus `git diff` (staged and
@@ -25,7 +25,7 @@ unstaged) for the substantive checks below.
    high-entropy strings. `.env.example` placeholders (commented, no real value) are fine.
    Also confirm `bench/results/` (gitignored) isn't being added.
 
-4. **Branding** — the product name is **Vibemesh**. The legacy name "VibeSCAD"/"vibescad"
+4. **Branding** — the product name is **Vibemesh-AI**. The legacy name "VibeSCAD"/"vibescad"
    is only allowed where it's intentional (the package directory's legacy name, the README
    origin note, and the `vibescad.*` → `vibemesh.*` localStorage migration in
    `src/lib/storage.ts`). Flag any **new** user-facing "VibeSCAD" string the diff introduces

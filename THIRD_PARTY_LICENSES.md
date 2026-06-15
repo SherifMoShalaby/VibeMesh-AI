@@ -1,22 +1,22 @@
 # Third-Party Licenses
 
-Vibemesh's own source code is licensed under the [MIT License](LICENSE). It
+Vibemesh-AI's own source code is licensed under the [MIT License](LICENSE). It
 bundles and/or depends on third-party components under their own licenses,
-listed below. If you redistribute Vibemesh (including the built `dist/`), you
+listed below. If you redistribute Vibemesh-AI (including the built `dist/`), you
 must honor these licenses too.
 
 ## ⚠️ OpenSCAD — GPL-2.0 (copyleft)
 
-Vibemesh renders geometry with [`openscad-wasm`](https://www.npmjs.com/package/openscad-wasm),
+Vibemesh-AI renders geometry with [`openscad-wasm`](https://www.npmjs.com/package/openscad-wasm),
 a WebAssembly build of **OpenSCAD**. OpenSCAD is licensed under the
 **GNU General Public License v2.0** (GPL-2.0).
 
 - The WASM module is bundled into the production build (base64-embedded in a JS
   chunk by `src/lib/openscad/worker.ts`).
 - OpenSCAD runs as a **separate, self-contained program** invoked at arm's
-  length via its CLI entry point (`callMain([...])`) — Vibemesh does not link
-  OpenSCAD source into its own code. Vibemesh therefore treats this as
-  *aggregation / invoking a separate program*, which is why Vibemesh's own code
+  length via its CLI entry point (`callMain([...])`) — Vibemesh-AI does not link
+  OpenSCAD source into its own code. Vibemesh-AI therefore treats this as
+  *aggregation / invoking a separate program*, which is why Vibemesh-AI's own code
   can be MIT-licensed while the bundled OpenSCAD component remains under GPL-2.0.
 - The OpenSCAD source (and the openscad-wasm build scripts) are publicly
   available upstream; the GPL-2.0 obligations (source availability, no added
@@ -30,7 +30,7 @@ a WebAssembly build of **OpenSCAD**. OpenSCAD is licensed under the
   built from a documented upstream release with a recorded checksum.
 
 > Not legal advice. If you plan to ship a closed-source or commercial product
-> built on Vibemesh, review the GPL-2.0 implications of bundling OpenSCAD for
+> built on Vibemesh-AI, review the GPL-2.0 implications of bundling OpenSCAD for
 > your specific distribution before doing so.
 
 ## Permissive dependencies

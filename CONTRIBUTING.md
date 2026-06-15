@@ -1,6 +1,6 @@
-# Contributing to Vibemesh
+# Contributing to Vibemesh-AI
 
-Thanks for your interest! Vibemesh turns plain-language prompts into parametric,
+Thanks for your interest! Vibemesh-AI turns plain-language prompts into parametric,
 3D-printable OpenSCAD models, rendered entirely in the browser. Contributions of
 all kinds are welcome — bug fixes, new examples, prompt/quality improvements,
 docs, and features.

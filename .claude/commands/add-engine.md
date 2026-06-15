@@ -3,7 +3,7 @@ description: Guide adding a new AI provider/engine end-to-end
 argument-hint: <engine-id> [display name]
 allowed-tools: Read, Grep, Glob, Edit
 ---
-Help the contributor add a new AI provider engine to Vibemesh. The engine id (and
+Help the contributor add a new AI provider engine to Vibemesh-AI. The engine id (and
 optional display label) is: **$ARGUMENTS**.
 
 All AI dispatch lives in the small ESM server — the browser never sees it. Work through

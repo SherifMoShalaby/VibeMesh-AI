@@ -2,7 +2,7 @@
 description: Verification gate — run lint + build, then fix anything that fails
 allowed-tools: Read, Edit, Grep, Glob, Bash(npm run lint:*), Bash(npm run build:*)
 ---
-This is the de-facto verification gate for Vibemesh — there is **no test suite**, so
+This is the de-facto verification gate for Vibemesh-AI — there is **no test suite**, so
 `npm run lint && npm run build` is what every contributor runs before opening a PR.
 
 Do this:

@@ -723,7 +723,7 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
         const url = gl.domElement.toDataURL('image/png')
         const a = document.createElement('a')
         a.href = url
-        a.download = `vibemesh-view-${Date.now() % 100000}.png`
+        a.download = `vibemesh-ai-view-${Date.now() % 100000}.png`
         a.click()
       },
     }

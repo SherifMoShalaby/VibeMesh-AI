@@ -63,7 +63,7 @@ export default function TopBar() {
     <header className="topbar">
       <div className="brand">
         <div className="brand-mark"><DLogo /></div>
-        <div className="brand-name">vibe<b>mesh</b></div>
+        <div className="brand-name">vibe<b>mesh</b>-ai</div>
       </div>
 
       <div className="topbar-sep" />
@@ -187,7 +187,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const run = (fn: () => void | Promise<unknown>) => () => {
     setOpen(false)
     const fail = (e: unknown) => {
-      console.error('[vibemesh] export failed:', e)
+      console.error('[vibemesh-ai] export failed:', e)
       alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`)
     }
     try {

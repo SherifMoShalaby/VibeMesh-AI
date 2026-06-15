@@ -10,7 +10,7 @@ import HelpModal from './components/HelpModal'
 import ErrorBoundary from './components/ErrorBoundary'
 import { DCube, DSliders, DSparkFill, DDownload } from './components/icons'
 
-const IDLE_TITLE = 'Vibemesh — AI parametric CAD for 3D printing'
+const IDLE_TITLE = 'Vibemesh-AI — parametric CAD for 3D printing'
 
 /** Below 720px the design collapses to a viewport-first layout with a bottom
  *  tab bar. We mirror its `.is-mobile` toggle with a resize hook. */
@@ -38,7 +38,7 @@ export default function App() {
 
   // surface long-running work in the tab title (AI runs can take minutes)
   useEffect(() => {
-    document.title = generating ? '⌛ AI drafting… · Vibemesh' : compileStatus === 'compiling' ? '⚙ Rendering… · Vibemesh' : IDLE_TITLE
+    document.title = generating ? '⌛ AI drafting… · Vibemesh-AI' : compileStatus === 'compiling' ? '⚙ Rendering… · Vibemesh-AI' : IDLE_TITLE
   }, [generating, compileStatus])
 
   return (

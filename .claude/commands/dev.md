@@ -1,8 +1,8 @@
 ---
-description: Start the Vibemesh dev environment (web :5173 + API :5175)
+description: Start the Vibemesh-AI dev environment (web :5173 + API :5175)
 allowed-tools: Bash(npm run dev:*), Bash(npm install:*)
 ---
-Start the Vibemesh dev environment by running `npm run dev`. This launches both
+Start the Vibemesh-AI dev environment by running `npm run dev`. This launches both
 processes together via `concurrently`:
 
 - **API** (`dev:server`) — the plain-JS ESM Express server on `:5175` (AI provider
