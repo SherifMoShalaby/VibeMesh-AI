@@ -1,4 +1,4 @@
-# Vibemesh
+# Vibemesh-AI
 
 **Describe a part. Get a print-ready part.** — AI parametric CAD for 3D-printing folks.
 
