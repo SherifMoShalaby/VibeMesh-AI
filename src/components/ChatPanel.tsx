@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
-import { captureViewport } from '../lib/capture'
+import { captureViews } from '../lib/capture'
 import type { ChatImage } from '../types'
 import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh } from './icons'
 
@@ -47,18 +47,33 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   const stl = useStore((s) => s.stl)
   const compileStatus = useStore((s) => s.compileStatus)
   const modelDims = useStore((s) => s.modelDims)
+  const pendingAutoRefineFor = useStore((s) => s.pendingAutoRefineFor)
+  const consumeAutoRefine = useStore((s) => s.consumeAutoRefine)
   const hasReference = chat.some((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)
   const canRefine = Boolean(stl && compileStatus === 'ok' && hasReference && !generating && engine && activeProvider?.vision)
 
+  const [attachNote, setAttachNote] = useState<string | null>(null)
+  const flashAttachNote = (note: string) => {
+    setAttachNote(note)
+    setTimeout(() => setAttachNote(null), 3500)
+  }
+
   const refine = () => {
-    const render = captureViewport()
-    if (!render) return
+    const views = captureViews()
+    if (!views.length) {
+      flashAttachNote('Could not capture the viewport — orbit the model once, then try Refine again.')
+      return
+    }
     const anchor = modelDims
       ? ` The current model measures exactly ${modelDims.x} × ${modelDims.y} × ${modelDims.z} mm (X width × Y depth × Z height) — use these numbers as the absolute scale reference when correcting proportions.`
       : ''
+    const shot =
+      views.length > 1
+        ? `Attached are ${views.length} renders of the CURRENT model from fixed viewpoints (isometric, front, top — in that order).`
+        : 'Attached is a render of the CURRENT model, captured from a fixed isometric viewpoint.'
     void sendPrompt(
-      `Attached is a render of the CURRENT model, captured from a fixed isometric viewpoint.${anchor} Compare it carefully against my original reference image(s) earlier in this conversation. First list the most important discrepancies (shape, proportions, feature counts, missing or extra details), then return the corrected complete program.`,
-      [render],
+      `${shot}${anchor} Compare them carefully against my original reference image(s) earlier in this conversation. First list the most important discrepancies (shape, proportions, feature counts, missing or extra details), then return the corrected complete program.`,
+      views,
       'Refine pass',
     )
   }
@@ -75,6 +90,21 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [chat.length, streamText])
+
+  // auto-fire one refine pass after the first image-grounded model renders (store
+  // sets the flag to this project's id; we wait for canRefine, then let R3F paint).
+  // Consume INSIDE the timer — consuming up-front would flip a dep and the cleanup
+  // would cancel the timer before it fires. Project-match guard prevents misfiring
+  // on a different project if the flag is still pending after a switch.
+  useEffect(() => {
+    if (!pendingAutoRefineFor || pendingAutoRefineFor !== activeId || !canRefine) return
+    const t = setTimeout(() => {
+      consumeAutoRefine()
+      refine()
+    }, 450)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAutoRefineFor, activeId, canRefine])
 
   useEffect(() => {
     if (!generating) return
@@ -123,13 +153,6 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
       imgs.length ? imgs : undefined,
       !text && imgs.length ? 'Photo prompt' : undefined,
     )
-  }
-
-  const [attachNote, setAttachNote] = useState<string | null>(null)
-
-  const flashAttachNote = (note: string) => {
-    setAttachNote(note)
-    setTimeout(() => setAttachNote(null), 3500)
   }
 
   const attachFiles = (files: Iterable<File>) => {

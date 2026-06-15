@@ -6,7 +6,10 @@ import { zipSync, strToU8 } from 'fflate'
  * object; build items lay the parts side by side on the plate with a gap, each
  * sitting at z=0, so the slicer opens a ready-to-arrange plate.
  */
-export function buildThreeMF(parts: Array<{ name: string; stl: ArrayBuffer }>): Uint8Array<ArrayBuffer> {
+export function buildThreeMF(
+  parts: Array<{ name: string; stl: ArrayBuffer }>,
+  { arrange = true }: { arrange?: boolean } = {},
+): Uint8Array<ArrayBuffer> {
   const objects: string[] = []
   const items: string[] = []
   let cursorX = 0
@@ -17,12 +20,18 @@ export function buildThreeMF(parts: Array<{ name: string; stl: ArrayBuffer }>): 
     objects.push(
       `<object id="${id}" name="${escapeXml(part.name)}" type="model"><mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh></object>`,
     )
-    // arrange: side by side along X with 10mm gaps, centered in Y, flat on z=0
-    const tx = cursorX - bbox.minX
-    const ty = -(bbox.minY + bbox.maxY) / 2
-    const tz = -bbox.minZ
-    cursorX += bbox.maxX - bbox.minX + 10
-    items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+    if (arrange) {
+      // arrange: side by side along X with 10mm gaps, centered in Y, flat on z=0
+      const tx = cursorX - bbox.minX
+      const ty = -(bbox.minY + bbox.maxY) / 2
+      const tz = -bbox.minZ
+      cursorX += bbox.maxX - bbox.minX + 10
+      items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+    } else {
+      // preserve the mesh's own coordinates — placement is already baked into the
+      // STL (single-piece export), so re-centering would disagree with the .stl path
+      items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>`)
+    }
   })
 
   const model =
@@ -81,7 +90,10 @@ function indexMesh(stl: ArrayBuffer): {
       const x = view.getFloat32(base + k * 12, true)
       const y = view.getFloat32(base + k * 12 + 4, true)
       const z = view.getFloat32(base + k * 12 + 8, true)
-      const key = `${fmt(x)} ${fmt(y)} ${fmt(z)}`
+      // snap the dedup KEY to a 0.001mm weld grid (coords below keep full precision)
+      // so near-coincident vertices at boolean seams merge — slicers stop flagging
+      // the mesh "not watertight".
+      const key = `${snapKey(x)} ${snapKey(y)} ${snapKey(z)}`
       let id = index.get(key)
       if (id === undefined) {
         id = index.size
@@ -106,6 +118,12 @@ function indexMesh(stl: ArrayBuffer): {
 
 function fmt(n: number): string {
   return Number(n.toFixed(4)).toString()
+}
+
+/** Weld grid (0.001mm) for the vertex dedup KEY only — written coords keep full
+ *  precision; this merges near-coincident vertices from boolean seams. */
+function snapKey(n: number): number {
+  return Math.round(n / 1e-3) * 1e-3
 }
 
 function escapeXml(s: string): string {

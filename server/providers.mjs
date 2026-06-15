@@ -354,12 +354,16 @@ async function streamAnthropic({ messages, ctx, onDelta, signal }) {
   const stream = client.messages.stream(
     {
       model: anthropicModel(),
-      max_tokens: 32000,
+      // 64k: thinking + output share one budget on Opus 4.8 with adaptive thinking,
+      // so a rich design plus its reasoning can crowd a 32k ceiling — give headroom.
+      max_tokens: 64000,
       thinking: { type: 'adaptive' },
       // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking;
       // xhigh is the documented sweet spot for coding/agentic work. Anthropic engine ONLY —
       // Kimi 400s on effort and local is OpenAI-shaped, so this stays in streamAnthropic.
-      output_config: { effort: 'xhigh' },
+      // VIBEMESH_EFFORT overrides it (default xhigh) so the effort A/B can run via the bench
+      // without a code change — do NOT lower the default without bench evidence.
+      output_config: { effort: process.env.VIBEMESH_EFFORT || 'xhigh' },
       system,
       messages,
     },
@@ -517,7 +521,31 @@ function agentPromptFromMessages(messages) {
   }
   prompt += contentToText(last.content)
 
-  const images = collectImages(last.content)
+  // Collect images from ALL user turns, not just the last — otherwise an
+  // image-grounded refine on claude-code loses the original reference photo. But
+  // take the LATEST user turn's images FIRST (those are the render snapshots a
+  // refine actually compares — and the iso/front/top order the prompt promises),
+  // then backfill earlier reference images oldest-first up to the cap, so a
+  // multi-reference history can't starve the renders. De-duped by payload.
+  const images = []
+  const seen = new Set()
+  const CAP = 4
+  const add = (m) => {
+    if (!m) return
+    for (const img of collectImages(m.content)) {
+      const key = img.source?.data
+      if (key && !seen.has(key) && images.length < CAP) {
+        seen.add(key)
+        images.push(img)
+      }
+    }
+  }
+  const userTurns = messages.filter((m) => m.role === 'user')
+  add(userTurns[userTurns.length - 1]) // latest turn (renders) first
+  for (const m of userTurns.slice(0, -1)) {
+    if (images.length >= CAP) break
+    add(m) // earlier reference photos, oldest-first
+  }
   if (images.length === 0) return prompt
 
   // stream a single user message with image blocks

@@ -1,11 +1,16 @@
 import type { CompileResult } from '../../types'
 
-const RENDER_TIMEOUT_MS = 90_000
+// Per-call watchdog. The interactive default is far below the old flat 90s so a
+// hung render surfaces fast; the store passes a tighter budget for the Draft
+// fallback retry (so worst-case feedback is primary+draft, not 90s+90s) and a
+// roomier one for deliberate one-shot exports.
+const DEFAULT_RENDER_TIMEOUT_MS = 60_000
 
 interface PendingJob {
   id: number
   code: string
   defines: string[]
+  timeoutMs: number
   resolve: (result: CompileResult) => void
 }
 
@@ -22,9 +27,9 @@ class OpenScadEngine {
   private queued: PendingJob | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
 
-  compile(code: string, defines: string[] = []): Promise<CompileResult> {
+  compile(code: string, defines: string[] = [], timeoutMs: number = DEFAULT_RENDER_TIMEOUT_MS): Promise<CompileResult> {
     return new Promise((resolve) => {
-      const job: PendingJob = { id: this.nextId++, code, defines, resolve }
+      const job: PendingJob = { id: this.nextId++, code, defines, timeoutMs, resolve }
       if (this.active) {
         // replace any previously queued job — only the newest matters
         this.queued?.resolve({ ok: false, error: 'superseded' })
@@ -38,7 +43,7 @@ class OpenScadEngine {
   private run(job: PendingJob): void {
     this.active = job
     const worker = this.ensureWorker()
-    this.timer = setTimeout(() => this.onTimeout(), RENDER_TIMEOUT_MS)
+    this.timer = setTimeout(() => this.onTimeout(), job.timeoutMs)
     worker.postMessage({ id: job.id, code: job.code, defines: job.defines })
   }
 
@@ -60,10 +65,11 @@ class OpenScadEngine {
   }
 
   private onTimeout(): void {
+    const ms = this.active?.timeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS
     this.respawn()
     this.finish({
       ok: false,
-      error: `Render timed out after ${RENDER_TIMEOUT_MS / 1000}s. The model is probably too heavy (minkowski/hull on complex shapes, very high $fn). Ask the AI to simplify it.`,
+      error: `Render timed out after ${ms / 1000}s — the model is too heavy to render in time. Ask the AI to simplify it.`,
     })
   }
 

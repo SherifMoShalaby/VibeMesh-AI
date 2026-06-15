@@ -74,7 +74,7 @@ export interface QualityPreset {
 
 export const QUALITY_PRESETS: QualityPreset[] = [
   { id: 'draft', label: 'Draft', fa: 12, fs: 2 },
-  { id: 'standard', label: 'Standard', fa: 6, fs: 0.8 },
+  { id: 'standard', label: 'Standard', fa: 4, fs: 0.8 },
   { id: 'fine', label: 'Fine', fa: 3, fs: 0.4 },
   { id: 'ultra', label: 'Ultra', fa: 1.5, fs: 0.25 },
 ]

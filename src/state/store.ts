@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { BedSize, ChatMessage, CompileResult, ParamValue, ParamValues, Project, ScadParameter } from '../types'
 import { PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { buildDefines, extractScadBlock, parseParameters } from '../lib/params'
-import { buildAutoFixPrompt } from '../lib/compileReport'
+import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, type HealthInfo } from '../lib/api'
@@ -68,6 +68,11 @@ interface VibeState {
 
   generating: boolean
   streamText: string
+  /** project id awaiting its one auto-refine pass (set when the first image-grounded
+   *  model renders) → ChatPanel fires only when it matches the active project, so a
+   *  lingering flag can never misfire on a different project */
+  pendingAutoRefineFor: string | null
+  consumeAutoRefine: () => void
 
   bedId: string
   /** user-defined bed dimensions, used when bedId === 'custom' */
@@ -144,6 +149,12 @@ function sameTransform(a: VibeState['meshTransform'], b: VibeState['meshTransfor
 
 const VP_HISTORY_LIMIT = 30
 
+// Render watchdogs (ms). Primary interactive renders use the client default; the
+// Draft fallback gets a tight budget so a heavy model fails fast (primary+draft,
+// not 90s+90s), while deliberate one-shot exports get extra headroom.
+const RENDER_TIMEOUT_DRAFT = 20_000
+const RENDER_TIMEOUT_EXPORT = 90_000
+
 /** column-major 4×4 from position + XYZ-order euler rotation (radians) */
 function composeMatrix(p: [number, number, number], r: [number, number, number]): number[] {
   const [cx, cy, cz] = r.map(Math.cos)
@@ -175,8 +186,22 @@ function detectKitIntent(text: string): boolean {
   )
 }
 
+/** A clean compile can still be unusable. Return a reason the render is degenerate,
+ *  or null. checkBed is false for multi-part assembly previews (allowed to exceed
+ *  the bed); empty/NaN/tiny checks always apply. */
+function degenerateReason(dims: StlBBox | null, bed: { x: number; y: number; z: number }, checkBed: boolean): string | null {
+  if (!dims) return 'the render produced no measurable geometry'
+  const { x, y, z } = dims
+  if (![x, y, z].every((n) => Number.isFinite(n))) return 'the bounding box is not finite (NaN/Infinity)'
+  if (Math.min(x, y, z) < 0.5) return `a dimension is implausibly small (${x}×${y}×${z} mm)`
+  if (checkBed && x > bed.x && y > bed.y && z > bed.z) return `every dimension exceeds the ${bed.x}×${bed.y}×${bed.z} mm bed (${x}×${y}×${z} mm)`
+  return null
+}
+
 let abortController: AbortController | null = null
 let paramTimer: ReturnType<typeof setTimeout> | null = null
+// projects that already auto-fired their one refine pass (fire at most once each)
+const autoRefinedProjects = new Set<string>()
 function clearParamTimer() {
   if (paramTimer) {
     clearTimeout(paramTimer)
@@ -200,10 +225,19 @@ export const useStore = create<VibeState>((set, get) => {
     return ['-D', '$fn=0', '-D', `$fa=${preset.fa}`, '-D', `$fs=${preset.fs}`]
   }
 
-  async function compile(code: string, defines: string[]) {
+  /** Multi-part exports ship at LEAST Fine — the viewport preview (default
+   *  Standard, fa4/fs0.8) is too coarse to print smooth curves. An Ultra preview
+   *  exports at Ultra. The per-piece Draft timeout fallback still protects heavy pieces. */
+  function exportQuality(): (typeof QUALITY_PRESETS)[number] {
+    const cur = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
+    const fine = QUALITY_PRESETS.find((q) => q.id === 'fine')!
+    return QUALITY_PRESETS.indexOf(cur) >= QUALITY_PRESETS.indexOf(fine) ? cur : fine
+  }
+
+  async function compile(code: string, defines: string[]): Promise<CompileResult> {
     if (!code.trim()) {
       set({ compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
-      return
+      return { ok: false, error: 'empty' }
     }
     // results landing after a project switch must not touch state (stale-render race)
     const projectAtStart = get().activeId
@@ -215,14 +249,15 @@ export const useStore = create<VibeState>((set, get) => {
     // Per-call $fn (hex sockets etc.) is untouched by these root-scope overrides.
     const preset = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
     let result: CompileResult = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)])
-    if (result.error === 'superseded' || stale()) return
+    // superseded/stale → a sentinel the caller treats as "ignore" (no auto-repair)
+    if (result.error === 'superseded' || stale()) return { ok: false, error: 'superseded' }
 
     // heavy-model fallback: a timeout at higher quality gets one retry at Draft
     let note: string | null = null
     if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
       set({ compileStatus: 'compiling' })
-      result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])])
-      if (result.error === 'superseded' || stale()) return
+      result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
+      if (result.error === 'superseded' || stale()) return { ok: false, error: 'superseded' }
       if (result.ok) {
         note = `model too heavy for ${preset.label} — rendered at Draft`
       }
@@ -254,6 +289,7 @@ export const useStore = create<VibeState>((set, get) => {
         compileMs: result.ms ?? null,
       })
     }
+    return result
   }
 
   function activeChat(): ChatMessage[] {
@@ -268,16 +304,37 @@ export const useStore = create<VibeState>((set, get) => {
     saveProjects(updated)
   }
 
-  function adoptCode(code: string): Promise<void> {
+  /**
+   * Adopt a new program. With `carryFrom` (the previous params+values), carry the
+   * user's slider tweaks forward across an AI iteration — but only for params whose
+   * code default is UNCHANGED (recompile semantics: if the new code changed a
+   * default, the code wins), and only if the carried value is still in range/valid.
+   * Without `carryFrom` (rollback / load example) every param resets to its default.
+   */
+  function adoptCode(code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }): Promise<CompileResult> {
     const params = parseParameters(code)
     const paramValues: ParamValues = {}
-    for (const p of params) paramValues[p.name] = p.defaultValue
+    for (const p of params) {
+      let value: ParamValue = p.defaultValue
+      if (carryFrom) {
+        const old = carryFrom.params.find((o) => o.name === p.name)
+        if (old && old.defaultValue === p.defaultValue && carryFrom.values[p.name] !== undefined) {
+          let v = carryFrom.values[p.name]
+          if (p.kind === 'enum' && p.options && !p.options.some((o) => String(o) === String(v))) v = p.defaultValue
+          if (typeof v === 'number' && ((p.min !== undefined && v < p.min) || (p.max !== undefined && v > p.max))) v = p.defaultValue
+          value = v
+        }
+      }
+      paramValues[p.name] = value
+    }
     set({ code, params, paramValues })
-    return compile(code, [])
+    return compile(code, buildDefines(params, paramValues))
   }
 
-  /** one automatic render-error repair: error-only, off for weak local engines, capped */
-  const MAX_AUTO_FIX = 1
+  /** automatic repair budget, SHARED across the contract-format retry and the
+   *  render/degenerate/structural auto-fix so they can never stack unboundedly.
+   *  Off for weak local engines. 2 lets a grounded second attempt land. */
+  const MAX_AUTO_FIX = 2
 
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
   async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0) {
@@ -294,7 +351,25 @@ export const useStore = create<VibeState>((set, get) => {
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
       })
-      const { code, prose } = extractScadBlock(full)
+      const { code, prose, blockCount } = extractScadBlock(full)
+
+      // Contract enforcement: the reply MUST contain exactly ONE scad block. On 0
+      // or >1 blocks, ask once for a single complete program — Opus 4.8 asks more
+      // often and a prose-only / multi-block reply adopts nothing useful. Shares
+      // the auto-fix attempt budget so it can never stack, and is off for weak
+      // local engines (which can't reliably honor the format anyway).
+      const contractViolated = code === null || blockCount > 1
+      if (contractViolated && attempt < MAX_AUTO_FIX && engine && !engine.startsWith('local:')) {
+        setChat([...activeChat(), { id: newId(), role: 'assistant', text: prose || 'Returning the program again.' }])
+        const nudge =
+          code === null
+            ? 'Your last reply contained no OpenSCAD code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program, per the response format.'
+            : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
+        setChat([...activeChat(), { id: newId(), role: 'user', text: nudge, action: 'Fix format' }])
+        await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1)
+        return
+      }
+
       const isFirstModel = code !== null && !activeChat().some((m) => m.code)
       const assistantMsg: ChatMessage = {
         id: newId(),
@@ -315,7 +390,8 @@ export const useStore = create<VibeState>((set, get) => {
         ])
       }
       if (code) {
-        await adoptCode(code)
+        // carry the user's still-valid slider tweaks across the iteration
+        const compileResult = await adoptCode(code, { params: get().params, values: get().paramValues })
         persist()
         // auto-name the project: prefer the user's words; for app-initiated
         // image-only sends use the AI's description instead of canned text
@@ -326,21 +402,59 @@ export const useStore = create<VibeState>((set, get) => {
           persist({ name: name.length > 42 ? name.slice(0, 39) + '…' : name || 'Untitled part' })
         }
 
-        // Phase 5: auto-repair a hard render error ONCE. Error-only (a clean render is
-        // never touched), gated off for weak local engines, capped — proven safe by the
-        // bench T5-fix task. The Auto-fix turn re-feeds the error so the model can correct it.
+        // ── Recovery loop. Repair not only hard render errors but clean-but-WRONG
+        // renders (empty/NaN/tiny/over-bed) and structural assembly faults. Gated on
+        // the ACTUAL compile result (not the racing compileStatus), capped by the
+        // shared attempt budget, off for weak local engines. Off-bed single parts get
+        // a deterministic drop-to-bed instead of spending an AI turn.
         const eng = get().engine
-        if (
-          attempt < MAX_AUTO_FIX &&
-          useUi.getState().autoRepair &&
-          get().compileStatus === 'error' &&
-          get().compileError &&
-          eng &&
-          !eng.startsWith('local:')
-        ) {
-          const fixText = buildAutoFixPrompt(get().compileError!)
+        const canRepair = attempt < MAX_AUTO_FIX && useUi.getState().autoRepair && !!eng && !eng.startsWith('local:')
+        if (canRepair && !compileResult.ok && compileResult.error && compileResult.error !== 'superseded' && compileResult.error !== 'empty') {
+          const fixText = buildAutoFixPrompt(compileResult.error)
           setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
           await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1)
+        } else if (compileResult.ok) {
+          const params = get().params
+          const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
+          const bed = resolveBed(get().bedId, get().customBed)
+          const dims = get().modelDims
+          const degenerate = degenerateReason(dims, bed, !isMultiPart)
+          const structural = structuralReport(code, params).issues
+          if (canRepair && (degenerate || structural.length)) {
+            const parts: string[] = []
+            if (degenerate) parts.push(`The program rendered but the result is not usable: ${degenerate}. Return a corrected complete program with sensible millimeter dimensions.`)
+            if (structural.length)
+              parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly problems, then return the corrected complete program:\n${structural.map((i) => `- ${i}`).join('\n')}`)
+            const fixText = parts.join('\n\n')
+            setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
+            await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1)
+          } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
+            // off-bed single part → deterministic drop-to-bed (no AI turn). The export
+            // bakes meshTransform, so the exported/printed part sits flat on z=0.
+            get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
+            set({ compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
+          }
+        }
+
+        // Auto-fire ONE refine pass after the first image-grounded model renders —
+        // the refine loop is the main accuracy mechanism but is opt-in/undiscoverable.
+        // ChatPanel consumes the flag once the canvas has painted. Once per project.
+        if (isFirstModel && compileResult.ok) {
+          const triggerImages = [...activeChat()].reverse().find((m) => m.role === 'user')?.images
+          const provider = get().health?.providers.find((p) => p.id === eng)
+          const aid = get().activeId
+          if (
+            triggerImages?.length &&
+            provider?.vision &&
+            !!eng &&
+            !eng.startsWith('local:') &&
+            useUi.getState().autoRepair &&
+            aid &&
+            !autoRefinedProjects.has(aid)
+          ) {
+            autoRefinedProjects.add(aid)
+            set({ pendingAutoRefineFor: aid })
+          }
         }
       }
     } catch (err) {
@@ -378,6 +492,7 @@ export const useStore = create<VibeState>((set, get) => {
     fitVersion: 0,
     generating: false,
     streamText: '',
+    pendingAutoRefineFor: null,
     bedId: localStorage.getItem(BED_KEY) ?? PRINTER_BEDS[0].id,
     customBed: loadCustomBed(),
     quality: localStorage.getItem(QUALITY_KEY) ?? 'standard',
@@ -495,6 +610,8 @@ export const useStore = create<VibeState>((set, get) => {
     abortGeneration: () => {
       abortController?.abort()
     },
+
+    consumeAutoRefine: () => set({ pendingAutoRefineFor: null }),
 
     setParamValue: (name, value) => {
       const paramValues = { ...get().paramValues, [name]: value }
@@ -668,10 +785,10 @@ export const useStore = create<VibeState>((set, get) => {
 
     /** Compile and download every piece of a multi-part design (`part` enum). */
     exportPlates: async (fileBase) => {
-      const { code, params, paramValues, quality } = get()
+      const { code, params, paramValues } = get()
       const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
       if (!partParam || get().exportingPlates) return
-      const preset = QUALITY_PRESETS.find((q) => q.id === quality) ?? QUALITY_PRESETS[1]
+      const preset = exportQuality()
       const pieces = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
       set({ exportingPlates: true })
       const failed: string[] = []
@@ -679,10 +796,10 @@ export const useStore = create<VibeState>((set, get) => {
       try {
         for (const piece of pieces) {
           const defines = buildDefines(params, { ...paramValues, part: piece })
-          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)])
+          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
           // same heavy-model fallback the viewport gets: retry timeouts at Draft
           if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])])
+            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
             if (result.ok) degraded.push(piece)
           }
           if (result.ok && result.stl) {
@@ -706,14 +823,31 @@ export const useStore = create<VibeState>((set, get) => {
     export3mf: async (fileBase) => {
       const { code, params, paramValues, quality, stl, meshTransform } = get()
       if (get().exportingPlates) return
-      const preset = QUALITY_PRESETS.find((q) => q.id === quality) ?? QUALITY_PRESETS[1]
+      const preset = exportQuality()
       const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
 
       // single-piece design: package the current geometry (with viewport placement baked)
       if (!partParam) {
         if (!stl) return
-        const buffer = meshTransform ? transformStl(stl, composeMatrix(meshTransform.position, meshTransform.rotation)) : stl
-        downloadBlob(buildThreeMF([{ name: fileBase, stl: buffer }]), `${fileBase}.3mf`, 'model/3mf')
+        // re-render at Fine for a smooth printed part (the Standard preview is coarse);
+        // ask first, since 3MF should reflect what the user is exporting.
+        let source = stl
+        const belowFine = quality !== 'fine' && quality !== 'ultra'
+        if (belowFine) {
+          const upgrade = confirm(
+            'Re-render at Fine quality for export?\n\nThe preview caps curve smoothness; Fine prints noticeably smoother curves.\n\nOK: re-render at Fine (may take a while)\nCancel: export the preview as-is',
+          )
+          if (upgrade) {
+            const defines = buildDefines(params, paramValues)
+            const result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
+            if (result.ok && result.stl) source = result.stl
+            else alert('Fine-quality render failed (model too heavy) — exporting the preview as-is.')
+          }
+        }
+        const buffer = meshTransform ? transformStl(source, composeMatrix(meshTransform.position, meshTransform.rotation)) : source
+        // arrange:false — the mesh already carries its placement (baked above);
+        // re-centering would discard it and disagree with the STL path.
+        downloadBlob(buildThreeMF([{ name: fileBase, stl: buffer }], { arrange: false }), `${fileBase}.3mf`, 'model/3mf')
         return
       }
 
@@ -725,9 +859,9 @@ export const useStore = create<VibeState>((set, get) => {
       try {
         for (const piece of pieces) {
           const defines = buildDefines(params, { ...paramValues, part: piece })
-          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)])
+          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
           if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])])
+            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
             if (result.ok) degraded.push(piece)
           }
           if (result.ok && result.stl) collected.push({ name: piece, stl: result.stl })
@@ -747,7 +881,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     exportStlSmart: async (fileBase) => {
-      const { stl, quality, degradedToDraft, code, params, paramValues, meshTransform } = get()
+      const { stl, quality, degradedToDraft, code, params, paramValues } = get()
       if (!stl) return
       // bake any viewport move/rotate into the export so WYSIWYG holds
       const bake = (buffer: ArrayBuffer): ArrayBuffer => {
@@ -755,15 +889,21 @@ export const useStore = create<VibeState>((set, get) => {
         if (!t) return buffer
         return transformStl(buffer, composeMatrix(t.position, t.rotation))
       }
+      // Anything below Fine ships a coarse mesh — the default Standard preview caps
+      // curves at fa4/fs0.8. Offer a Fine re-render (with consent, since STL is the
+      // "what you see" format); Fine/Ultra previews are already smooth enough.
       const fine = QUALITY_PRESETS.find((q) => q.id === 'fine')!
-      const degraded = quality === 'draft' || degradedToDraft
-      if (degraded && fine) {
+      const belowFine = quality !== 'fine' && quality !== 'ultra'
+      if (belowFine && fine) {
+        const wasDraft = quality === 'draft' || degradedToDraft
         const upgrade = confirm(
-          'The preview was rendered at Draft quality — curves will look faceted when printed.\n\nOK: re-render at Fine quality for export (may take a while)\nCancel: export the Draft-quality STL as-is',
+          wasDraft
+            ? 'The preview was rendered at Draft quality — curves will look faceted when printed.\n\nOK: re-render at Fine quality for export (may take a while)\nCancel: export the preview STL as-is'
+            : 'Re-render at Fine quality for export?\n\nThe Standard preview caps curve smoothness; Fine prints noticeably smoother curves.\n\nOK: re-render at Fine for export (may take a while)\nCancel: export the Standard preview STL as-is',
         )
         if (upgrade) {
           const defines = buildDefines(params, paramValues)
-          const result = await openscad.compile(code, [...defines, ...qualityArgsFor(fine)])
+          const result = await openscad.compile(code, [...defines, ...qualityArgsFor(fine)], RENDER_TIMEOUT_EXPORT)
           if (result.ok && result.stl) {
             downloadBlob(bake(result.stl), `${fileBase}.stl`, 'model/stl')
             return
@@ -771,7 +911,6 @@ export const useStore = create<VibeState>((set, get) => {
           alert('Fine-quality render failed (model too heavy) — exporting the preview STL instead.')
         }
       }
-      void meshTransform
       downloadBlob(bake(stl), `${fileBase}.stl`, 'model/stl')
     },
   }
