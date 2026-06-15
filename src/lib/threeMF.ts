@@ -28,7 +28,7 @@ export function buildThreeMF(parts: Array<{ name: string; stl: ArrayBuffer }>): 
   const model =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">` +
-    `<metadata name="Application">Vibemesh</metadata>` +
+    `<metadata name="Application">Vibemesh-AI</metadata>` +
     `<resources>${objects.join('')}</resources>` +
     `<build>${items.join('')}</build>` +
     `</model>`

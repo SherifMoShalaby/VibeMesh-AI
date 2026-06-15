@@ -263,7 +263,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
             <div key={msg.id} className={`msg ai${msg.error ? ' err' : ''}`}>
               <div className="msg-head">
                 <span className="msg-avatar ai"><DSparkFill /></span>
-                <span className="msg-who">Vibemesh</span>
+                <span className="msg-who">Vibemesh-AI</span>
                 <span className="msg-time">{now()}</span>
               </div>
               {msg.images?.map((img, j) => (
@@ -298,7 +298,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
           <div className="msg ai">
             <div className="msg-head">
               <span className="msg-avatar ai"><DSparkFill /></span>
-              <span className="msg-who">Vibemesh</span>
+              <span className="msg-who">Vibemesh-AI</span>
               <span className="msg-time">{now()}</span>
             </div>
             <div className="msg-body"><span className="streaming">{streamProse || 'Thinking…'}</span></div>

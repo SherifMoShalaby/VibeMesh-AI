@@ -25,7 +25,7 @@ const CSP = [
 
 function cspPlugin(): Plugin {
   return {
-    name: 'vibemesh-csp',
+    name: 'vibemesh-ai-csp',
     apply: 'build',
     transformIndexHtml(html) {
       return html.replace('</title>', `</title>\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`)

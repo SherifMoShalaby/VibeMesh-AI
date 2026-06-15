@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Vibemesh (package name `vibemesh`; the directory keeps the legacy "VibeSCAD" name) — AI text/image-to-CAD for 3D printing. Plain-language prompts become parametric OpenSCAD programs, rendered entirely in the browser via openscad-wasm, with live parameter sliders and slicer-ready `.3mf`/`.stl` export. Local-first: projects live in localStorage, AI keys in `.env`.
+Vibemesh-AI (package name `vibemesh-ai`; the directory keeps the legacy "VibeSCAD" name) — AI text/image-to-CAD for 3D printing. Plain-language prompts become parametric OpenSCAD programs, rendered entirely in the browser via openscad-wasm, with live parameter sliders and slicer-ready `.3mf`/`.stl` export. Local-first: projects live in localStorage, AI keys in `.env`.
 
 ## Commands
 

@@ -1,5 +1,5 @@
 /**
- * Vibemesh model benchmark — engine × task matrix against the live API.
+ * Vibemesh-AI model benchmark — engine × task matrix against the live API.
  * Usage: node bench/run.mjs
  *   BENCH_ENGINES=claude-code,kimi   restrict engines
  *   BENCH_TASKS=T1-cube,T3-clip,T7-kit   restrict tasks (followups skip if their dep is excluded)

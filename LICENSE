@@ -22,6 +22,6 @@ SOFTWARE.
 
 ---
 
-This MIT license covers Vibemesh's own source code. Vibemesh bundles and
+This MIT license covers Vibemesh-AI's own source code. Vibemesh-AI bundles and
 invokes third-party components under their own licenses — notably OpenSCAD
 (via openscad-wasm) under GPL-2.0. See THIRD_PARTY_LICENSES.md for details.

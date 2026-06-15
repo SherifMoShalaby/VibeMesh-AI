@@ -1,6 +1,6 @@
 ---
 name: add-ai-engine
-description: Use when adding a new AI provider/engine to Vibemesh or modifying an existing one (anthropic, kimi, claude-code, local). Covers the streamChat dispatch, the per-engine stream functions, providerStatus detection + /api/health, runtime key persistence (applyRuntimeSetting/.env), and the client-side history rules that all Anthropic-protocol engines depend on.
+description: Use when adding a new AI provider/engine to Vibemesh-AI or modifying an existing one (anthropic, kimi, claude-code, local). Covers the streamChat dispatch, the per-engine stream functions, providerStatus detection + /api/health, runtime key persistence (applyRuntimeSetting/.env), and the client-side history rules that all Anthropic-protocol engines depend on.
 ---
 
 # Adding or modifying an AI engine

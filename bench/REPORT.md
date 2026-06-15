@@ -1,4 +1,4 @@
-# Vibemesh (formerly VibeSCAD) — E2E & Model Benchmark Report (2026-06-11)
+# Vibemesh-AI (formerly VibeSCAD) — E2E & Model Benchmark Report (2026-06-11)
 
 ## Method
 6 tasks × 3 engines through the live API; every reply compiled with the app's own

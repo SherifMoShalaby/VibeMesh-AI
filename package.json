@@ -1,5 +1,5 @@
 {
-  "name": "vibemesh",
+  "name": "vibemesh-ai",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,11 @@
   "author": "Sherif Mo. Shalaby <sherif2222222@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SherifMoShalaby/vibemesh.git"
+    "url": "git+https://github.com/SherifMoShalaby/VibeMesh-AI.git"
   },
-  "homepage": "https://github.com/SherifMoShalaby/vibemesh#readme",
+  "homepage": "https://github.com/SherifMoShalaby/VibeMesh-AI#readme",
   "bugs": {
-    "url": "https://github.com/SherifMoShalaby/vibemesh/issues"
+    "url": "https://github.com/SherifMoShalaby/VibeMesh-AI/issues"
   },
   "keywords": [
     "openscad",

@@ -3,7 +3,7 @@ import type { Project } from '../types'
 const KEY = 'vibemesh.projects.v1'
 const ACTIVE_KEY = 'vibemesh.activeProject.v1'
 
-// VibeSCAD → Vibemesh rename: copy each legacy key once (old keys are kept
+// VibeSCAD → Vibemesh-AI rename: copy each legacy key once (old keys are kept
 // untouched so an older build can still open the same browser profile).
 const LEGACY_PREFIX = 'vibescad.'
 const PREFIX = 'vibemesh.'

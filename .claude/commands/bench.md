@@ -3,7 +3,7 @@ description: Run the model benchmark (engine × task matrix) and summarize resul
 argument-hint: [engine and/or task filter, e.g. claude-code T1-cube,T7-kit]
 allowed-tools: Read, Grep, Glob, Bash(node bench/run.mjs:*), Bash(node bench/score.mjs:*), Bash(node bench/compare.mjs:*), Bash(BENCH_ENGINES=*), Bash(BENCH_TASKS=*)
 ---
-Run the Vibemesh model benchmark — an engine × task matrix that generates OpenSCAD
+Run the Vibemesh-AI model benchmark — an engine × task matrix that generates OpenSCAD
 against the live API, compiles each result with openscad-wasm, and (for tasks whose
 geometry is fully determined by the prompt) voxel-scores it against
 `bench/gold/<task>.scad`.

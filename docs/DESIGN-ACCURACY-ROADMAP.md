@@ -1,4 +1,4 @@
-# Vibemesh — Design Accuracy & "Buildable Kit" Roadmap
+# Vibemesh-AI — Design Accuracy & "Buildable Kit" Roadmap
 
 Investigation output (11 feasibility-reviewed expert leads + synthesis). Driving failure:
 **"a simple lego car parts so I can build it" returns one car-shaped manifold, not a connectable kit

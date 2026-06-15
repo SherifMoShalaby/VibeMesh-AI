@@ -1,4 +1,4 @@
-# Vibemesh — behavioral spec (image-to-CAD pipeline)
+# Vibemesh-AI — behavioral spec (image-to-CAD pipeline)
 
 One page. The contract for the four surfaces; anything not specified here is undefined behavior.
 

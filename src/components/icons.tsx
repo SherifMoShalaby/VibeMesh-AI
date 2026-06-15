@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react'
 
-/** Vibemesh icon set — one language, three signatures:
+/** Vibemesh-AI icon set — one language, three signatures:
     · 3D concepts drawn in the logo's isometric projection (cubes, bed, parts, drop)
     · hexagons where generic sets use circles (help badge, camera lens, settings = hex nut)
     · filled node-dots echoing the logo's mesh vertices
