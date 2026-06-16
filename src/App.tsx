@@ -8,7 +8,7 @@ import RightPanel from './components/RightPanel'
 import EnginesModal from './components/EnginesModal'
 import HelpModal from './components/HelpModal'
 import ErrorBoundary from './components/ErrorBoundary'
-import { DCube, DSliders, DSparkFill, DDownload } from './components/icons'
+import { DCube, DSliders, DSparkFill } from './components/icons'
 
 const IDLE_TITLE = 'Vibemesh-AI — parametric CAD for 3D printing'
 
@@ -62,9 +62,6 @@ export default function App() {
           </button>
           <button className={`mtab${mobileTab === 'chat' ? ' active' : ''}`} onClick={() => setMobileTab(mobileTab === 'chat' ? 'model' : 'chat')}>
             <DSparkFill /> Chat
-          </button>
-          <button className="mtab" onClick={() => document.getElementById('topbar-export')?.click()}>
-            <DDownload /> Export
           </button>
         </nav>
       )}

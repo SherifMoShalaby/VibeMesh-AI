@@ -212,6 +212,7 @@ function ParamControl({
         <span className="param-valbox">
           <input
             type="number"
+            lang="en-US"
             aria-label={`${name} (exact value)`}
             min={param.min}
             max={param.max}
