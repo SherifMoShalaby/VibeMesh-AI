@@ -7,6 +7,8 @@ import { zipSync, strToU8 } from 'fflate'
  * sitting at z=0, so the slicer opens a ready-to-arrange plate.
  */
 export function buildThreeMF(
+  // `place` is the per-plate packed position; `rot` (the packer's single source of truth) is the
+  // Z-spin to bake — absent/undefined means identity (rot 0). Callers without `place` arrange normally.
   parts: Array<{ name: string; stl: ArrayBuffer; place?: { x: number; y: number; rot?: 0 | 90 } }>,
   { arrange = true }: { arrange?: boolean } = {},
 ): Uint8Array<ArrayBuffer> {
