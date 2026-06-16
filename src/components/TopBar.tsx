@@ -46,6 +46,7 @@ export default function TopBar() {
   const code = useStore((s) => s.code)
   const stl = useStore((s) => s.stl)
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
+  const mobileTab = useUi((s) => s.mobileTab)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -64,6 +65,12 @@ export default function TopBar() {
       <div className="brand">
         <div className="brand-mark"><DLogo /></div>
         <div className="brand-name">vibe<b>mesh</b>-ai</div>
+      </div>
+
+      {/* mobile-only context: which project + which screen you're on (desktop shows full project-controls) */}
+      <div className="mobile-title">
+        <span className="mt-project">{active?.name ?? 'New part'}</span>
+        <span className="mt-screen">{mobileTab === 'params' ? 'Tweak' : mobileTab === 'chat' ? 'Chat' : 'Model'}</span>
       </div>
 
       <div className="topbar-sep" />

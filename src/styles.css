@@ -166,6 +166,7 @@ input[type='checkbox']:focus-visible,
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative; /* anchor the absolute mobile tab-bar + bottom sheets to the app shell */
   background: var(--gutter);
   background-image:
     radial-gradient(1200px 600px at 70% -10%, rgba(61,111,245,0.05), transparent 60%);
@@ -594,8 +595,13 @@ input[type='checkbox']:focus-visible,
 
 /* ─────────────────────── VIEWPORT ─────────────────────────── */
 .viewport-pane {
+  position: relative;
   padding: 0; border: none; background: transparent; box-shadow: none; overflow: visible;
 }
+/* position the chat pane as its own stacking/containing context (for the drag overlay) WITHOUT an
+   inline style — inline beat the mobile `.app.is-mobile .chat-pane { position:absolute }` rule, which
+   kept the pane in flow and shoved the viewport off-screen (the "black viewport" bug). */
+.chat-pane { position: relative; }
 .viewport {
   position: relative;
   flex: 1;
@@ -1144,10 +1150,16 @@ input[type='checkbox']:focus-visible,
 .app.is-mobile .topbar-sep,
 .app.is-mobile .api-chip .chev { display: none; }
 .app.is-mobile .api-chip .api-chip-label { display: none; }
-.app.is-mobile .brand-name { font-size: var(--fs-title); }
+/* on mobile the brand text yields to the project/screen context (the logo mark stays) */
+.app.is-mobile .brand-name { display: none; }
+.mobile-title { display: none; }
+.app.is-mobile .mobile-title { display: flex; flex-direction: column; justify-content: center; min-width: 0; margin-right: auto; line-height: 1.15; }
+.app.is-mobile .mt-project { font-size: var(--fs-small); font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; }
+.app.is-mobile .mt-screen { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
 
 .app.is-mobile .app-body { display: block; padding: 0; gap: 0; position: relative; }
-.app.is-mobile .viewport-pane { border-radius: 0; border: none; height: 100%; padding: 0; }
+/* reserve the 64px bottom tab-bar so the 3D canvas sits fully above it (not under it) */
+.app.is-mobile .viewport-pane { border-radius: 0; border: none; height: calc(100% - 64px); padding: 0; }
 .app.is-mobile .viewport { border-radius: 0; border: none; height: 100%; }
 
 .app.is-mobile .hud-bar { bottom: auto; top: var(--s3); left: 50%; transform: translateX(-50%); max-width: calc(100% - 20px); }
