@@ -933,13 +933,19 @@ function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<s
               const g = geos.get(pl.name)
               const bb = g?.geometry.boundingBox
               if (!g || !bb) return null
-              // bed is centered at the group origin (−bed/2..+bed/2); packer gives corner-origin
-              // coords (0..bed). Shift to centered, then drop the piece's own bbox min to it.
+              // bed is centered at the group origin (−bed/2..+bed/2); the packer gives corner-origin
+              // coords (0..bed). three.js applies worldPos = position + R·v, so we seat the post-
+              // rotation bbox min to the packer corner. For a 90° CCW Z-spin the rotated min is
+              // (−bb.max.y, bb.min.x); rot===0 is the original min. This is the SAME affine the
+              // .3mf export bakes (buildThreeMF), keeping the preview and the exported plate identical.
+              const rminX = pl.rot === 90 ? -bb.max.y : bb.min.x
+              const rminY = pl.rot === 90 ? bb.min.x : bb.min.y
               return (
                 <mesh
                   key={pl.name}
                   geometry={g.geometry}
-                  position={[pl.x - bed.x / 2 - bb.min.x, pl.y - bed.y / 2 - bb.min.y, -bb.min.z]}
+                  rotation={[0, 0, pl.rot === 90 ? Math.PI / 2 : 0]}
+                  position={[pl.x - bed.x / 2 - rminX, pl.y - bed.y / 2 - rminY, -bb.min.z]}
                 >
                   <meshStandardMaterial color="#b9bdc6" roughness={0.55} metalness={0.12} flatShading side={THREE.DoubleSide} />
                 </mesh>
