@@ -17,6 +17,12 @@ export interface ProviderInfo {
   connect?: ProviderConnect
   /** selectable model variants (claude-code engine) */
   models?: Array<{ id: string; label: string }>
+  /** UI grouping: subscription/CLI login, pasted API key, or a local server */
+  group?: 'cli' | 'apikey' | 'local'
+  /** selectable reasoning-effort levels (Claude engines only) */
+  efforts?: Array<{ id: string; label: string }>
+  /** current configured base URL (local engine) — pre-fills the editable URL field */
+  baseUrl?: string
 }
 
 export interface HealthInfo {
@@ -119,6 +125,8 @@ export interface StreamCallbacks {
   onDelta: (text: string) => void
   signal?: AbortSignal
   model?: string
+  /** reasoning-effort level (Claude engines) — low|medium|high|xhigh|max */
+  effort?: string
   context?: GenerateContext
 }
 
@@ -126,12 +134,12 @@ export interface StreamCallbacks {
 export async function streamGenerate(
   engine: string,
   messages: ApiMessage[],
-  { onDelta, signal, model, context }: StreamCallbacks,
+  { onDelta, signal, model, effort, context }: StreamCallbacks,
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ engine, model, messages, context }),
+    body: JSON.stringify({ engine, model, effort, messages, context }),
     signal,
   })
 

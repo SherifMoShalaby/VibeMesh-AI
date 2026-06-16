@@ -48,7 +48,7 @@ app.post('/api/test', jsonSmall, async (req, res) => {
  * Streams SSE: {type:'delta', text}, {type:'done'}, {type:'error', message}
  */
 app.post('/api/generate', jsonLarge, async (req, res) => {
-  const { engine, model, messages, context } = req.body ?? {}
+  const { engine, model, effort, messages, context } = req.body ?? {}
   if (!Array.isArray(messages) || messages.length === 0 || typeof engine !== 'string') {
     res.status(400).json({ error: 'bad_request', message: 'engine and messages are required' })
     return
@@ -71,6 +71,7 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
     await streamChat({
       engine,
       model: typeof model === 'string' ? model : undefined,
+      effort: typeof effort === 'string' ? effort : undefined,
       messages,
       context,
       signal: abort.signal,

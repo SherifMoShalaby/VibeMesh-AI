@@ -132,6 +132,9 @@ interface VibeState {
   export3mf: (fileBase: string) => Promise<void>
   claudeModel: string
   setClaudeModel: (id: string) => void
+  /** reasoning-effort level for the Claude engines (login + API key): low|medium|high|xhigh|max */
+  claudeEffort: string
+  setClaudeEffort: (id: string) => void
   kimiModel: string
   setKimiModel: (id: string) => void
   refreshHealth: (providers?: HealthInfo['providers']) => Promise<void>
@@ -140,6 +143,7 @@ interface VibeState {
 // legacy vibescad.* values are copied to these keys on startup (src/lib/storage.ts)
 const ENGINE_KEY = 'vibemesh.engine.v1'
 const CLAUDE_MODEL_KEY = 'vibemesh.claudeModel.v1'
+const CLAUDE_EFFORT_KEY = 'vibemesh.claudeEffort.v1'
 const KIMI_MODEL_KEY = 'vibemesh.kimiModel.v1'
 const QUALITY_KEY = 'vibemesh.quality.v1'
 const BED_KEY = 'vibemesh.bed.v1'
@@ -428,6 +432,7 @@ export const useStore = create<VibeState>((set, get) => {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
         signal: abortController.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
+        effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
       })
       const { code, prose, blockCount } = extractScadBlock(full)
@@ -554,6 +559,7 @@ export const useStore = create<VibeState>((set, get) => {
     healthLoaded: false,
     engine: null,
     claudeModel: localStorage.getItem(CLAUDE_MODEL_KEY) ?? 'default',
+    claudeEffort: localStorage.getItem(CLAUDE_EFFORT_KEY) ?? 'xhigh',
     kimiModel: localStorage.getItem(KIMI_MODEL_KEY) ?? 'default',
     code: '',
     params: [],
@@ -885,6 +891,10 @@ export const useStore = create<VibeState>((set, get) => {
       localStorage.setItem(ENGINE_KEY, id)
     },
 
+    setClaudeEffort: (id) => {
+      set({ claudeEffort: id })
+      localStorage.setItem(CLAUDE_EFFORT_KEY, id)
+    },
     setClaudeModel: (id) => {
       set({ claudeModel: id })
       localStorage.setItem(CLAUDE_MODEL_KEY, id)
