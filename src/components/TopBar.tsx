@@ -145,7 +145,7 @@ export default function TopBar() {
             title={`${activeProvider?.detail ?? 'No AI connected'} — click to manage`}
           >
             <span className="status-dot" />
-            <span className="api-chip-label">{activeProvider ? `Claude · ${activeProvider.label.split(' · ')[0]}` : 'Connect AI'}</span>
+            <span className="api-chip-label">{activeProvider ? `Engine · ${activeProvider.label.split(' · ')[0]}` : 'Connect AI'}</span>
             <span className="chev"><DChevDown /></span>
           </button>
         )}
