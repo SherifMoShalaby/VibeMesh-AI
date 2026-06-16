@@ -122,11 +122,15 @@ One page. The contract for the four surfaces; anything not specified here is und
   (switch / new / delete).
 - **Mobile (≤860px, `.app.is-mobile`)**: viewport-first. The JS `useIsMobile` threshold MUST equal
   the `860px` CSS breakpoint — any gap reopens a dead-zone where the params/code column is hidden
-  with no tab bar to reach it. The shell sizes to `100dvh`; the viewport reserves the 64px tab bar.
+  with no tab bar to reach it. The shell sizes to `100dvh` and **clips its overflow** (`.app` +
+  `.app-body` `overflow:hidden`) — load-bearing: a closed sheet is parked ~one screen below the fold
+  via `translateY(100% + 64px)`, so without clipping it extends the document and the whole page
+  scrolls to expose the off-screen sheet. The viewport reserves the 64px tab bar.
   - **Bottom tab bar** (3-up): Model · Tweak · Chat. Tapping the active Tweak/Chat tab closes its
     sheet back to Model.
   - **Bottom sheets**: chat and params slide up as sheets (translateY), scroll-chain contained;
-    modals (Engines, dialogs) likewise become full-width bottom sheets, not cramped desktop cards.
+    modals (Engines, dialogs) are `position:fixed` so they escape the shell clip and become
+    full-width bottom sheets, not cramped desktop cards.
   - **Header context**: branding collapses to the logo mark; a mobile title shows the project name +
     current screen (Model/Tweak/Chat). The flow rail is hidden.
 - **Project switch resets transient interaction modes** (selection, section cut, measuring) so they
