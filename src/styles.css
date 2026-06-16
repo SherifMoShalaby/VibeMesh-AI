@@ -930,9 +930,9 @@ input[type='checkbox']:focus-visible,
 .code-well .cm-scroller { font-family: var(--font-mono); line-height: 1.7; }
 .code-well .cm-gutters { background: transparent; border-right: 1px solid var(--line-soft); color: var(--text-ghost); }
 .code-well .cm-content { padding: var(--s3) 0; }
-/* the failing line, highlighted in both the gutter and the line body */
-.code-well .cm-error-line { background: var(--err-soft); }
-.code-well .cm-error-line.cm-gutterElement { color: var(--err); font-weight: 700; }
+/* the failing line, highlighted (Decoration.line styles the line body, not the gutter element) */
+.code-well .cm-error-line { background: var(--err-soft); box-shadow: inset 2px 0 0 var(--err); }
+.cm-loading { padding: var(--s4); color: var(--text-faint); font-family: var(--font-mono); font-size: var(--fs-small); }
 
 /* simple-by-default: the Advanced toggle (reveals Code tab + tri count + render time) */
 .panel-mode-foot { flex-shrink: 0; display: flex; align-items: center; gap: var(--s2); padding: 6px var(--s3); border-top: 1px solid var(--line-soft); background: var(--panel-hi); font-size: var(--fs-micro); color: var(--text-faint); cursor: pointer; user-select: none; }

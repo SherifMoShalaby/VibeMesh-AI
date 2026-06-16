@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
 import { buildManualFixPrompt } from '../lib/compileReport'
 import { downloadBlob } from '../lib/stl'
 import type { ParamValue, ScadParameter } from '../types'
-import CodeEditor from './CodeEditor'
+// CodeMirror is ~170KB gzip and only shows in Advanced mode / on a render error — keep it out
+// of the main bundle; the chunk loads on first Code-tab open.
+const CodeEditor = lazy(() => import('./CodeEditor'))
 import { DSliders, DCode, DChevDown, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning } from './icons'
 
 /** clamp slider/number values to the param's step grid — keeps float noise out of state (UX-AUDIT F13) */
@@ -304,13 +306,15 @@ function CodePanel() {
         </button>
       </div>
       <div className="code-well">
-        <CodeEditor
-          value={code}
-          onChange={setCode}
-          onApply={recompile}
-          errorLine={errorLine ? Number(errorLine) : null}
-          placeholder={'// OpenSCAD code appears here\n// after you describe a part'}
-        />
+        <Suspense fallback={<div className="cm-loading">Loading editor…</div>}>
+          <CodeEditor
+            value={code}
+            onChange={setCode}
+            onApply={recompile}
+            errorLine={errorLine ? Number(errorLine) : null}
+            placeholder={'// OpenSCAD code appears here\n// after you describe a part'}
+          />
+        </Suspense>
       </div>
       {compileError && (
         <div className="code-error">
