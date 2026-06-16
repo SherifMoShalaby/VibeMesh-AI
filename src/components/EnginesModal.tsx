@@ -128,6 +128,8 @@ function EngineRow({ provider }: { provider: Row }) {
   const isLocal = provider.group === 'local'
   // local URL is always editable (pre-filled with the current value); start from the server's baseUrl
   const [urlValue, setUrlValue] = useState(provider.baseUrl ?? '')
+  // useState's initializer runs once — re-sync when a health refresh brings a new saved URL
+  useEffect(() => setUrlValue(provider.baseUrl ?? ''), [provider.baseUrl])
 
   // For the collapsed Local row, track which local model is selected in the dropdown.
   const localModels = isLocal ? (provider.models ?? []) : []
@@ -170,7 +172,9 @@ function EngineRow({ provider }: { provider: Row }) {
     if (result.ok && result.providers) {
       await refreshHealth(result.providers)
       const test = await testEngine('local')
-      setNote({ ok: test.ok, text: test.message })
+      // the URL saved either way — if nothing's answering yet (server not started), say so without
+      // reading as a failure, since setting the URL ahead of starting the server is a real workflow
+      setNote({ ok: test.ok, text: test.ok ? test.message : `Saved. ${test.message}` })
     } else {
       setNote({ ok: false, text: result.message ?? 'Could not save the URL.' })
     }
@@ -199,6 +203,8 @@ function EngineRow({ provider }: { provider: Row }) {
     if (isActive) setEngine(`local:${modelId}`)
   }
 
+  // non-local model dropdown binds kimi↔kimiModel, else claude-code↔claudeModel. `anthropic` has no
+  // `models` in providerStatus, so showModels keeps it out of the model dropdown entirely (effort only).
   const modelValue = provider.id === 'kimi' ? kimiModel : claudeModel
   const onModelChange = provider.id === 'kimi' ? setKimiModel : setClaudeModel
   const showModels = (provider.models?.length ?? 0) > 0 && (isLocal || provider.id === 'claude-code' || provider.id === 'kimi')
