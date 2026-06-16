@@ -1139,10 +1139,10 @@ input[type='checkbox']:focus-visible,
   .app-body { grid-template-columns: 300px 1fr 280px; }
   .topbar .flow-rail { display: none; }
 }
-@media (max-width: 860px) {
-  .app-body { grid-template-columns: 280px 1fr; }
-  .params-pane { display: none; }
-}
+/* At/below 860px JS adds `.is-mobile` (see useIsMobile) and the rules below take
+ * over with a viewport-first layout + bottom-sheet chat/params. No separate
+ * desktop-collapse breakpoint here: a 2-col grid that hides .params-pane would
+ * strand the params/code with no tab bar to reach them (the 721–860 dead-zone). */
 
 /* MOBILE · viewport-first + bottom sheet */
 .app.is-mobile .topbar { height: 52px; gap: var(--s3); padding: 0 var(--s3); }

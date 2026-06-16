@@ -655,6 +655,12 @@ export const useStore = create<VibeState>((set, get) => {
       if (!project) return
       clearParamTimer()
       set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
+      // transient per-model interaction modes live in the UI store — clear them so a
+      // section cut / selection / measuring session doesn't bleed into the next project
+      const ui = useUi.getState()
+      ui.setSelected(false)
+      ui.setMeasureMode(false)
+      ui.setSectionOn(false)
       saveActiveProjectId(id)
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }

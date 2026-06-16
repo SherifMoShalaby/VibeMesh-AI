@@ -12,7 +12,7 @@ interface UiState {
   setEnginesOpen: (open: boolean) => void
   helpOpen: boolean
   setHelpOpen: (open: boolean) => void
-  /** active mobile tab (viewport-first layout under 720px) */
+  /** active mobile tab (viewport-first layout at/below 860px) */
   mobileTab: 'model' | 'params' | 'chat'
   setMobileTab: (t: 'model' | 'params' | 'chat') => void
   /** auto-repair: silently re-prompt once when a generated model fails to render (kill switch) */
