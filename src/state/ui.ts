@@ -18,6 +18,10 @@ interface UiState {
   /** auto-repair: silently re-prompt once when a generated model fails to render (kill switch) */
   autoRepair: boolean
   setAutoRepair: (v: boolean) => void
+  /** advanced mode: reveal the Code tab + triangle count + render time. Off = simple-by-default
+   *  (SPEC §9). A render error still surfaces the Code tab regardless. Persisted. */
+  advanced: boolean
+  setAdvanced: (v: boolean) => void
 
   /* ── viewport display preferences ── */
   shading: Shading
@@ -54,6 +58,11 @@ export const useUi = create<UiState>((set) => ({
   setAutoRepair: (autoRepair) => {
     localStorage.setItem('vibemesh.autoRepair.v1', autoRepair ? '1' : '0')
     set({ autoRepair })
+  },
+  advanced: localStorage.getItem('vibemesh.advanced.v1') === '1', // simple by default
+  setAdvanced: (advanced) => {
+    localStorage.setItem('vibemesh.advanced.v1', advanced ? '1' : '0')
+    set({ advanced })
   },
 
   shading: 'solid',

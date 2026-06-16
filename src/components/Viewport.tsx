@@ -79,6 +79,7 @@ export default function Viewport() {
   const setViewMode = useStore((s) => s.setViewMode)
   const compilePieces = useStore((s) => s.compilePieces)
 
+  const advanced = useUi((s) => s.advanced)
   const shading = useUi((s) => s.shading)
   const bedVisible = useUi((s) => s.bedVisible)
   const setBedVisible = useUi((s) => s.setBedVisible)
@@ -503,8 +504,8 @@ export default function Viewport() {
         </div>
       )}
 
-      {/* ── perf readout (top-right) ── */}
-      {!platesView && model && (
+      {/* ── perf readout (top-right) — advanced only (simple-by-default, SPEC §9) ── */}
+      {!platesView && model && advanced && (
         <div className="perf-chip">
           <span>{model.triangles.toLocaleString()} tris</span>
         </div>
@@ -655,7 +656,7 @@ export default function Viewport() {
                     <>
                       <span className="status-dot" />
                       <span>Model ready</span>
-                      {compileMs !== null && <span className="time">· {fmtMs(compileMs)}</span>}
+                      {advanced && compileMs !== null && <span className="time">· {fmtMs(compileMs)}</span>}
                     </>
                   )
                 return (<><span className="status-dot" /><span>Ready</span></>)
