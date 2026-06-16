@@ -131,6 +131,16 @@ When the reference shows a repeating SURFACE pattern — honeycomb/hex grip mesh
     hull() { cylinder(d=d0,h=t); translate([cx,cy,0]) cylinder(d=d1,h=t); }
 Cap the cell/segment count at a sane number and expose it, but reproduce a RECOGNIZABLE pattern — a real mesh, not 5 dots.
 
+# Hard-surface / faceted styling
+
+When the reference reads HARD-SURFACE / sci-fi / mechanical / armored (crisp flat panels, a segmented core, recessed glowing accent lines) — NOT a smooth functional part — do not rely on \`rotate_extrude\` ALONE: a pure revolve is a surface of revolution (every horizontal section is a circle, so it can only look lathe-smooth and axially symmetric — the #1 way these references fail). FACET, PANEL, or SEGMENT the revolved body and union separate discs/greebles onto it. A revolved body is a fine STARTING silhouette (e.g. a waisted tower) only if you then break its axial symmetry. Keep every result manifold and self-supporting (new edges <=45deg or chamfered):
+- FACET a round body — intersect it with a low-N prism; \`$fn\` IS the panel count, not resolution. Oversize the prism ~4% so panels cut shallow; rotate 180/n so a flat faces front. \`$fn\` in {6,8,10,12}.
+    intersection() { cylinder(d=D, h=H); rotate([0,0,180/n]) cylinder(d=D*1.04, h=H, $fn=n); }
+- SEGMENT a sphere / energy-core into a faceted ball: intersect the sphere with a low-N prism for longitude facets, then \`difference()\` out (a) a thin \`rotate_extrude\` groove at the equator (HORIZONTAL, in the XY plane — never tilted), (b) a rotational \`for\`-loop of radial cube cutters (width >=0.8mm, n<=8) for panel seams, and (c) a top cylinder recess (depth >=0.8mm) for the polar sensor.
+- A WIDE FLAT collar / saucer / disc is a SEPARATE union-ed short wide cylinder (h << d) with its OWN diameter clearly LARGER than the neck (disc_d >= 1.6 * neck_d) — never a bump folded into the revolve profile, or it reads as a thin ring. Chamfer the disc UNDERSIDE (a 45deg lower lip, e.g. \`cylinder(d1=disc_d-2*h, d2=disc_d, h=h)\` under the flat top) so the wide overhang prints support-free.
+- GLOWING accent lines print as crisp RECESSED CHANNELS (a single mesh has no color): vertical or steeply-chamfered walls, depth >=0.8mm, width >=1.2mm, flat floors — deep and sharp enough to read as a distinct line, not a soft scratch. Vertical channels: a rotational \`for\`-loop of a prism cutter. A horizontal accent seam: one \`rotate_extrude\` groove.
+Default to ONE faceted/segmented body for a hard-surface reference; reserve plain \`rotate_extrude\` for genuinely smooth turned forms (a vase, a knob).
+
 # Geometric consistency and functional integrity (mandatory)
 
 A part is not done when it merely COMPILES — OpenSCAD will happily produce a manifold solid in which a cutter has gutted the very feature that makes the part work (a bore drilled straight through the clutch tubes, a weight pocket that breaks into a bearing seat, a screw hole that opens a wall it was meant to anchor). The geometry must be INTERNALLY CONSISTENT, FUNCTIONAL, and BUILDABLE AS DRAWN — like the real object it represents. Features are NOT placed independently; they must be deconflicted against each other.
@@ -154,6 +164,7 @@ A part is not done when it merely COMPILES — OpenSCAD will happily produce a m
 - Unlabeled photos: estimate real-world scale from context (an adult palm ≈ 100mm across, fingers ≈ 20mm wide, a hand grip span ≈ 180mm) and state the assumption in a comment on the relevant parameter.
 - COUNT features in the image. If they are GENUINELY IDENTICAL (uniform flutes, ribs, teeth, studs), match the count exactly and drive them from ONE shared module with a count parameter. If the reference draws them DIFFERENTLY (different length, edge, hole pattern, or end shape), they are NOT repeats — list each in the FEATURE INVENTORY and give each its own module; never loop one module for features the reference draws differently.
 - Match proportions: before coding, note the 2-4 governing ratios you observe (e.g. handle length ≈ 0.7 × base diameter) and honor them in the derived values.
+- If the reference is a PLAIN FUNCTIONAL part (bracket, knob, gear, enclosure, mount) with no faceted/sci-fi styling, model it with ordinary primitives and smooth revolves — do not add panels, facets, or decorative channels it does not show.
 
 # Refine pass (render vs reference)
 
