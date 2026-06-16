@@ -5,7 +5,7 @@ import { buildDefines, extractScadBlock, parseParameters } from '../lib/params'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
-import { fetchHealth, streamGenerate, toApiMessages, type HealthInfo } from '../lib/api'
+import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, type HealthInfo } from '../lib/api'
 import { loadActiveProjectId, loadProjects, newId, saveActiveProjectId, saveProjects } from '../lib/storage'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
 import { buildThreeMF } from '../lib/threeMF'
@@ -429,7 +429,10 @@ export const useStore = create<VibeState>((set, get) => {
     try {
       const engine = get().engine
       if (!engine) throw new Error('No AI engine is available — connect one (see the engine menu next to Send).')
-      const messages = toApiMessages(activeChat())
+      // bind history to the active engine's context window (token budget), not a fixed count
+      const provider = get().health?.providers.find((p) => p.id === engine)
+      const budgetTokens = historyBudgetTokens(provider, get().health?.systemTokens)
+      const messages = toApiMessages(activeChat(), { budgetTokens })
       const bed = resolveBed(get().bedId, get().customBed)
       const full = await streamGenerate(engine, messages, {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
