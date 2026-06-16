@@ -75,14 +75,79 @@ interface ApiMessage {
   content: string | ApiContentBlock[]
 }
 
-/** How many recent non-error chat messages are sent as context each turn. The
- *  UI context chip reads this so the indicator and the actual window never drift. */
+/** Hard message-count ceiling used only when no token budget is supplied (back-compat
+ *  fallback). With a budget, the engine's context window is the real limit. */
 export const HISTORY_LIMIT = 12
 
-/** Convert UI chat history into Anthropic messages, keeping code context. */
-export function toApiMessages(chat: ChatMessage[]): ApiMessage[] {
+/** Rough token estimate (chars/4). Cheap + client-side; the budget's safety margin +
+ *  discount absorb its ~15-30% under-count on dense code/JSON. The chip uses the SAME
+ *  helpers as the assembler so the gauge never drifts from what's actually sent. */
+export const estTokens = (s: string): number => Math.ceil((s?.length ?? 0) / 4)
+/** An image costs a roughly fixed amount — NEVER chars/4 of its base64 blob. */
+export const estImageTokens = (): number => 1500
+
+/** Token cost of one message AS SENT (assistant code re-wrapped; images only when kept). */
+export function msgTokens(m: ChatMessage, keepImages: boolean): number {
+  let t = estTokens(m.text || '') + 4
+  if (m.role === 'assistant' && m.code) t += estTokens(m.code) + 8
+  if (keepImages && m.images?.length) t += m.images.length * estImageTokens()
+  return t
+}
+
+/** Cost cap on history tokens. We bind history to the engine's REAL context window but
+ *  never fill a 1M window every turn (~$5/turn input). Bump to 160000 for longer memory at
+ *  proportionally higher cost. The 0.8 discount below is the proportional safety margin that
+ *  absorbs the chars/4 under-count on dense code/JSON. */
+export const SANE_CONTEXT_CAP = 96000
+const BUDGET_DISCOUNT = 0.8
+
+/** Net history-token budget for an engine: min(window, cap) minus the shared system prompt and
+ *  the engine's own output reservation, times the safety discount. 0 when capacity is unknown
+ *  enough to be unusable (caller then keeps just the latest turn). */
+export function historyBudgetTokens(provider: ProviderInfo | undefined, systemTokens: number | undefined): number {
+  const cap = Math.min(provider?.contextWindow ?? SANE_CONTEXT_CAP, SANE_CONTEXT_CAP)
+  const net = cap - (systemTokens ?? 7000) - (provider?.outputReservation ?? 0)
+  return Math.max(0, Math.round(net * BUDGET_DISCOUNT))
+}
+
+/** Estimated tokens the FULL conversation would cost as sent (stale refine renders stripped,
+ *  like the assembler) — drives the context gauge. Same estimators as toApiMessages, no drift. */
+export function estHistoryTokens(chat: ChatMessage[]): number {
   const clean = chat.filter((m) => !m.error)
-  const recent = clean.slice(-HISTORY_LIMIT)
+  const lastRefine = [...clean].reverse().find((m) => m.role === 'user' && m.action === 'Refine pass' && (m.images?.length ?? 0) > 0)
+  return clean.reduce((sum, m) => sum + msgTokens(m, (m.images?.length ?? 0) > 0 && !(m.role === 'user' && m.action === 'Refine pass' && m !== lastRefine)), 0)
+}
+
+/** Choose a contiguous suffix of recent messages whose estimated tokens fit `budget`,
+ *  always keeping the latest message and reserving the pinned reference image's cost so
+ *  prepending it later can't blow the budget. Mirrors the assembler's keep-images rule. */
+function recentWithinBudget(clean: ChatMessage[], budget: number): ChatMessage[] {
+  if (clean.length <= 1) return clean
+  const firstRef = clean.find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)
+  const lastRefine = [...clean].reverse().find((m) => m.role === 'user' && m.action === 'Refine pass' && (m.images?.length ?? 0) > 0)
+  const cost = (m: ChatMessage): number =>
+    msgTokens(m, (m.images?.length ?? 0) > 0 && !(m.role === 'user' && m.action === 'Refine pass' && m !== lastRefine))
+  // seed `used` with firstRef's cost: it's always sent (included in the suffix below if the
+  // walk reaches it, else prepended downstream), so reserving it here leaves room either way.
+  let used = firstRef ? cost(firstRef) : 0
+  let start = clean.length - 1 // always keep the latest message, even if it alone exceeds budget
+  if (clean[start] !== firstRef) used += cost(clean[start])
+  for (let i = clean.length - 2; i >= 0; i--) {
+    if (clean[i] === firstRef) { start = i; break } // reached the reserved reference contiguously — include + stop
+    const c = cost(clean[i])
+    if (used + c > budget) break
+    used += c
+    start = i
+  }
+  return clean.slice(start)
+}
+
+/** Convert UI chat history into Anthropic messages, keeping code context. With
+ *  opts.budgetTokens, history is trimmed by the engine's context-window token budget;
+ *  without it, the legacy HISTORY_LIMIT message count applies (back-compat / bench). */
+export function toApiMessages(chat: ChatMessage[], opts?: { budgetTokens?: number }): ApiMessage[] {
+  const clean = chat.filter((m) => !m.error)
+  const recent = opts?.budgetTokens === undefined ? clean.slice(-HISTORY_LIMIT) : recentWithinBudget(clean, opts.budgetTokens)
   // Pin the original reference image to the front: it is GROUND TRUTH for every
   // refine pass and must not be evicted by the rolling window once several refine
   // turns have accumulated. If the first image-bearing user message isn't already

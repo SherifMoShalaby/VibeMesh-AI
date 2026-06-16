@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
-import { HISTORY_LIMIT } from '../lib/api'
+import { estHistoryTokens, historyBudgetTokens, type ProviderInfo } from '../lib/api'
 import type { ChatImage, ChatMessage } from '../types'
 import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh } from './icons'
 
@@ -242,7 +242,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
 
       <div className="pane-head">
         <span className="eyebrow">Conversation</span>
-        <ContextChip chat={chat} />
+        <ContextChip chat={chat} provider={activeProvider} systemTokens={health?.systemTokens} />
         <button className="icon-btn-sm" title="New part" aria-label="New part" onClick={() => newProject()}>
           <DPlus />
         </button>
@@ -419,35 +419,40 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   )
 }
 
-/** Compact AI-memory indicator. The app sends a rolling window of the last
- *  HISTORY_LIMIT non-error messages, so older turns silently drop off the back.
- *  The ring fills as the window does and turns amber once earlier turns are no
- *  longer sent (the reference image is always pinned, so it survives regardless). */
-function ContextChip({ chat }: { chat: ChatMessage[] }) {
+/** Compact AI-memory gauge. History is now bound to the ACTIVE ENGINE's context window
+ *  (a token budget), not a fixed message count. The ring shows how full that budget is,
+ *  using the SAME token estimators the assembler uses (no drift), and turns amber once
+ *  the conversation exceeds the budget and older turns start dropping (the reference image
+ *  is always pinned, so it survives regardless). */
+function ContextChip({ chat, provider, systemTokens }: { chat: ChatMessage[]; provider?: ProviderInfo; systemTokens?: number }) {
   const nonError = chat.filter((m) => !m.error).length
   if (nonError === 0) return null
-  const inCtx = Math.min(nonError, HISTORY_LIMIT)
-  const trimmed = Math.max(0, nonError - HISTORY_LIMIT)
+  const used = estHistoryTokens(chat)
+  const budget = historyBudgetTokens(provider, systemTokens)
   const C = 2 * Math.PI * 6
-  const title =
-    trimmed > 0
-      ? `AI memory: the last ${HISTORY_LIMIT} messages. ${trimmed} earlier turn${trimmed > 1 ? 's are' : ' is'} no longer sent to the AI — your reference image is always kept.`
-      : `AI memory: all ${nonError} message${nonError > 1 ? 's' : ''} of this chat are in context (the window holds the last ${HISTORY_LIMIT}).`
+  const kb = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`)
+  // unknown capacity (demo / no backend): show a raw token count, neutral ring
+  if (budget <= 0) {
+    return (
+      <span className="ctx-chip" title={`≈${used.toLocaleString()} tokens of chat history (engine context unknown)`} role="status">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="8" cy="8" r="6" className="ctx-track" /></svg>
+        <span className="ctx-num">≈{kb(used)}</span>
+      </span>
+    )
+  }
+  const frac = used / budget
+  const trimming = used > budget
+  const win = provider?.contextWindow
+  const title = trimming
+    ? `Chat history is past the ~${kb(budget)}-token budget — the oldest turns are no longer sent (your reference image is always kept). Budget = the engine's context window capped for cost.`
+    : `Chat history: ~${kb(used)} of ~${kb(budget)} tokens in context${win ? ` (${provider?.label?.split(' · ')[0]} window ${kb(win)}, capped for cost)` : ''}. The reference image is always kept.`
   return (
-    <span className={`ctx-chip${trimmed > 0 ? ' trimming' : ''}`} title={title} role="status">
+    <span className={`ctx-chip${trimming ? ' trimming' : ''}`} title={title} role="status">
       <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
         <circle cx="8" cy="8" r="6" className="ctx-track" />
-        <circle
-          cx="8"
-          cy="8"
-          r="6"
-          className="ctx-arc"
-          strokeDasharray={C}
-          strokeDashoffset={C * (1 - inCtx / HISTORY_LIMIT)}
-          transform="rotate(-90 8 8)"
-        />
+        <circle cx="8" cy="8" r="6" className="ctx-arc" strokeDasharray={C} strokeDashoffset={C * (1 - Math.min(1, frac))} transform="rotate(-90 8 8)" />
       </svg>
-      <span className="ctx-num">{inCtx}/{HISTORY_LIMIT}</span>
+      <span className="ctx-num">{Math.round(Math.min(frac, 9.99) * 100)}%</span>
     </span>
   )
 }
