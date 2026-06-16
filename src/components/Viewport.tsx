@@ -282,7 +282,10 @@ export default function Viewport() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return
+      // never hijack keys while typing — the CodeMirror editor is a contentEditable
+      // div (not INPUT/TEXTAREA), so its ⌘Z must undo code, not viewport placement,
+      // and Backspace must not delete the selected model out from under the caret.
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return
       if (e.metaKey || e.ctrlKey) {
         if (e.key === 'z' || e.key === 'Z') {
           e.preventDefault()

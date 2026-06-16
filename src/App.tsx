@@ -12,12 +12,14 @@ import { DCube, DSliders, DSparkFill } from './components/icons'
 
 const IDLE_TITLE = 'Vibemesh-AI — parametric CAD for 3D printing'
 
-/** Below 720px the design collapses to a viewport-first layout with a bottom
- *  tab bar. We mirror its `.is-mobile` toggle with a resize hook. */
+/** At/below 860px the design collapses to a viewport-first layout with a bottom
+ *  tab bar (sheets for chat/params). The threshold MUST match the `860px` CSS
+ *  breakpoint in styles.css — otherwise 721–860px is a dead-zone: a desktop grid
+ *  whose params/code column is hidden with no tab bar to reach it. */
 function useIsMobile() {
-  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 720)
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 860)
   useEffect(() => {
-    const onResize = () => setMobile(window.innerWidth <= 720)
+    const onResize = () => setMobile(window.innerWidth <= 860)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
