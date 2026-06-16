@@ -1198,8 +1198,14 @@ input[type='checkbox']:focus-visible,
 .app.is-mobile .chat-pane.sheet-show,
 .app.is-mobile .params-pane.sheet-show { transform: translateY(0); pointer-events: auto; }
 
-/* exact visible viewport (browser-chrome aware) so the tab-bar + sheets aren't cut off */
-.app.is-mobile { height: 100dvh; }
+/* exact visible viewport (browser-chrome aware) so the tab-bar + sheets aren't cut off.
+ * overflow:hidden is load-bearing: the closed chat/params sheets are parked ~one screen
+ * BELOW the fold via translateY(100% + 64px). Without clipping the shell they extend the
+ * document's scroll height, so the whole page scrolls down and exposes the off-screen
+ * sheets ("the tweaks live below the footer"). Clip them at the shell. */
+.app.is-mobile { height: 100dvh; overflow: hidden; }
+/* the body must not scroll either — belt to the shell's suspenders (iOS rubber-banding) */
+.app.is-mobile .app-body { overflow: hidden; }
 /* modals become full-width bottom sheets instead of cramped desktop cards */
 .app.is-mobile .scrim { place-items: end stretch; padding: 0; }
 .app.is-mobile .modal,
