@@ -14,7 +14,8 @@ import { scoreAgainstGold } from './compare.mjs'
 import { extractPartEnum, scoreBuildability } from './buildability.mjs'
 import { symmetryScore, moduleDistinctness, assembledScore } from './fidelity.mjs'
 import { interferenceVol, interferenceScore, hasDebugContract } from './interference.mjs'
-import { judgeModel } from './judge.mjs'
+import { judgeModel, judgeVision, judgeAvailable } from './judge.mjs'
+import { renderViews } from './render.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const API = 'http://localhost:5175/api/generate'
@@ -409,6 +410,15 @@ async function runTask(engine, task, messages, dir, history, label) {
   // advisory LLM-judge (gated on ANTHROPIC_API_KEY + BENCH_JUDGE=1) — never gates pass/fail
   const judge = await judgeModel({ prompt: task.prompt ?? '(custom)', code })
 
+  // advisory VISION judge for image/asymmetric tasks: rasterize the result (bench/render.mjs)
+  // and let the judge compare it to the reference. Only when enabled, so normal runs pay nothing.
+  let visionJudge
+  if (judgeAvailable() && compiled.ok && compiled.stl && (task.expect?.asymmetric || task.kind === 'image')) {
+    const renderImages = renderViews(compiled.stl)
+    const referenceImage = task.kind === 'image' ? { base64: visionImage, mediaType: 'image/png' } : undefined
+    visionJudge = await judgeVision({ prompt: task.prompt ?? '(custom)', code, referenceImage, renderImages })
+  }
+
   // fidelity / functional metrics the IoU + buildability checks can't see
   let asymmetryScore, modDistinct, scatterSpan, assembled
   if (task.expect?.asymmetric && compiled.ok && compiled.stl) {
@@ -451,6 +461,7 @@ async function runTask(engine, task, messages, dir, history, label) {
     buildability: buildability ?? undefined,
     overSplit: overSplit || undefined,
     judge: judge ?? undefined,
+    visionJudge: visionJudge ?? undefined,
     notes: checks.notes,
     codeLines: code.split('\n').length,
   }

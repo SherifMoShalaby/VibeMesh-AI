@@ -28,6 +28,33 @@ const RUBRIC = {
   },
 }
 
+// Vision-fidelity rubric — does the RENDERED geometry reproduce the requested/depicted
+// object, feature by feature, without symmetrizing away intentional asymmetry?
+const VISION_RUBRIC = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['features', 'asymmetryPreserved', 'overallFidelity', 'reason'],
+  properties: {
+    features: {
+      type: 'array',
+      description: 'one entry per distinct feature the request/reference calls for',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'present', 'faithful'],
+        properties: {
+          name: { type: 'string' },
+          present: { type: 'boolean', description: 'the feature exists in the rendered geometry' },
+          faithful: { type: 'boolean', description: 'its shape/proportion matches the reference — not collapsed to a generic stand-in' },
+        },
+      },
+    },
+    asymmetryPreserved: { type: 'boolean', description: 'if the reference is intentionally asymmetric / has non-identical parts, the render keeps that (did NOT symmetrize). true if symmetry is not applicable.' },
+    overallFidelity: { type: 'number', description: '0..1 — how faithfully the render reproduces the requested/depicted object' },
+    reason: { type: 'string', description: 'one sentence' },
+  },
+}
+
 export function judgeAvailable() {
   return Boolean(process.env.ANTHROPIC_API_KEY) && process.env.BENCH_JUDGE === '1'
 }
@@ -46,6 +73,51 @@ export async function judgeModel({ prompt, code }) {
       system,
       output_config: { format: { type: 'json_schema', schema: RUBRIC } },
       messages: [{ role: 'user', content: user }],
+    })
+    const text = res.content.find((b) => b.type === 'text')?.text ?? '{}'
+    return JSON.parse(text)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message.slice(0, 160) : String(error) }
+  }
+}
+
+/**
+ * Advisory VISION judge: shown the rendered iso/front/top views of the generated model
+ * (bench/render.mjs) and, when present, the reference image the user provided, it reports
+ * a per-feature fidelity checklist + whether intentional asymmetry survived. This is the
+ * human-readable complement to the deterministic asymmetryScore/moduleDistinctness ratchet —
+ * it catches a symmetric-collapse or a missing stepped arm that voxel-IoU can't see.
+ *
+ * @param renderImages Array<{ pngBase64, mediaType, name }> from renderViews()
+ * @param referenceImage optional { base64, mediaType }
+ * Returns the rubric verdict, {error}, or null when the judge is disabled.
+ */
+export async function judgeVision({ prompt, code, referenceImage, renderImages }) {
+  if (!judgeAvailable()) return null
+  if (!renderImages?.length) return { error: 'no render images' }
+  const client = new Anthropic()
+  const system =
+    'You are a strict CAD fidelity reviewer. You are shown the user request and rendered isometric/front/top views of the GENERATED 3D model (and, when available, the reference image the user provided). Judge whether the generated geometry faithfully reproduces the requested object: each distinct feature present AND shaped like the reference, and any INTENTIONAL asymmetry or non-identical parts preserved — a symmetrizing "cleanup" is a FAILURE, not an improvement. Default to false / low fidelity when unsure.'
+  const content = [{ type: 'text', text: `USER REQUEST:\n${prompt}` }]
+  if (referenceImage?.base64) {
+    content.push({ type: 'text', text: 'REFERENCE image the user provided:' })
+    content.push({ type: 'image', source: { type: 'base64', media_type: referenceImage.mediaType || 'image/png', data: referenceImage.base64 } })
+  }
+  content.push({ type: 'text', text: 'RENDERED views of the generated model (isometric, front, top):' })
+  for (const v of renderImages) {
+    content.push({ type: 'image', source: { type: 'base64', media_type: v.mediaType || 'image/png', data: v.pngBase64 } })
+  }
+  content.push({
+    type: 'text',
+    text: `OPENSCAD PROGRAM (context):\n${code}\n\nList each distinct feature the request/reference calls for with present + faithful flags; state whether intentional asymmetry was preserved; give overallFidelity 0..1 and a one-sentence reason.`,
+  })
+  try {
+    const res = await client.messages.create({
+      model: process.env.VIBEMESH_MODEL || process.env.VIBESCAD_MODEL || 'claude-opus-4-8',
+      max_tokens: 1024,
+      system,
+      output_config: { format: { type: 'json_schema', schema: VISION_RUBRIC } },
+      messages: [{ role: 'user', content }],
     })
     const text = res.content.find((b) => b.type === 'text')?.text ?? '{}'
     return JSON.parse(text)
