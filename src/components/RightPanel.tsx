@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
 import { buildManualFixPrompt } from '../lib/compileReport'
 import { downloadBlob } from '../lib/stl'
 import type { ParamValue, ScadParameter } from '../types'
+import CodeEditor from './CodeEditor'
 import { DSliders, DCode, DChevDown, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning } from './icons'
 
 /** clamp slider/number values to the param's step grid — keeps float noise out of state (UX-AUDIT F13) */
@@ -17,6 +18,8 @@ function roundToStep(n: number, step: number | undefined): number {
 export default function RightPanel({ mobileShow = false }: { mobileShow?: boolean }) {
   const rightTab = useUi((s) => s.rightTab)
   const setRightTab = useUi((s) => s.setRightTab)
+  const advanced = useUi((s) => s.advanced)
+  const setAdvanced = useUi((s) => s.setAdvanced)
   const compileStatus = useStore((s) => s.compileStatus)
   const generating = useStore((s) => s.generating)
   const streamText = useStore((s) => s.streamText)
@@ -24,6 +27,10 @@ export default function RightPanel({ mobileShow = false }: { mobileShow?: boolea
 
   // teach the causality: the chat is writing the code right now
   const aiWritingCode = generating && streamText.includes('```')
+  // simple by default: the Code tab hides unless Advanced is on — but a render error
+  // always surfaces it (you can't fix what you can't see). SPEC §9.
+  const codeVisible = advanced || compileStatus === 'error'
+  const effectiveTab = rightTab === 'code' && codeVisible ? 'code' : 'params'
 
   return (
     <section className={`pane params-pane${mobileShow ? ' sheet-show' : ''}`}>
@@ -33,26 +40,33 @@ export default function RightPanel({ mobileShow = false }: { mobileShow?: boolea
       <div className="panel-tabs" role="tablist">
         <button
           role="tab"
-          aria-selected={rightTab === 'params'}
-          className={`panel-tab${rightTab === 'params' ? ' active' : ''}`}
+          aria-selected={effectiveTab === 'params'}
+          className={`panel-tab${effectiveTab === 'params' ? ' active' : ''}`}
           onClick={() => setRightTab('params')}
         >
           <DSliders /> Parameters
           {params.length > 0 && <span className="count">{params.length}</span>}
         </button>
-        <button
-          role="tab"
-          aria-selected={rightTab === 'code'}
-          className={`panel-tab${rightTab === 'code' ? ' active' : ''}${aiWritingCode ? ' pulse' : ''}${
-            compileStatus === 'error' ? ' err' : ''
-          }`}
-          onClick={() => setRightTab('code')}
-        >
-          <DCode /> Code{compileStatus === 'error' && <IconWarning />}
-        </button>
+        {codeVisible && (
+          <button
+            role="tab"
+            aria-selected={effectiveTab === 'code'}
+            className={`panel-tab${effectiveTab === 'code' ? ' active' : ''}${aiWritingCode ? ' pulse' : ''}${
+              compileStatus === 'error' ? ' err' : ''
+            }`}
+            onClick={() => setRightTab('code')}
+          >
+            <DCode /> Code{compileStatus === 'error' && <IconWarning />}
+          </button>
+        )}
       </div>
 
-      {rightTab === 'params' ? <ParamsPanel /> : <CodePanel />}
+      {effectiveTab === 'params' ? <ParamsPanel /> : <CodePanel />}
+
+      <label className="panel-mode-foot" title="Show the code editor, triangle count, and render time">
+        <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
+        <span>Advanced</span>
+      </label>
     </section>
   )
 }
@@ -275,10 +289,6 @@ function CodePanel() {
   const errorLine = compileError?.match(/line (\d+)/)?.[1]
   const cleanError = compileError?.replace(/\s*in file [^\s,]+,?/g, '').replace(/\/input\.scad/g, 'the code')
 
-  // cheap line-number gutter so "(line N)" is actionable without a real editor dependency
-  const gutterRef = useRef<HTMLDivElement>(null)
-  const lineCount = Math.max(code.split('\n').length, 1)
-
   return (
     <div className="code-panel">
       <div className="code-toolbar">
@@ -294,28 +304,11 @@ function CodePanel() {
         </button>
       </div>
       <div className="code-well">
-        <div className="code-gutter" ref={gutterRef} aria-hidden>
-          {Array.from({ length: lineCount }, (_, i) => (
-            <div key={i} className={errorLine && Number(errorLine) === i + 1 ? 'gl err' : 'gl'}>
-              {i + 1}
-            </div>
-          ))}
-        </div>
-        <textarea
-          className="code-editor"
-          aria-label="OpenSCAD code"
+        <CodeEditor
           value={code}
-          onChange={(e) => setCode(e.target.value)}
-          onScroll={(e) => {
-            if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop
-          }}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's')) {
-              e.preventDefault()
-              if (code.trim()) recompile()
-            }
-          }}
-          spellCheck={false}
+          onChange={setCode}
+          onApply={recompile}
+          errorLine={errorLine ? Number(errorLine) : null}
           placeholder={'// OpenSCAD code appears here\n// after you describe a part'}
         />
       </div>
