@@ -129,7 +129,10 @@ function EngineRow({ provider }: { provider: Row }) {
   // local URL is always editable (pre-filled with the current value); start from the server's baseUrl
   const [urlValue, setUrlValue] = useState(provider.baseUrl ?? '')
   // useState's initializer runs once — re-sync when a health refresh brings a new saved URL
-  useEffect(() => setUrlValue(provider.baseUrl ?? ''), [provider.baseUrl])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUrlValue(provider.baseUrl ?? '')
+  }, [provider.baseUrl])
 
   // For the collapsed Local row, track which local model is selected in the dropdown.
   const localModels = isLocal ? (provider.models ?? []) : []
