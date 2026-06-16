@@ -48,7 +48,7 @@ function numericParams(code) {
     const line = raw.trim()
     if (/^(module|function)\b/.test(line)) break
     const m = /^([A-Za-z_]\w*)\s*=\s*(-?\d+(?:\.\d+)?)\s*;/.exec(line)
-    if (m && !m[1].startsWith('$')) out[m[1]] = Number(m[2])
+    if (m && !m[1].startsWith('$') && !m[1].startsWith('_')) out[m[1]] = Number(m[2]) // skip hidden _probe knobs
   }
   return out
 }

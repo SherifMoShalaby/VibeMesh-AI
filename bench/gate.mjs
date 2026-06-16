@@ -56,6 +56,10 @@ function metricsOf(row) {
     asymmetryScore: typeof row.asymmetryScore === 'number' ? row.asymmetryScore : null,
     moduleDistinctness: typeof row.moduleDistinctness === 'number' ? row.moduleDistinctness : null,
     assembledScore: typeof row.assembledScore === 'number' ? row.assembledScore : null,
+    // geometric-consistency (interference probe): 1 = no cutter slices a protected feature.
+    // Present only on parts emitting the `_debug` contract. The committed kit exemplar is guarded
+    // separately + zero-tolerance by bench/interference.selftest.mjs (runs ahead of this gate).
+    interferenceScore: typeof row.interferenceScore === 'number' ? row.interferenceScore : null,
     // advisory LLM-judge — displayed for visibility, never gated (nondeterministic)
     judgeScore: row.judge && !row.judge.error && typeof row.judge.score === 'number' ? row.judge.score : null,
   }
@@ -70,6 +74,7 @@ const NUMERIC = [
   { key: 'asymmetryScore', label: 'asym', tol: 0.15 }, // geometric self-similarity is noisy → wide tol
   { key: 'moduleDistinctness', label: 'mods', tol: 1 }, // distinct-module count
   { key: 'assembledScore', label: 'asm', tol: 0.25 }, // stepped 0/0.5/1 → tolerate one step
+  { key: 'interferenceScore', label: 'intf', tol: 0.1 }, // cutter-vs-structure overlap on generated parts (advisory until baselined)
 ]
 
 function readJson(p, what) {
