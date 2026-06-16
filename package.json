@@ -39,7 +39,8 @@
     "preview": "vite preview",
     "bench": "node bench/run.mjs",
     "bench:score": "node bench/score.mjs",
-    "bench:gate": "node bench/gate.mjs",
+    "bench:interference": "node bench/interference.selftest.mjs",
+    "bench:gate": "node bench/interference.selftest.mjs && node bench/gate.mjs",
     "bench:baseline": "node bench/gate.mjs --update-baseline"
   },
   "dependencies": {

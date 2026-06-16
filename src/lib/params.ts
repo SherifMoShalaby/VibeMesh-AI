@@ -55,6 +55,10 @@ function buildParam(
   // never let a reserved identifier become a param name (prototype-pollution guard)
   if (name === '__proto__' || name === 'constructor' || name === 'prototype') return null
 
+  // `_`-prefixed names are hidden probe/debug knobs (e.g. `_debug` for the interference
+  // eval) — never surface them as sliders; normal renders keep the code's written default.
+  if (name.startsWith('_')) return null
+
   // booleans
   if (rawValue === 'true' || rawValue === 'false') {
     return { name, kind: 'bool', group, description, defaultValue: rawValue === 'true' }

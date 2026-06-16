@@ -175,6 +175,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const quality = useStore((s) => s.quality)
   const exportingPlates = useStore((s) => s.exportingPlates)
   const exportPlates = useStore((s) => s.exportPlates)
+  const exportPlates3mf = useStore((s) => s.exportPlates3mf)
   const exportStlSmart = useStore((s) => s.exportStlSmart)
   const export3mf = useStore((s) => s.export3mf)
 
@@ -236,6 +237,16 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
               <span className="mi-text">
                 <span className="mi-title">Parts as separate <span className="ext">.stl</span></span>
                 <span className="mi-sub">One file per piece, named after each part</span>
+              </span>
+              <span className="mi-check"><DArrowRight /></span>
+            </button>
+          )}
+          {hasPlates && (
+            <button className="menu-item" role="menuitem" onClick={run(() => exportPlates3mf(fileBase))}>
+              <span className="mi-icon"><DLayers /></span>
+              <span className="mi-text">
+                <span className="mi-title">Plates as <span className="ext">.3mf</span></span>
+                <span className="mi-sub">One slicer-ready file per bed, packed like the Slicer view</span>
               </span>
               <span className="mi-check"><DArrowRight /></span>
             </button>

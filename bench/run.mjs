@@ -13,7 +13,9 @@ import { createOpenSCAD } from 'openscad-wasm'
 import { scoreAgainstGold } from './compare.mjs'
 import { extractPartEnum, scoreBuildability } from './buildability.mjs'
 import { symmetryScore, moduleDistinctness, assembledScore } from './fidelity.mjs'
-import { judgeModel } from './judge.mjs'
+import { interferenceVol, interferenceScore, hasDebugContract } from './interference.mjs'
+import { judgeModel, judgeVision, judgeAvailable } from './judge.mjs'
+import { renderViews } from './render.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const API = 'http://localhost:5175/api/generate'
@@ -118,6 +120,27 @@ const TASKS = [
     prompt:
       'A fidget spinner with a central bearing seat and FOUR DIFFERENT arms — one with a hexagonal grip mesh, one a long stepped/zig-zag edge, one a short curved arm, one solid with weight bores. The arms are intentionally NON-identical and the overall shape is asymmetric. Model each arm distinctly around the hub.',
     expect: { asymmetric: true, distinctModulesMin: 5, bboxMax: [200, 200, 30] },
+  },
+  {
+    // geometric-consistency coverage (LEGO axle-vs-tube) — the cross-bore must NOT slice the
+    // underside clutch tubes. Scored by the interference probe IF the model emits the _debug contract.
+    id: 'T11-technic',
+    kind: 'fresh',
+    kit: true,
+    prompt:
+      'A Technic-style brick with underside clutch tubes that grip studs AND a horizontal 4mm axle hole running side to side. The axle hole must NOT cut through the clutch tubes — route it between them like real LEGO, and keep the tubes it would otherwise hit relieved. Make it actually buildable.',
+    context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true },
+    bed: [220, 220, 250],
+    expect: { partEnumMin: 1 },
+  },
+  {
+    // geometric-consistency generalized to a non-LEGO part — the rim weight bores must not break
+    // into the central bearing seat. Reuses the same interference probe.
+    id: 'T12-fidget-interference',
+    kind: 'fresh',
+    prompt:
+      'A fidget spinner hub with a central bearing seat (press-fit pocket) and several weight bores around the rim. The weight bores must NOT break into the bearing seat — leave solid material between each bore and the bearing race so the bearing still seats. Make it internally consistent and printable.',
+    expect: { bboxMax: [120, 120, 25] },
   },
 ]
 
@@ -254,7 +277,8 @@ function countParams(code) {
       continue
     }
     const m = /^\s*([A-Za-z_]\w*)\s*=\s*([^;]+);\s*(\/\/\s*(.*))?$/.exec(line)
-    if (m && !m[1].startsWith('$')) {
+    if (m && !m[1].startsWith('$') && !m[1].startsWith('_')) {
+      // `_`-prefixed names are hidden probe knobs (e.g. _debug) — not user-facing params
       if (/^(module|function)\b/.test(line.trim())) continue
       count++
       if (m[4] && /\[.*\]/.test(m[4])) annotated++
@@ -386,6 +410,15 @@ async function runTask(engine, task, messages, dir, history, label) {
   // advisory LLM-judge (gated on ANTHROPIC_API_KEY + BENCH_JUDGE=1) — never gates pass/fail
   const judge = await judgeModel({ prompt: task.prompt ?? '(custom)', code })
 
+  // advisory VISION judge for image/asymmetric tasks: rasterize the result (bench/render.mjs)
+  // and let the judge compare it to the reference. Only when enabled, so normal runs pay nothing.
+  let visionJudge
+  if (judgeAvailable() && compiled.ok && compiled.stl && (task.expect?.asymmetric || task.kind === 'image')) {
+    const renderImages = renderViews(compiled.stl)
+    const referenceImage = task.kind === 'image' ? { base64: visionImage, mediaType: 'image/png' } : undefined
+    visionJudge = await judgeVision({ prompt: task.prompt ?? '(custom)', code, referenceImage, renderImages })
+  }
+
   // fidelity / functional metrics the IoU + buildability checks can't see
   let asymmetryScore, modDistinct, scatterSpan, assembled
   if (task.expect?.asymmetric && compiled.ok && compiled.stl) {
@@ -400,6 +433,10 @@ async function runTask(engine, task, messages, dir, history, label) {
       assembled = assembledScore(scatterSpan)
     }
   }
+  // geometric-consistency: does a cutter slice a protected feature? Measured only on parts that
+  // emit the `_debug` probe contract (deterministic, no API); null/absent otherwise.
+  let intfScore
+  if (hasDebugContract(code)) intfScore = interferenceScore(await interferenceVol(code))
 
   const row = {
     task: task.id,
@@ -419,10 +456,12 @@ async function runTask(engine, task, messages, dir, history, label) {
     moduleDistinctness: modDistinct,
     scatterSpan,
     assembledScore: assembled,
+    interferenceScore: intfScore,
     gold: gold ?? undefined,
     buildability: buildability ?? undefined,
     overSplit: overSplit || undefined,
     judge: judge ?? undefined,
+    visionJudge: visionJudge ?? undefined,
     notes: checks.notes,
     codeLines: code.split('\n').length,
   }
@@ -447,6 +486,7 @@ function aggregateRows(task, rows, k) {
   const asyms = rows.map((r) => r.asymmetryScore).filter((n) => typeof n === 'number')
   const mods = rows.map((r) => r.moduleDistinctness).filter((n) => typeof n === 'number')
   const assembleds = rows.map((r) => r.assembledScore).filter((n) => typeof n === 'number')
+  const intfs = rows.map((r) => r.interferenceScore).filter((n) => typeof n === 'number')
   return {
     task: task.id,
     samples: k,
@@ -465,6 +505,7 @@ function aggregateRows(task, rows, k) {
     moduleDistinctness: mods.length ? median(mods) : rep.moduleDistinctness,
     scatterSpan: rep.scatterSpan,
     assembledScore: assembleds.length ? median(assembleds) : rep.assembledScore,
+    interferenceScore: intfs.length ? median(intfs) : rep.interferenceScore,
     gold: ious.length ? { iou: median(ious), samples: ious.length } : rep.gold,
     buildability: buildScores.length ? { ...rep.buildability, score: median(buildScores) } : rep.buildability,
     overSplit: rows.some((r) => r.overSplit) || undefined,
