@@ -20,9 +20,12 @@ One page. The contract for the four surfaces; anything not specified here is und
 ## 3. Versioning / rollback
 - Every assistant message that contained code shows `⌬ MODEL CODE UPDATED · RESTORE`; clicking adopts that version (params reset to that code's defaults) and re-renders. Disabled while generating.
 
-## 4. Multi-part designs ("parts", not "plates")
+## 4. Multi-part designs (PARTS bar + slicer plates)
 - Convention: enum parameter named `part`, first option `all` = assembly preview. UI: PARTS bar in the viewport (⬚ ALL + one chip per piece).
 - Assembly preview suppresses bed-fit warnings; each individual part shows real dims + EXCEEDS BED when applicable.
+- The `all` view is the **assembled** object (pieces in their final relative positions), not a scattered layout. An optional `explode` parameter (0 = assembled, the default) fans the pieces apart along their assembly axes for an OpenSCAD-style exploded preview; it changes only the preview, never the printed per-piece geometry.
+- Clicking a PARTS chip (or `all`) switches the viewed piece with an **immediate** per-piece compile (no slider debounce) and re-fits the camera — a part switch is navigation. A slider tweak, by contrast, never yanks the camera.
+- The slicer view (§7) is the only place pieces are shown as bed "plates"; the PARTS bar itself still shows one piece at a time.
 - `⚒ ASK AI TO SPLIT INTO PARTS` shows whenever the *currently viewed* geometry exceeds the bed (including an already-split piece that is still too big — asks to split further), except in assembly preview.
 - All exports live behind ONE primary **⬇ Export** button → menu with explained choices:
   `.3mf — recommended` · `.stl` · `Parts as separate .stl files` (multi-part only) · `.scad source`;
@@ -59,6 +62,14 @@ One page. The contract for the four surfaces; anything not specified here is und
 - Viewport move/rotate updates the dims HUD and bed-fit warnings, and **bakes into the single-STL
   export** (facet normals recomputed); ALL PARTS exports are per-part compiles and ignore it.
   Esc deselects · Del deletes when selected. Transform resets on every new render.
+- **Slicer view** (multi-part only): a HUD **View · Single / Slicer** toggle. Single is the normal
+  one-mesh view; Slicer compiles every piece (at ≥ Fine, like exports) and packs them flat onto
+  bed-sized plates (shelf / first-fit, **translation-only** so the layout stays WYSIWYG with export),
+  spilling onto additional plates as needed. A piece that can't fit the bed as-drawn is reported
+  **oversize** (never force-fit or rotated); a piece that fails to render is **named in the readout** —
+  neither is ever silently dropped. Placement / section / measure tools and the PARTS bar are disabled
+  in Slicer view, and the camera frames all plates. Entering Slicer (re)builds the pack and re-frames;
+  toggling back to Single — or re-entering with an unchanged pack — leaves the camera as the user left it.
 - **Print bed**: 15 printer presets (Creality, Bambu incl. H2D, Prusa incl. CORE One/XL, Elegoo,
   Flashforge, QIDI) + `Custom…` (prompt-parsed `W × D × H`, editable via ✎ while active). Bed
   choice and custom dims persist across sessions and are sent to the AI as generation context.
@@ -111,3 +122,4 @@ One page. The contract for the four surfaces; anything not specified here is und
 ## 10. Stale-state guarantees
 - A render result only applies to the project that started it (switching projects mid-render discards the result).
 - Aborting a generation leaves history consistent (consecutive user messages are merged for the API).
+- The slicer pack only applies if neither the project nor the model changed while it built: every main render bumps a generation token and clears the cached pieces, so an in-flight piece build that a concurrent recompile (e.g. a slider drag in Slicer view) has superseded is discarded rather than shown — the view then rebuilds against the current parameters.
