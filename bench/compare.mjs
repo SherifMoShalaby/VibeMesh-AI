@@ -67,7 +67,7 @@ export function parseStl(bytes) {
 
 /* ── mesh helpers ── */
 
-function bboxOf(tris) {
+export function bboxOf(tris) {
   const min = [Infinity, Infinity, Infinity]
   const max = [-Infinity, -Infinity, -Infinity]
   for (let i = 0; i < tris.length; i += 3) {
@@ -81,7 +81,7 @@ function bboxOf(tris) {
 }
 
 /** placement-normalize: bbox center → x=y=0, lowest point → z=0 */
-function normalize(tris) {
+export function normalize(tris) {
   const { min, max } = bboxOf(tris)
   const tx = -(min[0] + max[0]) / 2
   const ty = -(min[1] + max[1]) / 2
@@ -126,7 +126,7 @@ export function meshVolume(tris) {
 
 /* ── voxelization: one +Z ray per column, even-odd fill between crossings ── */
 
-function makeGrid(bboxA, bboxB) {
+export function makeGrid(bboxA, bboxB) {
   const min = bboxA.min.map((v, i) => Math.min(v, bboxB.min[i]))
   const max = bboxA.max.map((v, i) => Math.max(v, bboxB.max[i]))
   const maxDim = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2])
@@ -148,7 +148,7 @@ function makeGrid(bboxA, bboxB) {
   }
 }
 
-function voxelize(tris, grid) {
+export function voxelize(tris, grid) {
   const { ox, oy, oz, pitch, nx, ny, nz } = grid
   const crossings = new Array(nx * ny).fill(null)
 

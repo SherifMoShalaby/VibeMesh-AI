@@ -252,7 +252,7 @@ export async function providerStatus() {
         available: true,
         detail: localBaseUrl(),
         model: m,
-        vision: /vl|vision|llava|moondream|gemma3|qwen.*vl/i.test(m),
+        vision: /vl|vision|llava|moondream|gemma|qwen.*vl/i.test(m),
       })
     }
   } else {
@@ -324,7 +324,7 @@ function contextText(context) {
   }
   if (context?.kit) {
     out +=
-      '\n\n# Build as a KIT\n\nThis request is for a buildable kit. Produce SEPARATE connectable parts, not one fused solid: use the part enum (one module per piece), design real inline mating connectors (studs/tubes, pegs/sockets, snaps, axles/bores) with the fit clearance exposed as a parameter, and render each selected piece flat on z=0 in print orientation.'
+      '\n\n# Build as a KIT\n\nThis request is for a buildable kit. Produce SEPARATE connectable parts, not one fused solid: use the part enum (one module per piece), design real inline mating connectors (studs/tubes, pegs/sockets, snaps, axles/bores) with the fit clearance exposed as a parameter, and render each selected piece flat on z=0 in print orientation. EXCEPTION: if a reference image shows a SINGLE object that merely accepts inserted hardware (a bearing pocket, weight bores, screw holes), it is ONE printable solid — model it as a single faithful part and ignore this kit guidance.'
     // task-routed few-shot: a compile-verified kit in the exact required style. Pattern only —
     // the model still outputs its own single complete program for the user's request.
     out +=

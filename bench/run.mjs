@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { createOpenSCAD } from 'openscad-wasm'
 import { scoreAgainstGold } from './compare.mjs'
 import { extractPartEnum, scoreBuildability } from './buildability.mjs'
+import { symmetryScore, moduleDistinctness, assembledScore } from './fidelity.mjs'
 import { judgeModel } from './judge.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
@@ -108,6 +109,15 @@ const TASKS = [
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true },
     bed: [220, 220, 250],
     expect: { partEnumMin: 2 },
+  },
+  {
+    // fidelity coverage — exercises asymmetryScore + moduleDistinctness (the spinner-collapse
+    // failure: a symmetric cross self-matches under rotation and IoU can't see it).
+    id: 'T10-spinner',
+    kind: 'fresh',
+    prompt:
+      'A fidget spinner with a central bearing seat and FOUR DIFFERENT arms — one with a hexagonal grip mesh, one a long stepped/zig-zag edge, one a short curved arm, one solid with weight bores. The arms are intentionally NON-identical and the overall shape is asymmetric. Model each arm distinctly around the hub.',
+    expect: { asymmetric: true, distinctModulesMin: 5, bboxMax: [200, 200, 30] },
   },
 ]
 
@@ -376,6 +386,21 @@ async function runTask(engine, task, messages, dir, history, label) {
   // advisory LLM-judge (gated on ANTHROPIC_API_KEY + BENCH_JUDGE=1) — never gates pass/fail
   const judge = await judgeModel({ prompt: task.prompt ?? '(custom)', code })
 
+  // fidelity / functional metrics the IoU + buildability checks can't see
+  let asymmetryScore, modDistinct, scatterSpan, assembled
+  if (task.expect?.asymmetric && compiled.ok && compiled.stl) {
+    asymmetryScore = symmetryScore(compiled.stl).asymmetryScore // higher = more asymmetric (good for these tasks)
+    modDistinct = moduleDistinctness(code)
+  }
+  if (task.kit && metrics && buildability?.pieces?.length) {
+    // scatterSpan = all-view span ÷ largest single piece — assembled ~1-2, scattered blows up
+    const pieceMax = Math.max(...buildability.pieces.filter((p) => p.size).flatMap((p) => p.size), 0)
+    if (pieceMax > 0) {
+      scatterSpan = round2(Math.max(...metrics.size) / pieceMax)
+      assembled = assembledScore(scatterSpan)
+    }
+  }
+
   const row = {
     task: task.id,
     genMs: gen.genMs,
@@ -390,6 +415,10 @@ async function runTask(engine, task, messages, dir, history, label) {
     // placement (single-part only): does the rendered part sit flat on z=0?
     // invisible to dimScore/IoU today — a part sunk 4.8mm scores a perfect 1.
     placementScore: task.kit ? undefined : (metrics ? placementScore(metrics.minZ) : undefined),
+    asymmetryScore,
+    moduleDistinctness: modDistinct,
+    scatterSpan,
+    assembledScore: assembled,
     gold: gold ?? undefined,
     buildability: buildability ?? undefined,
     overSplit: overSplit || undefined,
@@ -415,6 +444,9 @@ function aggregateRows(task, rows, k) {
   const dimScores = rows.map((r) => r.dimScore).filter((n) => typeof n === 'number')
   const placements = rows.map((r) => r.placementScore).filter((n) => typeof n === 'number')
   const buildScores = rows.map((r) => r.buildability?.score).filter((n) => typeof n === 'number')
+  const asyms = rows.map((r) => r.asymmetryScore).filter((n) => typeof n === 'number')
+  const mods = rows.map((r) => r.moduleDistinctness).filter((n) => typeof n === 'number')
+  const assembleds = rows.map((r) => r.assembledScore).filter((n) => typeof n === 'number')
   return {
     task: task.id,
     samples: k,
@@ -429,6 +461,10 @@ function aggregateRows(task, rows, k) {
     params: rep.params,
     dimScore: dimScores.length ? median(dimScores) : rep.dimScore ?? null,
     placementScore: task.kit ? undefined : placements.length ? median(placements) : rep.placementScore,
+    asymmetryScore: asyms.length ? median(asyms) : rep.asymmetryScore,
+    moduleDistinctness: mods.length ? median(mods) : rep.moduleDistinctness,
+    scatterSpan: rep.scatterSpan,
+    assembledScore: assembleds.length ? median(assembleds) : rep.assembledScore,
     gold: ious.length ? { iou: median(ious), samples: ious.length } : rep.gold,
     buildability: buildScores.length ? { ...rep.buildability, score: median(buildScores) } : rep.buildability,
     overSplit: rows.some((r) => r.overSplit) || undefined,

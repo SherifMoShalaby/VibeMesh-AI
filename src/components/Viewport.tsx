@@ -7,6 +7,7 @@ import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
+import { packPlates, type Placement } from '../lib/packPlates'
 import { canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
 import EmptyState from './EmptyState'
 import { CustomBedDialog } from './Dialogs'
@@ -40,6 +41,8 @@ interface ViewApi {
 }
 
 const SELECT_HINT_KEY = 'vibemesh.hint.select.v1'
+/** gap (mm) between bed plates laid out in the slicer scene */
+const PLATE_GAP = 40
 
 export default function Viewport() {
   const stl = useStore((s) => s.stl)
@@ -56,7 +59,7 @@ export default function Viewport() {
   const code = useStore((s) => s.code)
   const params = useStore((s) => s.params)
   const paramValues = useStore((s) => s.paramValues)
-  const setParamValue = useStore((s) => s.setParamValue)
+  const selectPart = useStore((s) => s.selectPart)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const engine = useStore((s) => s.engine)
   const meshTransform = useStore((s) => s.meshTransform)
@@ -69,6 +72,12 @@ export default function Viewport() {
   const canRedo = useStore((s) => s.vpFuture.length > 0)
   const vpUndo = useStore((s) => s.vpUndo)
   const vpRedo = useStore((s) => s.vpRedo)
+  const viewMode = useStore((s) => s.viewMode)
+  const pieces = useStore((s) => s.pieces)
+  const slicing = useStore((s) => s.slicing)
+  const slicerFailed = useStore((s) => s.slicerFailed)
+  const setViewMode = useStore((s) => s.setViewMode)
+  const compilePieces = useStore((s) => s.compilePieces)
 
   const shading = useUi((s) => s.shading)
   const bedVisible = useUi((s) => s.bedVisible)
@@ -172,6 +181,54 @@ export default function Viewport() {
   const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
   const currentPart = partParam ? String(paramValues.part ?? partParam.defaultValue) : null
   const isAssemblyPreview = partParam !== undefined && currentPart === 'all'
+
+  // ── slicer (multi-plate) view: pack each compiled piece onto bed-sized plates ──
+  const platesView = viewMode === 'plates' && partParam !== undefined
+  const sliceGeos = useMemo(() => {
+    const m = new Map<string, ModelGeometry>()
+    for (const p of pieces ?? []) {
+      try {
+        m.set(p.name, parseStl(p.stl))
+      } catch {
+        /* skip unparseable piece */
+      }
+    }
+    return m
+  }, [pieces])
+  // these BufferGeometries are passed to <mesh> as a PROP, so r3f never owns or disposes them.
+  // pieces is rebuilt on every recompile/part-switch — free the previous set or VRAM grows
+  // unbounded (eventual WebGL context loss). Cleanup runs when sliceGeos changes and on unmount.
+  useEffect(() => {
+    return () => {
+      for (const g of sliceGeos.values()) g.geometry.dispose()
+    }
+  }, [sliceGeos])
+  const platePlan = useMemo(
+    () => (pieces ? packPlates(pieces.map((p) => ({ name: p.name, w: p.bbox.x, h: p.bbox.y, z: p.bbox.z })), { x: bed.x, y: bed.y, z: bed.z }) : null),
+    [pieces, bed.x, bed.y, bed.z],
+  )
+  const platesTbox = useMemo<TBox>(() => {
+    if (!platePlan || platePlan.plates.length === 0) return null
+    const n = platePlan.plates.length
+    const totalW = n * bed.x + (n - 1) * PLATE_GAP
+    // only pieces actually placed on a plate drive the framed height — an oversize piece is
+    // excluded from every plate, so including its z would zoom the camera out for nothing
+    const placed = new Set(platePlan.plates.flat().map((p) => p.name))
+    const maxZ = Math.max(0.1, ...(pieces ?? []).filter((p) => placed.has(p.name)).map((p) => p.bbox.z))
+    const box = new THREE.Box3(new THREE.Vector3(-totalW / 2, -bed.y / 2, 0), new THREE.Vector3(totalW / 2, bed.y / 2, maxZ))
+    const size = new THREE.Vector3()
+    box.getSize(size)
+    const center = new THREE.Vector3()
+    box.getCenter(center)
+    return { box, size, center, minZ: 0 }
+  }, [platePlan, bed.x, bed.y, pieces])
+  const activeTbox = platesView ? platesTbox : tbox
+
+  // (re)build the slicer pieces when entering plates view or after a re-render invalidated them
+  useEffect(() => {
+    if (platesView && !pieces && !slicing && code.trim()) void compilePieces()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platesView, pieces, slicing])
 
   // section plane (z cut, fraction of model height)
   const clipPlanes = useMemo(() => {
@@ -286,9 +343,11 @@ export default function Viewport() {
         <hemisphereLight args={['#cdd6e0', '#23262b', 0.85]} />
         <directionalLight position={[180, -140, 260]} intensity={1.25} />
         <directionalLight position={[-160, 120, 80]} intensity={0.35} color="#9fb4ff" />
-        <PrintBed x={bed.x} y={bed.y} visible={bedVisible} />
+        {!platesView && <PrintBed x={bed.x} y={bed.y} visible={bedVisible} />}
 
-        {model && (
+        {platesView && platePlan && <SlicerScene plates={platePlan.plates} geos={sliceGeos} bed={bed} />}
+
+        {!platesView && model && (
           <group
             ref={groupRef}
             position={meshTransform?.position ?? [0, 0, 0]}
@@ -335,23 +394,23 @@ export default function Viewport() {
           </group>
         )}
 
-        {selected && model && (
+        {!platesView && selected && model && (
           <TransformControls object={groupRef as never} mode={gizmoMode} size={0.7} onMouseUp={commitTransform} />
         )}
 
-        {measurePts.map((p, i) => (
+        {!platesView && measurePts.map((p, i) => (
           <mesh key={i} position={p}>
             <sphereGeometry args={[Math.max((tbox?.size.length() ?? 60) / 150, 0.6), 12, 12]} />
             <meshBasicMaterial color="#ff8d49" />
           </mesh>
         ))}
-        {measurePts.length === 2 && (
+        {!platesView && measurePts.length === 2 && (
           <Line points={[measurePts[0].toArray(), measurePts[1].toArray()]} color="#ff8d49" lineWidth={2} dashed dashScale={2} />
         )}
 
-        <CameraFit tbox={tbox} version={fitVersion} />
+        <CameraFit tbox={activeTbox} version={fitVersion} />
         <CaptureRig tbox={tbox} hasModel={Boolean(model)} />
-        <ViewRig tbox={tbox} apiRef={viewApi} fileBase="viewport" />
+        <ViewRig tbox={activeTbox} apiRef={viewApi} fileBase="viewport" />
         <OrbitControlsZUp />
       </Canvas>
       </div>
@@ -375,7 +434,7 @@ export default function Viewport() {
             className={`tool-btn${selected ? ' active' : ''}`}
             data-tip="Move / rotate part"
             aria-label="Move or rotate part"
-            disabled={!model}
+            disabled={!model || platesView}
             onClick={() => setSelected(true)}
           >
             <DMove />
@@ -388,6 +447,7 @@ export default function Viewport() {
             className={`tool-btn${sectionOn ? ' active' : ''}`}
             data-tip="Section view"
             aria-label="Section view"
+            disabled={platesView}
             onClick={() => setSectionOn(!sectionOn)}
           >
             <DSection />
@@ -396,6 +456,7 @@ export default function Viewport() {
             className={`tool-btn${measureMode ? ' active' : ''}`}
             data-tip="Measure"
             aria-label="Measure"
+            disabled={platesView}
             onClick={() => {
               setMeasureMode(!measureMode)
               setMeasurePts([])
@@ -427,30 +488,58 @@ export default function Viewport() {
             <DCamera />
           </button>
           <div className="rail-sep" />
-          <button className="tool-btn" disabled={!canUndo} data-tip="Undo (⌘Z)" aria-label="Undo placement" onClick={vpUndo}>
+          <button className="tool-btn" disabled={!canUndo || platesView} data-tip="Undo (⌘Z)" aria-label="Undo placement" onClick={vpUndo}>
             <DUndo />
           </button>
-          <button className="tool-btn" disabled={!canRedo} data-tip="Redo (⇧⌘Z)" aria-label="Redo placement" onClick={vpRedo}>
+          <button className="tool-btn" disabled={!canRedo || platesView} data-tip="Redo (⇧⌘Z)" aria-label="Redo placement" onClick={vpRedo}>
             <span style={{ display: 'grid', transform: 'scaleX(-1)' }}><DUndo /></span>
           </button>
         </div>
       )}
 
-      {sectionOn && !showEmpty && (
+      {sectionOn && !platesView && !showEmpty && (
         <div className="section-slider" title="Section height">
           <input type="range" min={0} max={1} step={0.01} value={sectionZ} onChange={(e) => setSectionZ(Number(e.target.value))} />
         </div>
       )}
 
       {/* ── perf readout (top-right) ── */}
-      {model && (
+      {!platesView && model && (
         <div className="perf-chip">
           <span>{model.triangles.toLocaleString()} tris</span>
         </div>
       )}
 
+      {/* ── slicer readout (bottom-left) — oversize pieces are surfaced LOUDLY ── */}
+      {platesView && (
+        <div className="assembly-chip">
+          <span className="ac-label">Slicer</span>
+          {slicing ? (
+            <span className="ac-hint">packing pieces…</span>
+          ) : platePlan ? (
+            <>
+              <span className="ac-hint">
+                {platePlan.plates.length} plate{platePlan.plates.length === 1 ? '' : 's'} · {bed.x}×{bed.y}mm · drag to orbit
+              </span>
+              {platePlan.oversize.length > 0 && (
+                <span className="ac-warn">
+                  <IconWarning /> won't fit the bed: {platePlan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')} — switch to that part and Ask AI to split
+                </span>
+              )}
+              {slicerFailed.length > 0 && (
+                <span className="ac-warn">
+                  <IconWarning /> failed to render: {slicerFailed.join(', ')} — select that part to see its error
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="ac-hint">no pieces to lay out</span>
+          )}
+        </div>
+      )}
+
       {/* ── assembly / placement readout (bottom-left) ── */}
-      {!showEmpty && (model || measureMode) && (
+      {!platesView && !showEmpty && (model || measureMode) && (
         <div className="assembly-chip">
           {measureMode ? (
             <>
@@ -574,7 +663,7 @@ export default function Viewport() {
             </div>
           </div>
 
-          {tbox && (
+          {!platesView && tbox && (
             <div className="hud-seg">
               <div className={`hud-dims${overBed && !isAssemblyPreview ? ' over' : ''}`}>
                 <span className="dim-label">Bounds</span>
@@ -585,25 +674,49 @@ export default function Viewport() {
               </div>
             </div>
           )}
+          {platesView && platePlan && (
+            <div className="hud-seg">
+              <div className={`hud-dims${platePlan.oversize.length ? ' over' : ''}`}>
+                <span className="dim-label">Plates</span>
+                <span className="dim-val">{platePlan.plates.length}</span>
+                <span className="unit">
+                  on {bed.x}×{bed.y}
+                  {platePlan.oversize.length > 0 && ` · ${platePlan.oversize.length} oversize`}
+                </span>
+              </div>
+            </div>
+          )}
 
           {partParam && (
             <div className="hud-seg hud-parts">
-              <span className="dim-label">Parts</span>
+              <span className="dim-label">View</span>
               <div className="part-tog">
-                {(partParam.options ?? []).map((opt) => {
-                  const value = String(opt)
-                  return (
-                    <button
-                      key={value}
-                      className={currentPart === value ? 'active' : ''}
-                      onClick={() => setParamValue('part', value)}
-                    >
-                      {value === 'all' ? 'All' : value}
-                      {value === 'all' && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
-                    </button>
-                  )
-                })}
+                <button className={!platesView ? 'active' : ''} onClick={() => void setViewMode('single')}>Single</button>
+                <button className={platesView ? 'active' : ''} disabled={slicing} onClick={() => void setViewMode('plates')}>
+                  Slicer
+                  {slicing && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
+                </button>
               </div>
+              {!platesView && (
+                <div className="part-tog">
+                  {(partParam.options ?? []).map((opt) => {
+                    const value = String(opt)
+                    const busy = currentPart === value && compileStatus === 'compiling'
+                    return (
+                      <button
+                        key={value}
+                        className={`${currentPart === value ? 'active' : ''}${busy ? ' busy' : ''}`}
+                        disabled={busy}
+                        onClick={() => void selectPart(value)}
+                      >
+                        {value === 'all' ? 'All' : value}
+                        {value === 'all' && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
+                        {busy && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -802,6 +915,41 @@ function CameraFit({ tbox, version }: { tbox: TBox; version: number }) {
   }, [tbox, version, camera, controls])
 
   return null
+}
+
+/** The slicer view: each compiled piece packed onto one or more bed-sized plates,
+ *  laid out left-to-right and centered. Read-only (no per-piece move/section/measure). */
+function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<string, ModelGeometry>; bed: { x: number; y: number; z: number } }) {
+  const n = plates.length
+  const totalW = n * bed.x + (n - 1) * PLATE_GAP
+  return (
+    <group>
+      {plates.map((placements, pi) => {
+        const ox = pi * (bed.x + PLATE_GAP) - totalW / 2 + bed.x / 2
+        return (
+          <group key={pi} position={[ox, 0, 0]}>
+            <PrintBed x={bed.x} y={bed.y} visible />
+            {placements.map((pl) => {
+              const g = geos.get(pl.name)
+              const bb = g?.geometry.boundingBox
+              if (!g || !bb) return null
+              // bed is centered at the group origin (−bed/2..+bed/2); packer gives corner-origin
+              // coords (0..bed). Shift to centered, then drop the piece's own bbox min to it.
+              return (
+                <mesh
+                  key={pl.name}
+                  geometry={g.geometry}
+                  position={[pl.x - bed.x / 2 - bb.min.x, pl.y - bed.y / 2 - bb.min.y, -bb.min.z]}
+                >
+                  <meshStandardMaterial color="#b9bdc6" roughness={0.55} metalness={0.12} flatShading side={THREE.DoubleSide} />
+                </mesh>
+              )
+            })}
+          </group>
+        )
+      })}
+    </group>
+  )
 }
 
 /** Blueprint-style print bed: minor/major grid, border, origin marker, ghost plate. */

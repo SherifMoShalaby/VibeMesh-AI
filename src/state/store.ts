@@ -66,6 +66,25 @@ interface VibeState {
       (param tweaks / AI iterations keep the user's camera; F or FIT re-frames manually) */
   fitVersion: number
 
+  /** viewport mode: 'single' = the normal one-mesh view; 'plates' = the slicer (each
+   *  piece packed onto bed-sized plates). Defaults to 'single' → fully additive. */
+  viewMode: 'single' | 'plates'
+  /** per-piece compiled geometry for the slicer; null until built or after a re-render invalidates it */
+  pieces: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] | null
+  /** true while compilePieces() is rendering the slicer pieces */
+  slicing: boolean
+  /** monotonic generation token: every main compile() bumps it, so an in-flight
+   *  compilePieces() can detect a concurrent recompile (slider drag in slicer view)
+   *  and abandon its now-stale pack instead of clobbering the pieces:null invalidation */
+  slicingToken: number
+  /** names of pieces that genuinely failed to render for the slicer (NOT superseded) —
+   *  surfaced in the slicer readout so a missing piece is never silently dropped */
+  slicerFailed: string[]
+  /** switch the viewport view; entering 'plates' builds the pieces if not cached */
+  setViewMode: (mode: 'single' | 'plates') => Promise<void>
+  /** compile every part-enum piece into in-memory geometry for the slicer view */
+  compilePieces: () => Promise<void>
+
   generating: boolean
   streamText: string
   /** project id awaiting its one auto-refine pass (set when the first image-grounded
@@ -90,6 +109,9 @@ interface VibeState {
   retryLast: () => Promise<void>
   abortGeneration: () => void
   setParamValue: (name: string, value: ParamValue) => void
+  /** select a multi-part piece (or 'all'): compiles immediately (no slider debounce) and
+   *  re-fits the camera — a part switch is navigation, not a slider tweak */
+  selectPart: (value: string) => Promise<void>
   resetParams: () => void
   setCode: (code: string) => void
   recompile: () => void
@@ -178,7 +200,10 @@ function composeMatrix(p: [number, number, number], r: [number, number, number])
 function detectKitIntent(text: string): boolean {
   const t = text.toLowerCase()
   return (
-    /\bkit\b|\bbuildable\b|\bmodular\b|\binterlock/.test(t) ||
+    // "modular" alone is too weak — "modular fidget spinner" is ONE solid, not a kit;
+    // require a kit noun nearby (allowing an adjective between, e.g. "modular building blocks").
+    /\bkit\b|\bbuildable\b|\binterlock/.test(t) ||
+    /\bmodular\b[^.?!]{0,20}?\b(kit|set|system|parts|pieces|blocks?|bricks?)\b/.test(t) ||
     /\b(snaps?|clips?)[\s-]?together\b/.test(t) ||
     /\b(set|kit)\s+of\s+(parts|pieces)\b/.test(t) ||
     /\bparts?\s+(that|which|to|so)\b/.test(t) ||
@@ -234,6 +259,55 @@ export const useStore = create<VibeState>((set, get) => {
     return QUALITY_PRESETS.indexOf(cur) >= QUALITY_PRESETS.indexOf(fine) ? cur : fine
   }
 
+  /** Compile every part-enum piece into in-memory geometry for the slicer view.
+   *  Sequential (the openscad client coalesces concurrent jobs), at >=Fine like exports,
+   *  with the same Draft timeout fallback. Stale-guarded against a project switch. */
+  async function compilePieces(): Promise<void> {
+    const { code, params, paramValues } = get()
+    const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
+    if (!partParam || !code.trim()) {
+      set({ pieces: null })
+      return
+    }
+    const names = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
+    const preset = exportQuality()
+    const projectAtStart = get().activeId
+    const tokenAtStart = get().slicingToken
+    // stale on EITHER axis: a project switch, or a concurrent main compile() (e.g. a slider
+    // drag in slicer view — RightPanel is not gated on viewMode) that bumped the token and
+    // already nulled `pieces` as its invalidation signal. Committing now would clobber that.
+    const invalidated = () => get().activeId !== projectAtStart || get().slicingToken !== tokenAtStart
+    set({ slicing: true })
+    const collected: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] = []
+    const failed: string[] = []
+    try {
+      for (const name of names) {
+        const defines = buildDefines(params, { ...paramValues, part: name })
+        let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
+        if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
+          result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
+        }
+        // a coalesced/superseded render is not a failure — a concurrent compile() will rebuild
+        // via the Viewport effect; counting it as failed would fire a spurious loud note
+        if (result.error === 'superseded') return
+        if (invalidated()) return // project switched OR cache invalidated mid-build — drop
+        const bb = result.ok && result.stl ? stlBBox(result.stl) : null
+        if (result.ok && result.stl && bb) collected.push({ name, stl: result.stl, bbox: bb })
+        else failed.push(name)
+      }
+    } finally {
+      // clear the in-flight flag, but ONLY for the project we started in — a mid-build project
+      // switch already reset slicing for the NEW project (selectProject/closeProject), and an
+      // unconditional clear here would wipe the new project's freshly-set slicing:true
+      if (get().activeId === projectAtStart) set({ slicing: false })
+    }
+    if (invalidated()) return
+    // a missing piece in the slicer is as misleading as a missing part in an export — surface it
+    // loudly: both the gated HUD note AND the always-visible slicer readout (slicerFailed)
+    set({ pieces: collected, slicerFailed: failed })
+    if (failed.length) set({ compileNote: `Slicer: ${failed.length} part(s) failed to render — ${failed.join(', ')}` })
+  }
+
   async function compile(code: string, defines: string[]): Promise<CompileResult> {
     if (!code.trim()) {
       set({ compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
@@ -243,8 +317,10 @@ export const useStore = create<VibeState>((set, get) => {
     const projectAtStart = get().activeId
     const stale = () => get().activeId !== projectAtStart
 
-    // a re-render replaces the geometry — placement history would restore stale meshes
-    set({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false })
+    // a re-render replaces the geometry — placement history would restore stale meshes.
+    // bump slicingToken so any in-flight compilePieces() abandons its now-stale pack rather
+    // than racing this compile and clobbering the pieces:null invalidation below.
+    set({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false, pieces: null, slicerFailed: [], slicingToken: get().slicingToken + 1 })
     // adaptive curve quality: kill any global $fn, drive $fa/$fs from the preset.
     // Per-call $fn (hex sockets etc.) is untouched by these root-scope overrides.
     const preset = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
@@ -490,6 +566,11 @@ export const useStore = create<VibeState>((set, get) => {
     stl: null,
     stlVersion: 0,
     fitVersion: 0,
+    viewMode: 'single',
+    pieces: null,
+    slicing: false,
+    slicingToken: 0,
+    slicerFailed: [],
     generating: false,
     streamText: '',
     pendingAutoRefineFor: null,
@@ -552,6 +633,9 @@ export const useStore = create<VibeState>((set, get) => {
         compileStatus: 'idle',
         compileError: null,
         streamText: '',
+        viewMode: 'single',
+        pieces: null,
+        slicing: false,
       })
       saveProjects(projects)
       saveActiveProjectId(project.id)
@@ -561,7 +645,7 @@ export const useStore = create<VibeState>((set, get) => {
       const project = get().projects.find((p) => p.id === id)
       if (!project) return
       clearParamTimer()
-      set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '' })
+      set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
       saveActiveProjectId(id)
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
@@ -575,7 +659,7 @@ export const useStore = create<VibeState>((set, get) => {
       saveProjects(projects)
       if (get().activeId === id) {
         clearParamTimer()
-        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle' })
+        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false })
         saveActiveProjectId(null)
       }
     },
@@ -623,6 +707,31 @@ export const useStore = create<VibeState>((set, get) => {
         void compile(code, buildDefines(params, values))
         persist()
       }, 350)
+    },
+
+    selectPart: async (value) => {
+      clearParamTimer() // a pending slider render must not clobber the part switch
+      const paramValues = { ...get().paramValues, part: value }
+      set({ paramValues })
+      const { code, params } = get()
+      const result = await compile(code, buildDefines(params, paramValues))
+      // re-frame on a part switch (compile only auto-fits empty→full; a switch is full→full).
+      // This lives HERE, not in setParamValue, so slider drags never yank the camera.
+      if (result.ok) set((s) => ({ fitVersion: s.fitVersion + 1 }))
+      persist()
+    },
+
+    compilePieces,
+    setViewMode: async (mode) => {
+      set({ viewMode: mode })
+      if (mode !== 'plates') return
+      // entering the slicer (or re-entering after a re-render invalidated the cache) builds pieces
+      const needsBuild = !get().pieces && !get().slicing
+      if (needsBuild) await compilePieces()
+      // re-frame ONLY when we (re)built the layout — a cached re-entry (e.g. toggling back from
+      // single after orbiting) must leave the camera as the user left it. SPEC §8: auto-fit only
+      // when the framed volume genuinely changes, never mid-iteration.
+      if (needsBuild) set((s) => ({ fitVersion: s.fitVersion + 1 }))
     },
 
     resetParams: () => {

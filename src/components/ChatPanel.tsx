@@ -65,14 +65,14 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
       return
     }
     const anchor = modelDims
-      ? ` The current model measures exactly ${modelDims.x} × ${modelDims.y} × ${modelDims.z} mm (X width × Y depth × Z height) — use these numbers as the absolute scale reference when correcting proportions.`
+      ? ` These are the CURRENT render's measured dimensions: ${modelDims.x} × ${modelDims.y} × ${modelDims.z} mm (X width × Y depth × Z height) — they may be WRONG; correct them toward my reference's labeled dimensions, not toward these.`
       : ''
     const shot =
       views.length > 1
         ? `Attached are ${views.length} renders of the CURRENT model from fixed viewpoints (isometric, front, top — in that order).`
         : 'Attached is a render of the CURRENT model, captured from a fixed isometric viewpoint.'
     void sendPrompt(
-      `${shot}${anchor} Compare them carefully against my original reference image(s) earlier in this conversation. First list the most important discrepancies (shape, proportions, feature counts, missing or extra details), then return the corrected complete program.`,
+      `${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. First list the most important discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.`,
       views,
       'Refine pass',
     )
