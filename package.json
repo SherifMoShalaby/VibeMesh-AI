@@ -40,6 +40,7 @@
     "bench": "node bench/run.mjs",
     "bench:score": "node bench/score.mjs",
     "bench:interference": "node bench/interference.selftest.mjs",
+    "test:pack": "tsx bench/packplates.selftest.ts",
     "bench:gate": "node bench/interference.selftest.mjs && node bench/gate.mjs",
     "bench:baseline": "node bench/gate.mjs --update-baseline"
   },

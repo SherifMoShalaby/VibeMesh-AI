@@ -1,11 +1,12 @@
 /**
  * Lay out printable pieces across one or more bed-sized plates (the "slicer" view).
  * Shelf / first-fit-decreasing on the XY footprint — enough density for a preview of
- * single-digit part counts; not a production nester. No rotation in v1: a real slicer
- * auto-arranges parts on import, so a rotated preview here would just disagree with what
- * the user's slicer does — and the placement is preview-only (export recompiles each part
- * flat from OpenSCAD source). So a piece that doesn't fit the bed as-drawn is reported as
- * oversize, never force-fit.
+ * single-digit part counts; not a production nester. Rotation is RESCUE-ONLY: a piece keeps
+ * its as-drawn orientation unless that doesn't fit the bed but a 90° Z-spin does (common on
+ * non-square beds, e.g. a part drawn portrait on a 250×210 Prusa MK4S). The chosen `rot` is
+ * the single source of truth — SlicerScene and the .3mf export both consume it and bake the
+ * same spin, so the preview and the exported plate never disagree. A piece that fits in
+ * NEITHER orientation is reported oversize, never force-fit.
  */
 export interface PieceFootprint {
   name: string
@@ -18,8 +19,10 @@ export interface Placement {
   name: string
   x: number // bed-local X of the piece's min corner (mm)
   y: number // bed-local Y of the piece's min corner (mm)
-  w: number
+  w: number // PLACED footprint (already swapped if rot === 90)
   h: number
+  rot: 0 | 90 // Z-rotation to apply to the source mesh before seating; the SINGLE source of truth
+  //            consumed verbatim by SlicerScene (view) and buildThreeMF (export) — never recomputed
 }
 
 export interface Oversize {
@@ -45,14 +48,21 @@ export function packPlates(
   const usableX = bed.x - 2 * gap
   const usableY = bed.y - 2 * gap
   const oversize: Oversize[] = []
-  const fit: PieceFootprint[] = []
+  // each fitting piece carries its CHOSEN placed footprint (post-rotation) + the rot flag.
+  // rescue-only: keep the as-drawn orientation unless it doesn't fit but a 90° spin does. This
+  // fixes the false "won't fit the bed" verdict on non-square beds (e.g. a part drawn portrait on
+  // a 250×210 Prusa MK4S) without reshuffling layouts that already fit.
+  const fit: Array<{ name: string; w: number; h: number; rot: 0 | 90 }> = []
   for (const p of pieces) {
-    if (p.z > bed.z + 1e-6) oversize.push({ name: p.name, reason: 'height' })
-    else if (p.w > usableX + 1e-6 || p.h > usableY + 1e-6) oversize.push({ name: p.name, reason: 'footprint' })
-    else fit.push(p)
+    const fitsAsDrawn = p.w <= usableX + 1e-6 && p.h <= usableY + 1e-6
+    const fitsRot = p.h <= usableX + 1e-6 && p.w <= usableY + 1e-6
+    if (p.z > bed.z + 1e-6) oversize.push({ name: p.name, reason: 'height' }) // a Z-spin can't lower a too-tall part
+    else if (fitsAsDrawn) fit.push({ name: p.name, w: p.w, h: p.h, rot: 0 })
+    else if (fitsRot) fit.push({ name: p.name, w: p.h, h: p.w, rot: 90 }) // swap footprint to the rotated dims
+    else oversize.push({ name: p.name, reason: 'footprint' }) // neither orientation fits the bed
   }
 
-  // first-fit-decreasing by the taller dimension keeps shelves shallow
+  // first-fit-decreasing by the (placed) taller dimension keeps shelves shallow
   const sorted = [...fit].sort((a, b) => b.h - a.h || b.w - a.w)
 
   const plates: Placement[][] = []
@@ -75,7 +85,7 @@ export function packPlates(
       shelfH = 0
     }
     if (shelfY + p.h > usableY + 1e-6) newPlate() // doesn't fit this plate → start a new one
-    cur.push({ name: p.name, x: gap + cursorX, y: gap + shelfY, w: p.w, h: p.h })
+    cur.push({ name: p.name, x: gap + cursorX, y: gap + shelfY, w: p.w, h: p.h, rot: p.rot })
     cursorX += p.w + gap
     shelfH = Math.max(shelfH, p.h)
   }

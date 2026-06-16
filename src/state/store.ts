@@ -971,9 +971,9 @@ export const useStore = create<VibeState>((set, get) => {
         const parts = placements
           .map((pl) => {
             const c = byName.get(pl.name)
-            return c ? { name: pl.name, stl: c.stl, place: { x: pl.x, y: pl.y } } : null
+            return c ? { name: pl.name, stl: c.stl, place: { x: pl.x, y: pl.y, rot: pl.rot } } : null
           })
-          .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number } } => p !== null)
+          .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number; rot: 0 | 90 } } => p !== null)
         if (parts.length) {
           downloadBlob(buildThreeMF(parts), `${fileBase}-plate${pi + 1}.3mf`, 'model/3mf')
           written++
