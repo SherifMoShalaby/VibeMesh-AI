@@ -80,6 +80,8 @@ export default function Viewport() {
   const compilePieces = useStore((s) => s.compilePieces)
 
   const advanced = useUi((s) => s.advanced)
+  const setRightTab = useUi((s) => s.setRightTab)
+  const setMobileTab = useUi((s) => s.setMobileTab)
   const shading = useUi((s) => s.shading)
   const bedVisible = useUi((s) => s.bedVisible)
   const setBedVisible = useUi((s) => s.setBedVisible)
@@ -629,7 +631,8 @@ export default function Viewport() {
                     <>
                       <span className="status-dot err" />
                       <span>Render failed</span>
-                      <span className="time">· open Code to fix</span>
+                      {/* the Code tab is force-shown on error (RightPanel codeVisible); jump straight to it */}
+                      <span className="time">· <button className="banner-link" onClick={() => { setRightTab('code'); setMobileTab('params') }}>open Code</button> to fix</span>
                     </>
                   )
                 if (compileStatus === 'compiling')

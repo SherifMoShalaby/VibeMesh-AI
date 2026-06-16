@@ -1137,7 +1137,10 @@ input[type='checkbox']:focus-visible,
 
 @media (max-width: 1180px) {
   .app-body { grid-template-columns: 300px 1fr 280px; }
-  .topbar .flow-rail { display: none; }
+  /* keep the workflow affordance on smaller laptops — collapse to numbered dots
+   * (labels live in the title tooltips) instead of dropping the rail entirely */
+  .topbar .flow-step .flow-label { display: none; }
+  .topbar .flow-step { padding: 4px; gap: 0; }
 }
 /* At/below 860px JS adds `.is-mobile` (see useIsMobile) and the rules below take
  * over with a viewport-first layout + bottom-sheet chat/params. No separate
@@ -1148,6 +1151,7 @@ input[type='checkbox']:focus-visible,
 .app.is-mobile .topbar { height: 52px; gap: var(--s3); padding: 0 var(--s3); }
 .app.is-mobile .project-controls,
 .app.is-mobile .topbar-sep,
+.app.is-mobile .flow-rail,
 .app.is-mobile .api-chip .chev { display: none; }
 .app.is-mobile .api-chip .api-chip-label { display: none; }
 /* on mobile the brand text yields to the project/screen context (the logo mark stays) */
