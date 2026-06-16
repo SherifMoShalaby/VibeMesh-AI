@@ -103,7 +103,9 @@ One page. The contract for the four surfaces; anything not specified here is und
   (code exists / model rendered / export ready).
 - **Simple by default**: Code tab, render times, triangle counts appear only in **Advanced mode**
   (persisted checkbox, right-panel footer) — except a render error always surfaces the Code tab
-  (marked ⚠). The code editor has a line-number gutter; the error line is highlighted.
+  (marked ⚠); toggling Advanced off while on the Code tab reverts to Parameters. The code editor is
+  CodeMirror 6 (line numbers + C-like syntax highlighting), lazy-loaded so it stays out of the main
+  bundle; the failing line is highlighted, and ⌘/Ctrl-Enter / ⌘/Ctrl-S apply.
 - **Toolbar**: SVG icons with aria-labels (no unicode glyph buttons); view buttons read
   ISO/TOP/FRONT/RIGHT/FIT. Mesh shows hover highlight + pointer cursor; a one-time hint chip teaches
   click-to-select (dismissed forever after first selection).
