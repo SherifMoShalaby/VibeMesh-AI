@@ -207,7 +207,6 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   return (
     <section
       className={`pane chat-pane${mobileShow ? ' sheet-show' : ''}`}
-      style={{ position: 'relative' }}
       onDragOver={(e) => {
         const hasImage = Array.from(e.dataTransfer.items).some((item) => IMAGE_TYPES.test(item.type))
         if (hasImage) {
