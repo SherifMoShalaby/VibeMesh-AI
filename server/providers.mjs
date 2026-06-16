@@ -80,6 +80,22 @@ function kimiModelChoices(discovered) {
 const localBaseUrl = () => process.env.LOCAL_LLM_BASE_URL || 'http://localhost:11434'
 const anthropicModel = () => process.env.VIBEMESH_MODEL || process.env.VIBESCAD_MODEL || 'claude-opus-4-8'
 
+// ── Engine output / context budgets ──
+// Output-token reservations, referenced by BOTH the stream functions AND providerStatus, so the
+// client's history-token budget can never drift from what the server actually sends.
+const ANTHROPIC_MAX_TOKENS = 64000
+const KIMI_MAX_TOKENS = 16000
+// claude-code runs through the Agent SDK (no max_tokens literal) — reserve a conservative output budget.
+const CLAUDE_CODE_OUTPUT_RESERVE = 32000
+// local (Ollama/LM Studio): num_ctx is the WHOLE window (input+output) and is RAM/latency-linear, so keep
+// it overridable. The old 8192 default oversubscribed the window — the ~6.7K system prompt + an 8192 output
+// reservation left no room for history, so Ollama silently left-truncated the printability rules.
+const LOCAL_NUM_CTX = Number(process.env.LOCAL_LLM_NUM_CTX) || 16384
+const LOCAL_NUM_PREDICT = Number(process.env.LOCAL_LLM_MAX_TOKENS) || 4096
+// rough token size of the shared system prompt (chars/4), published to the client so its budget
+// subtracts the REAL amount rather than a hardcoded guess that drifts as the prompt grows.
+export const SYSTEM_PROMPT_TOKENS = Math.ceil(SYSTEM_PROMPT.length / 4)
+
 /* ────────────────────────────────────────────────────────────────
    Kimi login token discovery — reads the Kimi Code CLI's stored
    credential from ~/.kimi at request time. The token never leaves
@@ -228,6 +244,8 @@ export async function providerStatus() {
       available: claudeBin,
       detail: claudeBin ? 'uses your Claude Code login' : 'claude CLI not found — install Claude Code and /login',
       model: 'default',
+      contextWindow: 200000, // conservative login floor (the Agent SDK won't compact a flattened single-turn prompt)
+      outputReservation: CLAUDE_CODE_OUTPUT_RESERVE,
       vision: true,
       models: [
         { id: 'default', label: claudeCliDefaultModel() ? `default (${claudeCliDefaultModel()})` : 'default' },
@@ -244,6 +262,8 @@ export async function providerStatus() {
       available: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
       detail: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ? anthropicModel() : 'connect with an API key',
       model: anthropicModel(),
+      contextWindow: 1000000,
+      outputReservation: ANTHROPIC_MAX_TOKENS,
       vision: true,
       connect: { envKey: 'ANTHROPIC_API_KEY', placeholder: 'sk-ant-…', url: 'https://console.anthropic.com/settings/keys', urlLabel: 'Get a key at console.anthropic.com' },
       efforts: EFFORT_CHOICES,
@@ -260,6 +280,8 @@ export async function providerStatus() {
           ? 'Kimi CLI login found, but their API only accepts console keys — paste one to connect (included in your subscription)'
           : 'connect with a Kimi Code console key (included in the Kimi subscription)',
       model: kimiModel(),
+      contextWindow: 200000, // model-dependent; stay conservative — Kimi 400s readily
+      outputReservation: KIMI_MAX_TOKENS,
       vision: true,
       models: kimiModelChoices(kimiModelIds),
       connect: { envKey: 'KIMI_API_KEY', placeholder: 'Kimi Code console key…', url: 'https://www.kimi.com/code', urlLabel: 'Get a key in the Kimi Code console' },
@@ -280,6 +302,8 @@ export async function providerStatus() {
         detail: localBaseUrl(),
         baseUrl: localBaseUrl(),
         model: m,
+        contextWindow: LOCAL_NUM_CTX,
+        outputReservation: LOCAL_NUM_PREDICT,
         vision: /vl|vision|llava|moondream|gemma|qwen.*vl/i.test(m),
         connect: localConnect,
       })
@@ -293,6 +317,8 @@ export async function providerStatus() {
       detail: `nothing answering at ${localBaseUrl()} — set the URL below, then start Ollama or LM Studio`,
       baseUrl: localBaseUrl(),
       model: null,
+      contextWindow: LOCAL_NUM_CTX,
+      outputReservation: LOCAL_NUM_PREDICT,
       vision: false,
       connect: localConnect,
     })
@@ -345,7 +371,11 @@ export async function testEngine(engine) {
    ──────────────────────────────────────────────────────────────── */
 
 /** Per-request context (bed size, kit intent) appended to the system prompt. */
-function contextText(context) {
+function contextText(context, engine) {
+  // local models run in a tiny context window (num_ctx); the ~1K-token KIT_EXEMPLAR few-shot
+  // would push their system message past the whole window for exactly the kit prompts that most
+  // need the rules — so keep the short kit instruction but DROP the exemplar on local engines.
+  const isLocal = typeof engine === 'string' && engine.startsWith('local:')
   let out = ''
   if (context?.bed) {
     const { x, y, z, label } = context.bed
@@ -356,17 +386,19 @@ function contextText(context) {
   if (context?.kit) {
     out +=
       '\n\n# Build as a KIT\n\nThis request is for a buildable kit. Produce SEPARATE connectable parts, not one fused solid: use the part enum (one module per piece), design real inline mating connectors (studs/tubes, pegs/sockets, snaps, axles/bores) with the fit clearance exposed as a parameter, and render each selected piece flat on z=0 in print orientation. EXCEPTION: if a reference image shows a SINGLE object that merely accepts inserted hardware (a bearing pocket, weight bores, screw holes), it is ONE printable solid — model it as a single faithful part and ignore this kit guidance.'
-    // task-routed few-shot: a compile-verified kit in the exact required style. Pattern only —
-    // the model still outputs its own single complete program for the user's request.
-    out +=
-      '\n\nReference example of a buildable kit in the exact required style (part enum, one module per piece, inline connectors where every female size = the male size plus ONE shared clearance parameter, each piece flat on z=0). Follow this STRUCTURE; do not copy it literally — design for what the user asked:\n\n' +
-      KIT_EXEMPLAR
+    if (!isLocal) {
+      // task-routed few-shot: a compile-verified kit in the exact required style. Pattern only —
+      // the model still outputs its own single complete program for the user's request.
+      out +=
+        '\n\nReference example of a buildable kit in the exact required style (part enum, one module per piece, inline connectors where every female size = the male size plus ONE shared clearance parameter, each piece flat on z=0). Follow this STRUCTURE; do not copy it literally — design for what the user asked:\n\n' +
+        KIT_EXEMPLAR
+    }
   }
   return out
 }
 
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
-  const ctx = contextText(context)
+  const ctx = contextText(context, engine)
   // effort applies only to the Claude engines (Kimi 400s on it, local is OpenAI-shaped)
   if (engine === 'anthropic') return streamAnthropic({ messages, ctx, onDelta, signal, effort })
   if (engine === 'kimi') return streamKimi({ messages, ctx, onDelta, signal, model })
@@ -388,7 +420,7 @@ async function streamAnthropic({ messages, ctx, onDelta, signal, effort }) {
       model: anthropicModel(),
       // 64k: thinking + output share one budget on Opus 4.8 with adaptive thinking,
       // so a rich design plus its reasoning can crowd a 32k ceiling — give headroom.
-      max_tokens: 64000,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
       thinking: { type: 'adaptive' },
       // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking; xhigh is
       // the documented sweet spot for coding/agentic work. The level is chosen in the Engines UI
@@ -429,7 +461,7 @@ async function streamKimi({ messages, ctx, onDelta, signal, model }) {
     const stream = client.messages.stream(
       {
         model: useModel,
-        max_tokens: 16000,
+        max_tokens: KIMI_MAX_TOKENS,
         system: SYSTEM_PROMPT + ctx,
         messages,
       },
@@ -620,9 +652,10 @@ async function streamLocal({ model, messages, ctx, onDelta, signal }) {
   const body = {
     model,
     stream: true,
-    max_tokens: 8192,
+    // set BOTH: LM Studio honors top-level max_tokens, Ollama reads options.num_ctx/num_predict
+    max_tokens: LOCAL_NUM_PREDICT,
     temperature: 0.2,
-    options: { num_ctx: 8192, num_predict: 8192, temperature: 0.2 },
+    options: { num_ctx: LOCAL_NUM_CTX, num_predict: LOCAL_NUM_PREDICT, temperature: 0.2 },
     messages: [{ role: 'system', content: SYSTEM_PROMPT + ctx }, ...messages.map(toOpenAiMessage)],
   }
 

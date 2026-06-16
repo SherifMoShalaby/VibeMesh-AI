@@ -2,7 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyRuntimeSetting, providerStatus, streamChat, testEngine, UserFacingError } from './providers.mjs'
+import { applyRuntimeSetting, providerStatus, streamChat, testEngine, SYSTEM_PROMPT_TOKENS, UserFacingError } from './providers.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
@@ -17,7 +17,9 @@ const jsonLarge = express.json({ limit: '30mb' })
 
 app.get('/api/health', async (_req, res) => {
   const providers = await providerStatus()
-  res.json({ ok: true, providers })
+  // systemTokens lets the client subtract the real shared-system-prompt cost from each engine's
+  // context window when budgeting history (no hardcoded guess that drifts as the prompt grows).
+  res.json({ ok: true, providers, systemTokens: SYSTEM_PROMPT_TOKENS })
 })
 
 /** Save a connection setting (API key / base URL) — applied live, persisted to .env. */
