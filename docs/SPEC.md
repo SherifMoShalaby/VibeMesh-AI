@@ -96,11 +96,13 @@ One page. The contract for the four surfaces; anything not specified here is und
   (internal `/input.scad` never shown). First AI render appends a one-time guidance tip message.
 - **Type scale**: 5 tokens only (`--fs-micro/small/body/title/brand`); caps + wide tracking reserved
   for micro section labels; nothing interactive below `--fs-small`.
-- **One status at a time** (viewport top-left), severity-ordered: render-failed > removed-from-view >
-  rendering > AI-designing > degraded-quality note > grew-out-of-view (with "fit" action) >
+- **One status at a time** (viewport top-left), severity-ordered: render-failed (with an "open Code"
+  action that jumps to the Code tab — and opens the params sheet on mobile) > removed-from-view (with
+  "undo") > rendering > AI-designing > degraded-quality note > grew-out-of-view (with "fit" action) >
   first-time "click the part" hint > ✓ Ready (render ms only in advanced mode).
-- **Flow rail** (top-center, ≥1180px): 1 DESCRIBE → 2 ADJUST → 3 EXPORT, steps lit by state
-  (code exists / model rendered / export ready).
+- **Flow rail** (top-center): 1 DESCRIBE → 2 ADJUST → 3 EXPORT, steps lit by state (code exists /
+  model rendered / export ready). Full labels ≥1180px; below that it collapses to numbered dots
+  (step names move to the title tooltips) rather than disappearing; hidden entirely on mobile.
 - **Simple by default**: Code tab, render times, triangle counts appear only in **Advanced mode**
   (persisted checkbox, right-panel footer) — except a render error always surfaces the Code tab
   (marked ⚠); toggling Advanced off while on the Code tab reverts to Parameters. The code editor is
@@ -111,16 +113,26 @@ One page. The contract for the four surfaces; anything not specified here is und
   click-to-select (dismissed forever after first selection).
 - **AI plumbing in one place**: the composer has a single AI pill (status dot + engine name) opening
   the Engines modal; switching engines and the Claude model picker live in the modal (per-row "Use",
-  "IN USE" badge). The topbar chip reads "AI · <name>" / "Connect AI".
+  "IN USE" badge). The topbar chip reads "Engine · <name>" / "Connect AI". The Engines modal groups
+  rows (CLI logins / API keys / local), exposes a per-engine effort selector for Claude engines, an
+  always-editable local base-URL, and disables a row's "Test" button when it needs an API key that
+  isn't set yet (local/CLI rows stay testable).
 - **Branded dialogs** replace native prompt/confirm/alert: custom bed size (3 validated fields,
   10–2000mm) and delete-project confirmation. Project identity is ONE editable title + a ▾ menu
   (switch / new / delete).
-- **Narrow widths (<900px)**: the viewport becomes the main stage (top, flexible height) with the
-  chat compacted below (34vh); the toolbar turns horizontal across the viewport top (scrollable);
-  status reflows under it at left, QUALITY/PRINTER selects at right (labels hidden, truncated);
-  the topbar shows logo-only branding with a flexible project title. The right panel becomes a
-  62vh bottom sheet with a floating "▴ Tweak / ▾ Close" toggle pinned to the viewport's bottom
-  edge (rides above the sheet when open) — never unreachable.
+- **Mobile (≤860px, `.app.is-mobile`)**: viewport-first. The JS `useIsMobile` threshold MUST equal
+  the `860px` CSS breakpoint — any gap reopens a dead-zone where the params/code column is hidden
+  with no tab bar to reach it. The shell sizes to `100dvh`; the viewport reserves the 64px tab bar.
+  - **Bottom tab bar** (3-up): Model · Tweak · Chat. Tapping the active Tweak/Chat tab closes its
+    sheet back to Model.
+  - **Bottom sheets**: chat and params slide up as sheets (translateY), scroll-chain contained;
+    modals (Engines, dialogs) likewise become full-width bottom sheets, not cramped desktop cards.
+  - **Header context**: branding collapses to the logo mark; a mobile title shows the project name +
+    current screen (Model/Tweak/Chat). The flow rail is hidden.
+- **Project switch resets transient interaction modes** (selection, section cut, measuring) so they
+  don't bleed into the next project. The viewport keydown shortcuts (⌘Z placement-undo, Backspace
+  delete) bail while typing in any input **or contentEditable** (the CodeMirror editor) so editing
+  code never triggers viewport actions.
 
 ## 10. Stale-state guarantees
 - A render result only applies to the project that started it (switching projects mid-render discards the result).
