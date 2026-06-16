@@ -37,7 +37,9 @@ export function hasDebugContract(code) {
 
 /** Set a string-valued Customizer param's default in source (compileScad takes no -D). */
 function setStringParam(code, name, val) {
-  const re = new RegExp(`(\\b${name}\\s*=\\s*)"[^"]*"`)
+  // anchor to a real assignment at a line start (the 'm' flag), so a `// _debug = "x"` comment
+  // line can never be patched in place of the actual parameter
+  const re = new RegExp(`^(\\s*${name}\\s*=\\s*)"[^"]*"`, 'm')
   return re.test(code) ? code.replace(re, `$1"${val}"`) : null
 }
 
@@ -62,7 +64,10 @@ export async function interferenceVol(code) {
   const pos = await trisFor(code, 'positives')
   const neg = await trisFor(code, 'negatives')
   if (pos === null || neg === null) return null
-  if (pos.length === 0 || neg.length === 0) return 0 // nothing to protect, or no cutters → clean
+  // empty positives or negatives → no cutters / no protected structure, OR a mis-authored probe
+  // that rendered nothing. In every case there is nothing meaningful to measure → N/A (null), never
+  // a false "clean" 0 that could mask a real slice or count as a passing measurement.
+  if (pos.length === 0 || neg.length === 0) return null
   const grid = makeGrid(bboxOf(pos), bboxOf(neg))
   const a = voxelize(pos, grid)
   const b = voxelize(neg, grid)

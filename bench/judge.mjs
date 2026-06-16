@@ -109,7 +109,7 @@ export async function judgeVision({ prompt, code, referenceImage, renderImages }
   }
   content.push({
     type: 'text',
-    text: `OPENSCAD PROGRAM (context):\n${code}\n\nList each distinct feature the request/reference calls for with present + faithful flags; state whether intentional asymmetry was preserved; give overallFidelity 0..1 and a one-sentence reason.`,
+    text: `OPENSCAD PROGRAM (context):\n${code.slice(0, 8000)}\n\nList each distinct feature the request/reference calls for with present + faithful flags; state whether intentional asymmetry was preserved; give overallFidelity 0..1 and a one-sentence reason.`,
   })
   try {
     const res = await client.messages.create({

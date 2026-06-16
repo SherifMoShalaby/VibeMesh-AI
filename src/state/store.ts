@@ -938,6 +938,7 @@ export const useStore = create<VibeState>((set, get) => {
       if (!partParam || get().exportingPlates) return
       const preset = exportQuality()
       const bed = resolveBed(get().bedId, get().customBed)
+      const projectAtStart = get().activeId
       const names = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
       set({ exportingPlates: true })
       const compiled: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] = []
@@ -978,21 +979,23 @@ export const useStore = create<VibeState>((set, get) => {
           written++
         }
       })
-      // loud accounting — a part dropped from the export must never be silent (SPEC §4)
+      // a project switch mid-export already downloaded the right files; don't post a stale note/alert
+      if (get().activeId !== projectAtStart) return
+      // loud accounting — a part dropped from the export must never be silent (SPEC §4); Draft
+      // degradation is surfaced even alongside failures (not swallowed by the problem branch)
       const problems: string[] = []
       if (failed.length) problems.push(`failed to render: ${failed.join(', ')}`)
       if (plan.oversize.length)
         problems.push(`too big for the ${bed.label} bed: ${plan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')}`)
+      const degradedNote = degraded.length ? ` ${degraded.length} part(s) exported at Draft (too heavy for ${preset.label}): ${degraded.join(', ')}.` : ''
       if (problems.length) {
-        const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written)`
+        const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written).${degradedNote}`
         set({ compileNote: note })
         alert(`${note}\n\nFix the named parts (select them in the viewport, or Ask AI to split), then export again.`)
-      } else if (degraded.length > 0) {
-        set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
       } else if (written === 0) {
         set({ compileNote: 'Nothing to export — no parts rendered.' })
       } else {
-        set({ compileNote: `Exported ${written} plate file(s) for the ${bed.label} bed.` })
+        set({ compileNote: `Exported ${written} plate file(s) for the ${bed.label} bed.${degradedNote}` })
       }
     },
 

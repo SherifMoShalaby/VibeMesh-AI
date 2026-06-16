@@ -81,7 +81,7 @@ function encodePng(gray) {
   const raw = Buffer.alloc((SIZE + 1) * SIZE)
   for (let y = 0; y < SIZE; y++) {
     raw[y * (SIZE + 1)] = 0 // filter: none
-    gray.subarray(y * SIZE, (y + 1) * SIZE).forEach((v, x) => (raw[y * (SIZE + 1) + 1 + x] = v))
+    raw.set(gray.subarray(y * SIZE, (y + 1) * SIZE), y * (SIZE + 1) + 1)
   }
   const idat = zlib.deflateSync(raw)
   const ihdr = Buffer.alloc(13)
