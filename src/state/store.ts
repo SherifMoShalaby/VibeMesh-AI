@@ -232,8 +232,11 @@ function degenerateReason(dims: StlBBox | null, bed: { x: number; y: number; z: 
 
 let abortController: AbortController | null = null
 let paramTimer: ReturnType<typeof setTimeout> | null = null
-// projects that already auto-fired their one refine pass (fire at most once each)
-const autoRefinedProjects = new Set<string>()
+// how many auto-refine passes each project has fired — a complex reference needs
+// more than one blind correction. Counter incremented when a pass STARTS
+// (consumeAutoRefine), so an aborted pass doesn't burn budget. Tunable.
+const MAX_AUTO_REFINE = 2 // total auto-refine passes per project (was a single pass)
+const autoRefinePass = new Map<string, number>()
 function clearParamTimer() {
   if (paramTimer) {
     clearTimeout(paramTimer)
@@ -520,10 +523,14 @@ export const useStore = create<VibeState>((set, get) => {
           }
         }
 
-        // Auto-fire ONE refine pass after the first image-grounded model renders —
+        // Auto-fire BOUNDED refine passes after an image-grounded model renders —
         // the refine loop is the main accuracy mechanism but is opt-in/undiscoverable.
-        // ChatPanel consumes the flag once the canvas has painted. Once per project.
-        if (isFirstModel && compileResult.ok) {
+        // Re-arms after the FIRST model AND after each refine result (action 'Refine
+        // pass'), up to MAX_AUTO_REFINE passes — but NOT on 'Auto-fix'/'Fix format'
+        // re-entries (those carry code so isFirstModel is false and their action
+        // differs), so error-repair turns never burn a refine pass. ChatPanel consumes
+        // the flag once the canvas has painted; consumeAutoRefine increments the count.
+        if (compileResult.ok && (isFirstModel || nameSource.action === 'Refine pass')) {
           const triggerImages = [...activeChat()].reverse().find((m) => m.role === 'user')?.images
           const provider = get().health?.providers.find((p) => p.id === eng)
           const aid = get().activeId
@@ -534,9 +541,8 @@ export const useStore = create<VibeState>((set, get) => {
             !eng.startsWith('local:') &&
             useUi.getState().autoRepair &&
             aid &&
-            !autoRefinedProjects.has(aid)
+            (autoRefinePass.get(aid) ?? 0) < MAX_AUTO_REFINE
           ) {
-            autoRefinedProjects.add(aid)
             set({ pendingAutoRefineFor: aid })
           }
         }
@@ -710,7 +716,15 @@ export const useStore = create<VibeState>((set, get) => {
       abortController?.abort()
     },
 
-    consumeAutoRefine: () => set({ pendingAutoRefineFor: null }),
+    consumeAutoRefine: () => {
+      // count the pass at START (here), not when the guard armed it: aborting BEFORE
+      // the timer fires (Stop / project switch) clears the timer and never reaches
+      // here, so it doesn't burn budget. (A pass whose compile is later superseded
+      // mid-flight does consume its slot — that's the loop's termination guarantee.)
+      const aid = get().pendingAutoRefineFor
+      if (aid) autoRefinePass.set(aid, (autoRefinePass.get(aid) ?? 0) + 1)
+      set({ pendingAutoRefineFor: null })
+    },
 
     setParamValue: (name, value) => {
       const paramValues = { ...get().paramValues, [name]: value }

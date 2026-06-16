@@ -72,8 +72,16 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
       views.length > 1
         ? `Attached are ${views.length} renders of the CURRENT model from fixed viewpoints (isometric, front, top — in that order).`
         : 'Attached is a render of the CURRENT model, captured from a fixed isometric viewpoint.'
+    // remind the model of the plan / feature inventory it committed to, so every named
+    // feature is checked off across passes (a collapsed feature outranks proportions)
+    const committedFull = [...chat].reverse().find((m) => m.role === 'assistant' && m.code)?.text?.trim()
+    // cap it so a verbose plan can't bloat the refine prompt past a lower-context engine's input limit
+    const committed = committedFull && committedFull.length > 1000 ? committedFull.slice(0, 1000) + '…' : committedFull
+    const plan = committed
+      ? `\n\nEarlier you committed this plan / feature inventory:\n"""${committed}"""\nFor EACH distinct feature you named there, state present/faithful in the current render, then fix any that is missing, collapsed, or simplified away.`
+      : ''
     void sendPrompt(
-      `${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. First list the most important discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.`,
+      `${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. First list the most important discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
       views,
       'Refine pass',
     )

@@ -73,14 +73,36 @@ const HISTORY_LIMIT = 12
 
 /** Convert UI chat history into Anthropic messages, keeping code context. */
 export function toApiMessages(chat: ChatMessage[]): ApiMessage[] {
-  const recent = chat.filter((m) => !m.error).slice(-HISTORY_LIMIT)
+  const clean = chat.filter((m) => !m.error)
+  const recent = clean.slice(-HISTORY_LIMIT)
+  // Pin the original reference image to the front: it is GROUND TRUTH for every
+  // refine pass and must not be evicted by the rolling window once several refine
+  // turns have accumulated. If the first image-bearing user message isn't already
+  // inside the window, prepend it (it's a user message, so the first-must-be-user
+  // and role-merge passes below stay valid).
+  const firstRef = clean.find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)
+  // If the window starts on a user turn, splice a tiny assistant ack between the
+  // pinned reference and it, so the role-merge below doesn't fuse the reference
+  // images into an unrelated user turn (which would mis-attribute the images).
+  const refSep: ChatMessage = { id: 'pinned-ref-separator', role: 'assistant', text: 'Noted the reference image above.' }
+  const windowed =
+    firstRef && !recent.includes(firstRef)
+      ? recent[0]?.role === 'user'
+        ? [firstRef, refSep, ...recent]
+        : [firstRef, ...recent]
+      : recent
+  // Keep render screenshots only on the MOST RECENT refine pass — strip older
+  // intermediate refine renders to text so the model corrects toward the reference,
+  // not toward its own earlier render, and stale shots don't crowd the window.
+  const lastRefine = [...windowed].reverse().find((m) => m.role === 'user' && m.action === 'Refine pass' && (m.images?.length ?? 0) > 0)
   const messages: ApiMessage[] = []
-  for (const msg of recent) {
+  for (const msg of windowed) {
     let text = msg.text
     if (msg.role === 'assistant' && msg.code) {
       text = `${msg.text}\n\n\`\`\`scad\n${msg.code}\n\`\`\``
     }
-    if (msg.role === 'user' && msg.images?.length) {
+    const staleRender = msg.role === 'user' && msg.action === 'Refine pass' && msg !== lastRefine
+    if (msg.role === 'user' && msg.images?.length && !staleRender) {
       const blocks: ApiContentBlock[] = msg.images.map((img) => ({
         type: 'image' as const,
         source: { type: 'base64' as const, media_type: img.mediaType, data: img.data },
