@@ -28,9 +28,10 @@ One page. The contract for the four surfaces; anything not specified here is und
 - The slicer view (§7) is the only place pieces are shown as bed "plates"; the PARTS bar itself still shows one piece at a time.
 - `⚒ ASK AI TO SPLIT INTO PARTS` shows whenever the *currently viewed* geometry exceeds the bed (including an already-split piece that is still too big — asks to split further), except in assembly preview.
 - All exports live behind ONE primary **⬇ Export** button → menu with explained choices:
-  `.3mf — recommended` · `.stl` · `Parts as separate .stl files` (multi-part only) · `.scad source`;
+  `.3mf — recommended` · `.stl` · `Parts as separate .stl files` (multi-part only) · `Plates as .3mf` (multi-part only) · `.scad source`;
   the menu footer notes that exports sharpen curves to at least Fine. `.scad` is also downloadable from the Code tab.
 - "Parts as separate .stl files" compiles each piece at **at least Fine** quality (Ultra preview → Ultra; per-piece timeout → one Draft retry) and downloads `<project>-<part>.stl` each. **Partial success is loud**: an alert + HUD note name the failed parts; silent skips are a bug.
+- "Plates as .3mf" compiles each piece (same ≥Fine + Draft-retry rules) and writes ONE slicer-ready `.3mf` per bed-sized plate (`<project>-plateN.3mf`), packing pieces with the SAME packer as the slicer view (translation-only, so the file matches what was on screen). Oversize pieces (don't fit a bed as-drawn) and failed renders are surfaced **loudly** (alert + note), never silently dropped.
 - `.3mf` builds ONE `.3mf` for Bambu Studio / PrusaSlicer / Orca:
   every part is a named object, parts are arranged side-by-side with 10mm gaps at z=0
   (slicer-ready plate), vertices deduplicated (key snapped to a 0.001mm weld grid;
