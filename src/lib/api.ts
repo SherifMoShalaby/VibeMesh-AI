@@ -23,11 +23,17 @@ export interface ProviderInfo {
   efforts?: Array<{ id: string; label: string }>
   /** current configured base URL (local engine) — pre-fills the editable URL field */
   baseUrl?: string
+  /** total context window of this engine's model, in tokens (drives the history budget) */
+  contextWindow?: number
+  /** tokens this engine reserves for its OWN output (subtracted from the history budget) */
+  outputReservation?: number
 }
 
 export interface HealthInfo {
   ok: boolean
   providers: ProviderInfo[]
+  /** token size of the shared system prompt — subtracted from each engine's context window */
+  systemTokens?: number
 }
 
 export async function fetchHealth(): Promise<HealthInfo | null> {
