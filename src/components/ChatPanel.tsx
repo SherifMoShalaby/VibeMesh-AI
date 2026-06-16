@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
-import type { ChatImage } from '../types'
+import { HISTORY_LIMIT } from '../lib/api'
+import type { ChatImage, ChatMessage } from '../types'
 import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh } from './icons'
 
 const MAX_IMAGES = 3
@@ -241,6 +242,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
 
       <div className="pane-head">
         <span className="eyebrow">Conversation</span>
+        <ContextChip chat={chat} />
         <button className="icon-btn-sm" title="New part" aria-label="New part" onClick={() => newProject()}>
           <DPlus />
         </button>
@@ -414,5 +416,38 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
         </div>
       </div>
     </section>
+  )
+}
+
+/** Compact AI-memory indicator. The app sends a rolling window of the last
+ *  HISTORY_LIMIT non-error messages, so older turns silently drop off the back.
+ *  The ring fills as the window does and turns amber once earlier turns are no
+ *  longer sent (the reference image is always pinned, so it survives regardless). */
+function ContextChip({ chat }: { chat: ChatMessage[] }) {
+  const nonError = chat.filter((m) => !m.error).length
+  if (nonError === 0) return null
+  const inCtx = Math.min(nonError, HISTORY_LIMIT)
+  const trimmed = Math.max(0, nonError - HISTORY_LIMIT)
+  const C = 2 * Math.PI * 6
+  const title =
+    trimmed > 0
+      ? `AI memory: the last ${HISTORY_LIMIT} messages. ${trimmed} earlier turn${trimmed > 1 ? 's are' : ' is'} no longer sent to the AI — your reference image is always kept.`
+      : `AI memory: all ${nonError} message${nonError > 1 ? 's' : ''} of this chat are in context (the window holds the last ${HISTORY_LIMIT}).`
+  return (
+    <span className={`ctx-chip${trimmed > 0 ? ' trimming' : ''}`} title={title} role="status">
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" className="ctx-track" />
+        <circle
+          cx="8"
+          cy="8"
+          r="6"
+          className="ctx-arc"
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - inCtx / HISTORY_LIMIT)}
+          transform="rotate(-90 8 8)"
+        />
+      </svg>
+      <span className="ctx-num">{inCtx}/{HISTORY_LIMIT}</span>
+    </span>
   )
 }

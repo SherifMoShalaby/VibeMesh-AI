@@ -572,13 +572,24 @@ input[type='checkbox']:focus-visible,
   background: var(--raised); border: 1px solid var(--line);
   color: var(--text-dim); font-size: var(--fs-small); font-weight: 500;
   cursor: pointer; transition: all var(--t-fast) var(--ease);
+  white-space: nowrap; flex-shrink: 0;
 }
+.chip-btn svg, .chip-btn .dot-ok, .chip-btn .dot-off { flex-shrink: 0; }
 .chip-btn:hover:not(:disabled) { background: var(--raised-hi); color: var(--text); border-color: var(--line-strong); }
 .chip-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .chip-btn svg { width: 14px; height: 14px; }
 .chip-btn .dot-ok { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
 .chip-btn .dot-off { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 .composer-actions .spacer { flex: 1; }
+
+/* AI-memory (context window) chip — ring fills as the rolling window does */
+.ctx-chip { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 8px 3px 6px; border-radius: var(--r-pill); font-size: var(--fs-small); font-weight: 600; color: var(--text-dim); background: var(--inset); border: 1px solid var(--line); cursor: default; user-select: none; }
+.ctx-chip svg { display: block; flex-shrink: 0; }
+.ctx-chip .ctx-track { fill: none; stroke: var(--line-strong); stroke-width: 2.4; }
+.ctx-chip .ctx-arc { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset var(--t-med) var(--ease); }
+.ctx-chip .ctx-num { font-family: var(--font-mono); font-size: 11px; letter-spacing: -0.01em; }
+.ctx-chip.trimming { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
+.ctx-chip.trimming .ctx-arc { stroke: var(--warn); }
 .send-btn {
   display: inline-flex; align-items: center; gap: 7px;
   height: 30px; padding: 0 13px; border-radius: var(--r-sm);
