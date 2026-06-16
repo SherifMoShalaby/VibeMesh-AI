@@ -1194,6 +1194,16 @@ input[type='checkbox']:focus-visible,
 .app.is-mobile .chat-pane.sheet-show,
 .app.is-mobile .params-pane.sheet-show { transform: translateY(0); pointer-events: auto; }
 
+/* exact visible viewport (browser-chrome aware) so the tab-bar + sheets aren't cut off */
+.app.is-mobile { height: 100dvh; }
+/* modals become full-width bottom sheets instead of cramped desktop cards */
+.app.is-mobile .scrim { place-items: end stretch; padding: 0; }
+.app.is-mobile .modal,
+.app.is-mobile .modal.modal-sm { width: 100%; max-width: 100%; max-height: 92dvh; border-radius: var(--r-xl) var(--r-xl) 0 0; border-bottom: none; }
+/* keep a sheet's scroll from chaining to the page behind it */
+.app.is-mobile .panel-scroll,
+.app.is-mobile .chat-scroll { overscroll-behavior: contain; }
+
 /* render-error fallback (ErrorBoundary) */
 .crash-screen { flex: 1; display: grid; place-items: center; padding: var(--s6); background: var(--bg); }
 .crash-card { max-width: 460px; text-align: center; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s6); border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--panel); }
