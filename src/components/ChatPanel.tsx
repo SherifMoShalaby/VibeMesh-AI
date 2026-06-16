@@ -19,7 +19,8 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   const health = useStore((s) => s.health)
   const healthLoaded = useStore((s) => s.healthLoaded)
   const engine = useStore((s) => s.engine)
-  const restoreCode = useStore((s) => s.restoreCode)
+  const restoreVersion = useStore((s) => s.restoreVersion)
+  const restoreNewer = useStore((s) => s.restoreNewer)
   const retryLast = useStore((s) => s.retryLast)
   const currentCode = useStore((s) => s.code)
   const newProject = useStore((s) => s.newProject)
@@ -40,6 +41,8 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   const textRef = useRef<HTMLTextAreaElement>(null)
 
   const chat = projects.find((p) => p.id === activeId)?.chat ?? []
+  // versions rolled past via Restore, recoverable until the next prompt diverges the branch
+  const rolledBackVersions = (projects.find((p) => p.id === activeId)?.chatFuture ?? []).filter((m) => m.code).length
   const activeProvider = health?.providers.find((p) => p.id === engine)
   const noVision = images.length > 0 && activeProvider && !activeProvider.vision
   // health probe resolved but returned nothing → no AI backend reachable (e.g. the static GitHub Pages demo)
@@ -308,7 +311,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
                   className={`code-chip${isCurrent ? ' current' : ''}`}
                   title={isCurrent ? 'This is the version you see now' : 'Bring this version of the model back'}
                   disabled={generating || isCurrent}
-                  onClick={() => restoreCode(msg.code!)}
+                  onClick={() => restoreVersion(msg.id)}
                 >
                   <span className="cc-icon"><DCode /></span>
                   <span className="cc-text">
@@ -327,6 +330,19 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
             </div>
           )
         })}
+        {rolledBackVersions > 0 && !generating && (
+          <button
+            className="redo-pill"
+            title="You rolled the model back — your next prompt will build on this version. Click to undo the rollback and bring the newer versions back instead."
+            onClick={() => restoreNewer()}
+          >
+            <DRefresh />
+            <span>
+              Rolled back · {rolledBackVersions} newer version{rolledBackVersions > 1 ? 's' : ''} set aside.{' '}
+              <strong>Bring them back</strong>
+            </span>
+          </button>
+        )}
         {generating && (
           <div className="msg ai">
             <div className="msg-head">

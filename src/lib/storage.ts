@@ -48,6 +48,7 @@ export function saveProjects(projects: Project[]): void {
       const slim = projects.map((p) => ({
         ...p,
         chat: p.chat.map((m) => ({ ...m, images: undefined })),
+        chatFuture: p.chatFuture?.map((m) => ({ ...m, images: undefined })),
       }))
       localStorage.setItem(KEY, JSON.stringify(slim))
     } catch {

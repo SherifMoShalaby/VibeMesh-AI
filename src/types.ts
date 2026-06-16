@@ -51,6 +51,10 @@ export interface Project {
   code: string
   paramValues: ParamValues
   chat: ChatMessage[]
+  /** Versions rolled past via Restore: the abandoned tail (everything after the
+   *  restored message), kept so a rollback is reversible (redo) until the user
+   *  diverges by sending a new prompt, which clears it. Chronological — newest last. */
+  chatFuture?: ChatMessage[]
   createdAt: number
   updatedAt: number
 }
