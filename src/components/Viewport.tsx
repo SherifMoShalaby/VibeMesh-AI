@@ -867,7 +867,9 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
   const camera = useThree((s) => s.camera)
 
   useEffect(() => {
-    registerMultiCapture((maxDim = 896) => {
+    // capture at 1280 by default (refine passes ask for 1280/q0.92) so recessed
+    // channels and panel seams survive JPEG compression for the model's self-critique.
+    registerMultiCapture((maxDim = 1280, quality = 0.85) => {
       if (!hasModel || !tbox) return []
       const prevPos = camera.position.clone()
       const prevQuat = camera.quaternion.clone()
@@ -876,12 +878,20 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
       const dist = radius * 2.2
       const target = new THREE.Vector3(tbox.center.x, tbox.center.y, tbox.box.min.z + tbox.size.z / 2)
       const zUp = new THREE.Vector3(0, 0, 1)
+      // a raking rim light ONLY for the capture — pushes self-shadow into recessed
+      // channels/seams so a hard-surface part reads as paneled, not flat-gray. Scene-
+      // level (frame-independent), added before the shoots and removed before the
+      // camera restore + final render, so the interactive viewport is untouched.
+      const rim = new THREE.DirectionalLight(0xffffff, 0.9)
+      rim.position.set(target.x + radius * 2.2, target.y - radius * 0.6, target.z + radius * 0.35)
+      rim.target.position.copy(target)
+      scene.add(rim, rim.target)
       const shoot = (pos: THREE.Vector3, up: THREE.Vector3) => {
         camera.up.copy(up)
         camera.position.copy(pos)
         camera.lookAt(target)
         gl.render(scene, camera)
-        return canvasToChatImage(gl.domElement, maxDim)
+        return canvasToChatImage(gl.domElement, maxDim, quality)
       }
       // isometric, front (down -Y), top (down -Z, Y-up to avoid gimbal lock)
       const views = [
@@ -889,6 +899,7 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
         shoot(new THREE.Vector3(target.x, target.y - dist, target.z), zUp),
         shoot(new THREE.Vector3(target.x, target.y, target.z + dist), new THREE.Vector3(0, 1, 0)),
       ].filter((v): v is NonNullable<typeof v> => v !== null)
+      scene.remove(rim, rim.target)
       camera.up.copy(prevUp)
       camera.position.copy(prevPos)
       camera.quaternion.copy(prevQuat)

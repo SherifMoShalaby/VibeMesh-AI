@@ -59,7 +59,8 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   }
 
   const refine = () => {
-    const views = captureViews()
+    // higher res + quality for refine: the model must see recessed channels/seams to critique them
+    const views = captureViews(1280, 0.92)
     if (!views.length) {
       flashAttachNote('Could not capture the viewport — orbit the model once, then try Refine again.')
       return
