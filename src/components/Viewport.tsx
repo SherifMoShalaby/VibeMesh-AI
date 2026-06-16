@@ -75,6 +75,7 @@ export default function Viewport() {
   const viewMode = useStore((s) => s.viewMode)
   const pieces = useStore((s) => s.pieces)
   const slicing = useStore((s) => s.slicing)
+  const slicerFailed = useStore((s) => s.slicerFailed)
   const setViewMode = useStore((s) => s.setViewMode)
   const compilePieces = useStore((s) => s.compilePieces)
 
@@ -194,6 +195,14 @@ export default function Viewport() {
     }
     return m
   }, [pieces])
+  // these BufferGeometries are passed to <mesh> as a PROP, so r3f never owns or disposes them.
+  // pieces is rebuilt on every recompile/part-switch — free the previous set or VRAM grows
+  // unbounded (eventual WebGL context loss). Cleanup runs when sliceGeos changes and on unmount.
+  useEffect(() => {
+    return () => {
+      for (const g of sliceGeos.values()) g.geometry.dispose()
+    }
+  }, [sliceGeos])
   const platePlan = useMemo(
     () => (pieces ? packPlates(pieces.map((p) => ({ name: p.name, w: p.bbox.x, h: p.bbox.y, z: p.bbox.z })), { x: bed.x, y: bed.y, z: bed.z }) : null),
     [pieces, bed.x, bed.y, bed.z],
@@ -202,7 +211,10 @@ export default function Viewport() {
     if (!platePlan || platePlan.plates.length === 0) return null
     const n = platePlan.plates.length
     const totalW = n * bed.x + (n - 1) * PLATE_GAP
-    const maxZ = Math.max(0.1, ...(pieces ?? []).map((p) => p.bbox.z))
+    // only pieces actually placed on a plate drive the framed height — an oversize piece is
+    // excluded from every plate, so including its z would zoom the camera out for nothing
+    const placed = new Set(platePlan.plates.flat().map((p) => p.name))
+    const maxZ = Math.max(0.1, ...(pieces ?? []).filter((p) => placed.has(p.name)).map((p) => p.bbox.z))
     const box = new THREE.Box3(new THREE.Vector3(-totalW / 2, -bed.y / 2, 0), new THREE.Vector3(totalW / 2, bed.y / 2, maxZ))
     const size = new THREE.Vector3()
     box.getSize(size)
@@ -512,6 +524,11 @@ export default function Viewport() {
               {platePlan.oversize.length > 0 && (
                 <span className="ac-warn">
                   <IconWarning /> won't fit the bed: {platePlan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')} — switch to that part and Ask AI to split
+                </span>
+              )}
+              {slicerFailed.length > 0 && (
+                <span className="ac-warn">
+                  <IconWarning /> failed to render: {slicerFailed.join(', ')} — select that part to see its error
                 </span>
               )}
             </>
