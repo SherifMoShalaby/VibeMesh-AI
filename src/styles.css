@@ -488,6 +488,20 @@ input[type='checkbox']:focus-visible,
 }
 .version-pill .vp-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
+/* rolled-back banner: shown after a Restore, undoes the rollback (brings newer versions back) */
+.redo-pill {
+  align-self: stretch;
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: var(--s2) 0;
+  padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--accent-soft); border: 1px dashed var(--accent-line);
+  color: var(--text-dim); font: inherit; font-size: var(--fs-small); text-align: left;
+  cursor: pointer; transition: all var(--t-fast) var(--ease);
+}
+.redo-pill:hover { color: var(--text); border-style: solid; background: var(--raised-hi); }
+.redo-pill svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--accent-text); }
+.redo-pill strong { color: var(--accent-text); font-weight: 600; }
+
 /* streaming caret */
 .streaming::after {
   content: ''; display: inline-block;

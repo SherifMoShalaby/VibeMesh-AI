@@ -18,7 +18,9 @@ One page. The contract for the four surfaces; anything not specified here is und
 - Convergence expectation: features converge in 1–3 passes; dimensions require the scale anchor; passes are probabilistic — every code version remains restorable (below).
 
 ## 3. Versioning / rollback
-- Every assistant message that contained code shows `⌬ MODEL CODE UPDATED · RESTORE`; clicking adopts that version (params reset to that code's defaults) and re-renders. Disabled while generating.
+- Every assistant message that contained code shows `⌬ MODEL CODE UPDATED · v<N>`; the version matching the live code is marked `· current` (its chip is disabled). All chips are disabled while generating.
+- Clicking `RESTORE` on an older version adopts that code (params reset to that code's defaults), re-renders, **and rolls the conversation back to that point**: every later version is truncated off the lineage so the next prompt's context ends on the restored version — the model continues from the restored version, never the newest one. (Rollback that only swapped the displayed code while leaving later versions in the history would make the next prompt silently build on the newest version again — the bug this prevents.)
+- The truncated newer versions are **set aside, not discarded**: a `Rolled back · N newer version(s) set aside · Bring them back` banner appears under the thread and restores them (undoing the rollback). Sending a new prompt commits to the restored branch and clears the set-aside versions (they become a genuinely abandoned branch) — mirroring placement undo/redo (§7), where a new action clears the redo stack. The set-aside tail persists with the project until then.
 
 ## 4. Multi-part designs (PARTS bar + slicer plates)
 - Convention: enum parameter named `part`, first option `all` = assembly preview. UI: PARTS bar in the viewport (⬚ ALL + one chip per piece).

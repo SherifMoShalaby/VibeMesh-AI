@@ -116,8 +116,13 @@ interface VibeState {
   resetParams: () => void
   setCode: (code: string) => void
   recompile: () => void
-  /** adopt a previous version's code (rollback from a chat message) */
-  restoreCode: (code: string) => void
+  /** Roll the model back to a previous version (a code-bearing chat message): adopt its
+   *  code AND truncate every later version off the lineage, so the next prompt's history
+   *  ends here and the model builds on THIS version, not the newest one. The dropped tail
+   *  is stashed (reversible via restoreNewer) until a new prompt diverges the branch. */
+  restoreVersion: (msgId: string) => void
+  /** undo the most recent rollback: re-attach the stashed tail and re-adopt its newest version */
+  restoreNewer: () => void
   loadExample: (example: Example) => void
   setBed: (id: string) => void
   setQuality: (id: string) => void
@@ -386,6 +391,22 @@ export const useStore = create<VibeState>((set, get) => {
   function setChat(chat: ChatMessage[]) {
     const { projects, activeId } = get()
     const updated = projects.map((p) => (p.id === activeId ? { ...p, chat, updatedAt: Date.now() } : p))
+    set({ projects: updated })
+    saveProjects(updated)
+  }
+
+  /** the rolled-past version tail (redo stack) for the active project */
+  function activeFuture(): ChatMessage[] {
+    const { projects, activeId } = get()
+    return projects.find((p) => p.id === activeId)?.chatFuture ?? []
+  }
+
+  /** set the active project's chat AND its redo stack together (Restore / redo / a
+   *  diverging send all move both at once — keeping them in one write avoids a torn
+   *  state where the lineage and its stashed tail disagree). */
+  function setChatAndFuture(chat: ChatMessage[], chatFuture: ChatMessage[]) {
+    const { projects, activeId } = get()
+    const updated = projects.map((p) => (p.id === activeId ? { ...p, chat, chatFuture, updatedAt: Date.now() } : p))
     set({ projects: updated })
     saveProjects(updated)
   }
@@ -699,7 +720,9 @@ export const useStore = create<VibeState>((set, get) => {
         get().newProject()
       }
       const userMsg: ChatMessage = { id: newId(), role: 'user', text, images, action }
-      setChat([...activeChat(), userMsg])
+      // a new prompt commits to the current (possibly rolled-back) version: the stashed
+      // tail is now a genuinely abandoned branch, so clear the redo stack as we append.
+      setChatAndFuture([...activeChat(), userMsg], [])
       await runGeneration({ text, action })
     },
 
@@ -799,8 +822,34 @@ export const useStore = create<VibeState>((set, get) => {
       persist()
     },
 
-    restoreCode: (code) => {
-      adoptCode(code)
+    restoreVersion: (msgId) => {
+      const chat = activeChat()
+      const idx = chat.findIndex((m) => m.id === msgId)
+      if (idx === -1) return
+      const target = chat[idx]
+      if (target.code === undefined) return
+      // Everything AFTER the restored message is a now-abandoned branch. Truncate it off
+      // the lineage so the NEXT prompt's history ends on THIS version — the model continues
+      // from the last code it's shown (see toApiMessages), so without this the rollback is
+      // visual-only and the model keeps building on the newest version. Stash the dropped
+      // tail (reversible via restoreNewer; cleared when a new prompt diverges the branch in
+      // sendPrompt), mirroring vpPast/vpFuture. Prepend ahead of any existing stash so
+      // successive rollbacks chain into one contiguous, chronological redo stack.
+      const tail = chat.slice(idx + 1)
+      if (tail.length === 0) return // already the tip — nothing to roll back
+      setChatAndFuture(chat.slice(0, idx + 1), [...tail, ...activeFuture()])
+      adoptCode(target.code)
+      persist()
+    },
+
+    restoreNewer: () => {
+      const future = activeFuture()
+      if (future.length === 0) return
+      // re-attach the whole stashed tail and adopt its newest version; the user can then
+      // roll back to any intermediate version again via its chip
+      const newest = [...future].reverse().find((m) => m.code !== undefined)
+      setChatAndFuture([...activeChat(), ...future], [])
+      if (newest?.code !== undefined) adoptCode(newest.code)
       persist()
     },
 
