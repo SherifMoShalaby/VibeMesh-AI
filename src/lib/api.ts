@@ -69,7 +69,9 @@ interface ApiMessage {
   content: string | ApiContentBlock[]
 }
 
-const HISTORY_LIMIT = 12
+/** How many recent non-error chat messages are sent as context each turn. The
+ *  UI context chip reads this so the indicator and the actual window never drift. */
+export const HISTORY_LIMIT = 12
 
 /** Convert UI chat history into Anthropic messages, keeping code context. */
 export function toApiMessages(chat: ChatMessage[]): ApiMessage[] {
