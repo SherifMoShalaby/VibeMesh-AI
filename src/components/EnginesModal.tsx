@@ -225,7 +225,14 @@ function EngineRow({ provider }: { provider: Row }) {
               Use
             </button>
           )}
-          <button className="btn btn-ghost sm" onClick={runTest} disabled={busy}>
+          <button
+            className="btn btn-ghost sm"
+            onClick={runTest}
+            // nothing to test on an API-key engine with no key yet; local re-probes
+            // its server and the CLI engine reports a clear "not found", so allow those
+            disabled={busy || (!provider.available && !isLocal && !!provider.connect)}
+            title={!provider.available && !isLocal && !!provider.connect ? `Add your ${provider.connect.envKey} first` : 'Send a 1-token ping to check the connection'}
+          >
             Test
           </button>
           {provider.available && provider.connect && !isLocal && (

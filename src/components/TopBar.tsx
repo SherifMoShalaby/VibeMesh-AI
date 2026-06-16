@@ -132,15 +132,15 @@ export default function TopBar() {
 
       <nav className="flow-rail" aria-label="Workflow: describe, adjust, export">
         <div className={`flow-step${hasCode ? ' done' : ' active'}`} title="Describe the part in the chat on the left">
-          <span className="dot">{hasCode ? <DCheck /> : '1'}</span>Describe
+          <span className="dot">{hasCode ? <DCheck /> : '1'}</span><span className="flow-label">Describe</span>
         </div>
         <span className="flow-arrow"><DChevRight /></span>
         <div className={`flow-step${hasCode ? ' active' : ''}`} title="Fine-tune with the sliders on the right">
-          <span className="dot">2</span>Adjust
+          <span className="dot">2</span><span className="flow-label">Adjust</span>
         </div>
         <span className="flow-arrow"><DChevRight /></span>
         <div className={`flow-step${hasModel ? ' active' : ''}`} title="Export from the button on the right">
-          <span className="dot">3</span>Export
+          <span className="dot">3</span><span className="flow-label">Export</span>
         </div>
       </nav>
 
