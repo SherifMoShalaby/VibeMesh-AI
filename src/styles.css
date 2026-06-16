@@ -1104,6 +1104,15 @@ input[type='checkbox']:focus-visible,
 .engine-note.ok { background: var(--ok-soft); color: var(--ok); }
 .engine-note.err { background: var(--err-soft); color: var(--err); }
 
+/* engine groups (CLI login / API key / Local) */
+.engine-section { display: flex; flex-direction: column; gap: var(--s2); }
+.engine-section + .engine-section { margin-top: var(--s3); }
+.engine-section-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; padding: 0 var(--s1); }
+.engine-section-title { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--text-dim); }
+.engine-section-hint { font-size: var(--fs-micro); color: var(--text-ghost); }
+/* model + effort dropdowns side by side under a connected engine */
+.engine-config { display: flex; gap: var(--s4); flex-wrap: wrap; }
+
 /* custom bed fields */
 .bed-fields { display: flex; gap: var(--s3); margin-top: var(--s3); }
 .bed-fields label { display: flex; flex-direction: column; gap: 5px; flex: 1; color: var(--text-faint); }

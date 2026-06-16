@@ -199,6 +199,23 @@ async function listLocalModels() {
    Provider status for /api/health
    ──────────────────────────────────────────────────────────────── */
 
+/** Reasoning-effort levels (GA on Opus 4.6+/Sonnet 4.6). Both Claude engines accept it:
+ *  the API engine via output_config.effort, the login engine via the Agent SDK query option.
+ *  xhigh is the documented sweet spot for coding/agentic work (and Claude Code's own default). */
+export const EFFORT_CHOICES = [
+  { id: 'low', label: 'low — fastest' },
+  { id: 'medium', label: 'medium' },
+  { id: 'high', label: 'high — balanced' },
+  { id: 'xhigh', label: 'xhigh — best for code' },
+  { id: 'max', label: 'max — exhaustive' },
+]
+const EFFORT_IDS = new Set(EFFORT_CHOICES.map((e) => e.id))
+export const DEFAULT_EFFORT = EFFORT_IDS.has(process.env.VIBEMESH_EFFORT) ? process.env.VIBEMESH_EFFORT : 'xhigh'
+/** Resolve a request-supplied effort to a valid level, falling back to the default. */
+function resolveEffort(effort) {
+  return typeof effort === 'string' && EFFORT_IDS.has(effort) ? effort : DEFAULT_EFFORT
+}
+
 export async function providerStatus() {
   const [claudeBin, localModels, kimiModelIds] = await Promise.all([claudeBinaryAvailable(), listLocalModels(), listKimiModels()])
   const kimi = kimiAuth()
@@ -207,6 +224,7 @@ export async function providerStatus() {
     {
       id: 'claude-code',
       label: 'Claude · login',
+      group: 'cli',
       available: claudeBin,
       detail: claudeBin ? 'uses your Claude Code login' : 'claude CLI not found — install Claude Code and /login',
       model: 'default',
@@ -217,19 +235,23 @@ export async function providerStatus() {
         { id: 'sonnet', label: 'sonnet — fast' },
         { id: 'haiku', label: 'haiku — fastest' },
       ],
+      efforts: EFFORT_CHOICES,
     },
     {
       id: 'anthropic',
       label: 'Claude · API key',
+      group: 'apikey',
       available: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
       detail: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ? anthropicModel() : 'connect with an API key',
       model: anthropicModel(),
       vision: true,
       connect: { envKey: 'ANTHROPIC_API_KEY', placeholder: 'sk-ant-…', url: 'https://console.anthropic.com/settings/keys', urlLabel: 'Get a key at console.anthropic.com' },
+      efforts: EFFORT_CHOICES,
     },
     {
       id: 'kimi',
       label: 'Kimi',
+      group: 'apikey',
       // the CLI login token is rejected by Kimi's coding API — only console keys work
       available: Boolean(process.env.KIMI_API_KEY),
       detail: process.env.KIMI_API_KEY
@@ -244,26 +266,35 @@ export async function providerStatus() {
     },
   ]
 
+  // the local server's URL is configurable from the UI whether or not it's currently up — the
+  // user may point it at a server they're about to start. `baseUrl` carries the current value so
+  // the panel pre-fills it; the `connect` block makes it editable even when a server IS answering.
+  const localConnect = { envKey: 'LOCAL_LLM_BASE_URL', placeholder: 'http://localhost:11434', url: 'https://ollama.com', urlLabel: 'Install Ollama' }
   if (localModels && localModels.length > 0) {
     for (const m of localModels) {
       providers.push({
         id: `local:${m}`,
         label: `Local · ${m}`,
+        group: 'local',
         available: true,
         detail: localBaseUrl(),
+        baseUrl: localBaseUrl(),
         model: m,
         vision: /vl|vision|llava|moondream|gemma|qwen.*vl/i.test(m),
+        connect: localConnect,
       })
     }
   } else {
     providers.push({
       id: 'local',
       label: 'Local LLM',
+      group: 'local',
       available: false,
-      detail: `nothing answering at ${localBaseUrl()} — start Ollama or LM Studio`,
+      detail: `nothing answering at ${localBaseUrl()} — set the URL below, then start Ollama or LM Studio`,
+      baseUrl: localBaseUrl(),
       model: null,
       vision: false,
-      connect: { envKey: 'LOCAL_LLM_BASE_URL', placeholder: 'http://localhost:11434', url: 'https://ollama.com', urlLabel: 'Install Ollama' },
+      connect: localConnect,
     })
   }
 
@@ -334,11 +365,12 @@ function contextText(context) {
   return out
 }
 
-export async function streamChat({ engine, model, messages, context, onDelta, signal }) {
+export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
   const ctx = contextText(context)
-  if (engine === 'anthropic') return streamAnthropic({ messages, ctx, onDelta, signal })
+  // effort applies only to the Claude engines (Kimi 400s on it, local is OpenAI-shaped)
+  if (engine === 'anthropic') return streamAnthropic({ messages, ctx, onDelta, signal, effort })
   if (engine === 'kimi') return streamKimi({ messages, ctx, onDelta, signal, model })
-  if (engine === 'claude-code') return streamClaudeCode({ messages, model, ctx, onDelta, signal })
+  if (engine === 'claude-code') return streamClaudeCode({ messages, model, ctx, onDelta, signal, effort })
   if (engine.startsWith('local:')) return streamLocal({ model: engine.slice(6), messages, ctx, onDelta, signal })
   throw new UserFacingError(`Unknown engine "${engine}".`)
 }
@@ -347,7 +379,7 @@ export class UserFacingError extends Error {}
 
 /* ── Claude first-party API ── */
 
-async function streamAnthropic({ messages, ctx, onDelta, signal }) {
+async function streamAnthropic({ messages, ctx, onDelta, signal, effort }) {
   const client = new Anthropic()
   const system = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }]
   if (ctx) system.push({ type: 'text', text: ctx })
@@ -358,12 +390,10 @@ async function streamAnthropic({ messages, ctx, onDelta, signal }) {
       // so a rich design plus its reasoning can crowd a 32k ceiling — give headroom.
       max_tokens: 64000,
       thinking: { type: 'adaptive' },
-      // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking;
-      // xhigh is the documented sweet spot for coding/agentic work. Anthropic engine ONLY —
-      // Kimi 400s on effort and local is OpenAI-shaped, so this stays in streamAnthropic.
-      // VIBEMESH_EFFORT overrides it (default xhigh) so the effort A/B can run via the bench
-      // without a code change — do NOT lower the default without bench evidence.
-      output_config: { effort: process.env.VIBEMESH_EFFORT || 'xhigh' },
+      // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking; xhigh is
+      // the documented sweet spot for coding/agentic work. The level is chosen in the Engines UI
+      // (per request) and falls back to DEFAULT_EFFORT (VIBEMESH_EFFORT or xhigh) when unset.
+      output_config: { effort: resolveEffort(effort) },
       system,
       messages,
     },
@@ -440,7 +470,7 @@ function translateAnthropicError(error, who) {
 
 /* ── Claude Code subscription login (Agent SDK) ── */
 
-async function streamClaudeCode({ messages, model, ctx, onDelta, signal }) {
+async function streamClaudeCode({ messages, model, ctx, onDelta, signal, effort }) {
   let query
   try {
     ;({ query } = await import('@anthropic-ai/claude-agent-sdk'))
@@ -461,6 +491,9 @@ async function streamClaudeCode({ messages, model, ctx, onDelta, signal }) {
     options: {
       systemPrompt: SYSTEM_PROMPT + ctx,
       ...(model && model !== 'default' ? { model } : {}),
+      // the Agent SDK accepts a named effort level (low|medium|high|xhigh|max); the binary
+      // silently downgrades it for a model that doesn't support that level
+      effort: resolveEffort(effort),
       allowedTools: [],
       disallowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task', 'NotebookEdit'],
       maxTurns: 1,

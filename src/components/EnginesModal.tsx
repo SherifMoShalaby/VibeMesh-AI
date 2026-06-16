@@ -4,6 +4,15 @@ import { useUi } from '../state/ui'
 import { connectEngine, testEngine, type ProviderInfo } from '../lib/api'
 import { IconX, IconRefresh, DChip } from './icons'
 
+type Row = ProviderInfo & { useId?: string }
+
+// logical groupings, rendered in order; engines self-declare their `group`
+const SECTIONS: Array<{ key: NonNullable<ProviderInfo['group']>; title: string; hint: string }> = [
+  { key: 'cli', title: 'Subscription · CLI login', hint: 'Use an app you already pay for — no key to paste.' },
+  { key: 'apikey', title: 'API key', hint: 'Connect with a key from the provider console.' },
+  { key: 'local', title: 'Local', hint: 'Run a model on your own machine — set the server URL below.' },
+]
+
 export default function EnginesModal() {
   const enginesOpen = useUi((s) => s.enginesOpen)
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
@@ -26,19 +35,20 @@ export default function EnginesModal() {
 
   if (!enginesOpen) return null
 
-  // collapse the per-model local entries into one row for this panel
-  const providers: Array<ProviderInfo & { useId?: string }> = []
+  // collapse the per-model local entries into one row with a model picker
+  const providers: Row[] = []
   let localDone = false
+  const localProviders = (health?.providers ?? []).filter((p) => p.id.startsWith('local:'))
   for (const p of health?.providers ?? []) {
     if (p.id.startsWith('local:')) {
       if (!localDone) {
-        const models = health!.providers.filter((q) => q.id.startsWith('local:'))
         providers.push({
-          ...p,
+          ...p, // carries group / baseUrl / connect from the first local entry
           id: 'local',
           useId: p.id, // selecting "use" targets the first local model
           label: 'Local LLM',
-          detail: `${p.detail} — ${models.length} model(s): ${models.map((m) => m.model).join(', ')}`,
+          detail: `${p.detail} — ${localProviders.length} model(s)`,
+          models: localProviders.map((m) => ({ id: m.model!, label: m.model! })),
         })
         localDone = true
       }
@@ -46,6 +56,11 @@ export default function EnginesModal() {
       providers.push(p)
     }
   }
+
+  // bucket by group, preserving provider order within each section
+  const grouped = SECTIONS.map((s) => ({ ...s, rows: providers.filter((p) => (p.group ?? 'apikey') === s.key) })).filter(
+    (s) => s.rows.length > 0,
+  )
 
   const rescan = async () => {
     setScanning(true)
@@ -72,8 +87,16 @@ export default function EnginesModal() {
             An AI engine is the assistant that designs parts for you. Connect whichever you have — everything else in
             the app (examples, sliders, exports) works without one.
           </p>
-          {providers.map((p) => (
-            <EngineRow key={p.id} provider={p} />
+          {grouped.map((section) => (
+            <div className="engine-section" key={section.key}>
+              <div className="engine-section-head">
+                <span className="engine-section-title">{section.title}</span>
+                <span className="engine-section-hint">{section.hint}</span>
+              </div>
+              {section.rows.map((p) => (
+                <EngineRow key={p.id} provider={p} />
+              ))}
+            </div>
           ))}
         </div>
 
@@ -88,22 +111,45 @@ export default function EnginesModal() {
   )
 }
 
-function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }) {
+function EngineRow({ provider }: { provider: Row }) {
   const refreshHealth = useStore((s) => s.refreshHealth)
   const engine = useStore((s) => s.engine)
   const setEngine = useStore((s) => s.setEngine)
   const claudeModel = useStore((s) => s.claudeModel)
   const setClaudeModel = useStore((s) => s.setClaudeModel)
+  const claudeEffort = useStore((s) => s.claudeEffort)
+  const setClaudeEffort = useStore((s) => s.setClaudeEffort)
   const kimiModel = useStore((s) => s.kimiModel)
   const setKimiModel = useStore((s) => s.setKimiModel)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
 
-  // "active" matches the collapsed Local row against any local:* engine id
-  const isActive = engine === provider.id || (provider.id === 'local' && Boolean(engine?.startsWith('local:')))
-  const useTargetId = provider.useId ?? provider.id
+  const isLocal = provider.group === 'local'
+  // local URL is always editable (pre-filled with the current value); start from the server's baseUrl
+  const [urlValue, setUrlValue] = useState(provider.baseUrl ?? '')
+  // useState's initializer runs once — re-sync when a health refresh brings a new saved URL
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUrlValue(provider.baseUrl ?? '')
+  }, [provider.baseUrl])
 
+  // For the collapsed Local row, track which local model is selected in the dropdown.
+  const localModels = isLocal ? (provider.models ?? []) : []
+  const initialLocalModel = engine?.startsWith('local:')
+    ? engine.slice(6)
+    : provider.useId?.startsWith('local:')
+      ? provider.useId.slice(6)
+      : localModels[0]?.id ?? ''
+  const [localModel, setLocalModel] = useState(initialLocalModel)
+
+  // "active" matches the collapsed Local row against any local:* engine id
+  const isActive = engine === provider.id || (isLocal && Boolean(engine?.startsWith('local:')))
+
+  // For local, the Use button and dropdown target local:<selectedModel>.
+  const useTargetId = isLocal && localModel ? `local:${localModel}` : (provider.useId ?? provider.id)
+
+  // save an API key (anthropic / kimi connect form)
   const save = async () => {
     if (!provider.connect || !value.trim()) return
     setBusy(true)
@@ -112,11 +158,28 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
     if (result.ok && result.providers) {
       await refreshHealth(result.providers)
       setValue('')
-      // immediately verify the new credential
       const test = await testEngine(provider.id)
       setNote({ ok: test.ok, text: test.ok ? `Connected. ${test.message}` : test.message })
     } else {
       setNote({ ok: false, text: result.message ?? 'Could not save.' })
+    }
+    setBusy(false)
+  }
+
+  // apply the local server URL (always available, even while a server is answering)
+  const applyUrl = async () => {
+    if (!provider.connect) return
+    setBusy(true)
+    setNote(null)
+    const result = await connectEngine(provider.connect.envKey, urlValue.trim())
+    if (result.ok && result.providers) {
+      await refreshHealth(result.providers)
+      const test = await testEngine('local')
+      // the URL saved either way — if nothing's answering yet (server not started), say so without
+      // reading as a failure, since setting the URL ahead of starting the server is a real workflow
+      setNote({ ok: test.ok, text: test.ok ? test.message : `Saved. ${test.message}` })
+    } else {
+      setNote({ ok: false, text: result.message ?? 'Could not save the URL.' })
     }
     setBusy(false)
   }
@@ -138,6 +201,18 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
     setBusy(false)
   }
 
+  const handleLocalModelChange = (modelId: string) => {
+    setLocalModel(modelId)
+    if (isActive) setEngine(`local:${modelId}`)
+  }
+
+  // non-local model dropdown binds kimi↔kimiModel, else claude-code↔claudeModel. `anthropic` has no
+  // `models` in providerStatus, so showModels keeps it out of the model dropdown entirely (effort only).
+  const modelValue = provider.id === 'kimi' ? kimiModel : claudeModel
+  const onModelChange = provider.id === 'kimi' ? setKimiModel : setClaudeModel
+  const showModels = (provider.models?.length ?? 0) > 0 && (isLocal || provider.id === 'claude-code' || provider.id === 'kimi')
+  const showEfforts = provider.available && (provider.efforts?.length ?? 0) > 0
+
   return (
     <section className={`engine-row${provider.available ? ' on' : ''}`}>
       <div className="engine-row-head">
@@ -153,7 +228,7 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
           <button className="btn btn-ghost sm" onClick={runTest} disabled={busy}>
             Test
           </button>
-          {provider.available && provider.connect && (
+          {provider.available && provider.connect && !isLocal && (
             <button className="btn btn-ghost sm" onClick={disconnect} disabled={busy} title={`Clear ${provider.connect.envKey}`}>
               Disconnect
             </button>
@@ -162,26 +237,61 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
       </div>
       <div className="engine-row-detail">{provider.detail}</div>
 
-      {provider.available &&
-        (provider.id === 'claude-code' || provider.id === 'kimi') &&
-        (provider.models?.length ?? 0) > 0 &&
-        (() => {
-          const isKimi = provider.id === 'kimi'
-          const value = isKimi ? kimiModel : claudeModel
-          const onChange = isKimi ? setKimiModel : setClaudeModel
-          return (
+      {/* model + effort settings for a connected engine */}
+      {provider.available && (showModels || showEfforts) && (
+        <div className="engine-config">
+          {showModels && (
             <label className="engine-model-row">
               <span>Model</span>
-              <select aria-label={`${provider.label} model`} value={value} onChange={(e) => onChange(e.target.value)}>
-                {provider.models!.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
+              {isLocal ? (
+                <select aria-label={`${provider.label} model`} value={localModel} onChange={(e) => handleLocalModelChange(e.target.value)}>
+                  {provider.models!.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <select aria-label={`${provider.label} model`} value={modelValue} onChange={(e) => onModelChange(e.target.value)}>
+                  {provider.models!.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              )}
+            </label>
+          )}
+          {showEfforts && (
+            <label className="engine-model-row">
+              <span>Effort</span>
+              <select aria-label={`${provider.label} effort`} value={claudeEffort} onChange={(e) => setClaudeEffort(e.target.value)}>
+                {provider.efforts!.map((e) => (
+                  <option key={e.id} value={e.id}>{e.label}</option>
                 ))}
               </select>
             </label>
-          )
-        })()}
+          )}
+        </div>
+      )}
+
+      {/* local server URL — always editable so you can point it at a server before starting it */}
+      {isLocal && provider.connect && (
+        <div className="engine-connect">
+          <input
+            type="text"
+            aria-label="Local LLM base URL"
+            placeholder={provider.connect.placeholder}
+            value={urlValue}
+            onChange={(e) => setUrlValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void applyUrl()
+            }}
+          />
+          <button className="btn btn-primary sm" onClick={applyUrl} disabled={busy || !urlValue.trim()}>
+            {busy ? '…' : 'Apply'}
+          </button>
+          <a className="engine-link" href={provider.connect.url} target="_blank" rel="noreferrer">
+            {provider.connect.urlLabel} ↗
+          </a>
+        </div>
+      )}
 
       {provider.id === 'claude-code' && !provider.available && (
         <div className="engine-row-detail">
@@ -189,7 +299,8 @@ function EngineRow({ provider }: { provider: ProviderInfo & { useId?: string } }
         </div>
       )}
 
-      {provider.connect && !provider.available && (
+      {/* API-key connect form (anthropic / kimi when not yet connected) */}
+      {provider.connect && !provider.available && !isLocal && (
         <div className="engine-connect">
           <input
             type="password"
