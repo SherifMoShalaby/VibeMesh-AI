@@ -9,6 +9,7 @@ import { fetchHealth, streamGenerate, toApiMessages, type HealthInfo } from '../
 import { loadActiveProjectId, loadProjects, newId, saveActiveProjectId, saveProjects } from '../lib/storage'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
 import { buildThreeMF } from '../lib/threeMF'
+import { packPlates } from '../lib/packPlates'
 import type { Example } from '../lib/examples'
 
 export type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error'
@@ -123,6 +124,8 @@ interface VibeState {
   setEngine: (id: string) => void
   exportingPlates: boolean
   exportPlates: (fileBase: string) => Promise<void>
+  /** export one slicer-ready .3mf per bed-sized plate (pieces packed as in the slicer view) */
+  exportPlates3mf: (fileBase: string) => Promise<void>
   /** export the current model's STL, offering a quality upgrade when preview was draft/degraded */
   exportStlSmart: (fileBase: string) => Promise<void>
   /** export one .3mf with every part as a named object (slicer-ready plate) */
@@ -926,6 +929,70 @@ export const useStore = create<VibeState>((set, get) => {
         alert(`Export incomplete!\n\nFailed parts: ${failed.join(', ')}\nDownloaded: ${pieces.length - failed.length} of ${pieces.length}.\n\nSelect the failed part in the viewport to see its error, or use Ask AI to Fix.`)
       } else if (degraded.length > 0) {
         set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
+      }
+    },
+
+    exportPlates3mf: async (fileBase) => {
+      const { code, params, paramValues } = get()
+      const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
+      if (!partParam || get().exportingPlates) return
+      const preset = exportQuality()
+      const bed = resolveBed(get().bedId, get().customBed)
+      const names = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
+      set({ exportingPlates: true })
+      const compiled: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] = []
+      const failed: string[] = []
+      const degraded: string[] = []
+      try {
+        for (const name of names) {
+          const defines = buildDefines(params, { ...paramValues, part: name })
+          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
+          if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
+            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
+            if (result.ok) degraded.push(name)
+          }
+          const bb = result.ok && result.stl ? stlBBox(result.stl) : null
+          if (result.ok && result.stl && bb) compiled.push({ name, stl: result.stl, bbox: bb })
+          else failed.push(name)
+        }
+      } finally {
+        set({ exportingPlates: false })
+      }
+      // pack the rendered pieces onto bed-sized plates — the SAME packer the slicer view uses,
+      // so each .3mf is WYSIWYG with what was on screen
+      const plan = packPlates(
+        compiled.map((c) => ({ name: c.name, w: c.bbox.x, h: c.bbox.y, z: c.bbox.z })),
+        { x: bed.x, y: bed.y, z: bed.z },
+      )
+      const byName = new Map(compiled.map((c) => [c.name, c]))
+      let written = 0
+      plan.plates.forEach((placements, pi) => {
+        const parts = placements
+          .map((pl) => {
+            const c = byName.get(pl.name)
+            return c ? { name: pl.name, stl: c.stl, place: { x: pl.x, y: pl.y } } : null
+          })
+          .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number } } => p !== null)
+        if (parts.length) {
+          downloadBlob(buildThreeMF(parts), `${fileBase}-plate${pi + 1}.3mf`, 'model/3mf')
+          written++
+        }
+      })
+      // loud accounting — a part dropped from the export must never be silent (SPEC §4)
+      const problems: string[] = []
+      if (failed.length) problems.push(`failed to render: ${failed.join(', ')}`)
+      if (plan.oversize.length)
+        problems.push(`too big for the ${bed.label} bed: ${plan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')}`)
+      if (problems.length) {
+        const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written)`
+        set({ compileNote: note })
+        alert(`${note}\n\nFix the named parts (select them in the viewport, or Ask AI to split), then export again.`)
+      } else if (degraded.length > 0) {
+        set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
+      } else if (written === 0) {
+        set({ compileNote: 'Nothing to export — no parts rendered.' })
+      } else {
+        set({ compileNote: `Exported ${written} plate file(s) for the ${bed.label} bed.` })
       }
     },
 

@@ -7,7 +7,7 @@ import { zipSync, strToU8 } from 'fflate'
  * sitting at z=0, so the slicer opens a ready-to-arrange plate.
  */
 export function buildThreeMF(
-  parts: Array<{ name: string; stl: ArrayBuffer }>,
+  parts: Array<{ name: string; stl: ArrayBuffer; place?: { x: number; y: number } }>,
   { arrange = true }: { arrange?: boolean } = {},
 ): Uint8Array<ArrayBuffer> {
   const objects: string[] = []
@@ -20,7 +20,14 @@ export function buildThreeMF(
     objects.push(
       `<object id="${id}" name="${escapeXml(part.name)}" type="model"><mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh></object>`,
     )
-    if (arrange) {
+    if (part.place) {
+      // explicit packed placement (per-plate slicer export): drop the piece's min corner
+      // onto the packer's bed-local (x,y) and seat it on z=0, matching the on-screen slicer pack
+      const tx = part.place.x - bbox.minX
+      const ty = part.place.y - bbox.minY
+      const tz = -bbox.minZ
+      items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+    } else if (arrange) {
       // arrange: side by side along X with 10mm gaps, centered in Y, flat on z=0
       const tx = cursorX - bbox.minX
       const ty = -(bbox.minY + bbox.maxY) / 2
