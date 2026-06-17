@@ -1,14 +1,14 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
 import { buildManualFixPrompt } from '../lib/compileReport'
 import { downloadBlob } from '../lib/stl'
 import type { ParamValue, ScadParameter } from '../types'
-// CodeMirror is ~170KB gzip and only shows in Advanced mode / on a render error — keep it out
-// of the main bundle; the chunk loads on first Code-tab open.
+// CodeMirror is ~170KB gzip — keep it out of the main bundle; the chunk loads lazily on the
+// first Code-tab open.
 const CodeEditor = lazy(() => import('./CodeEditor'))
-import { DSliders, DCode, DChevDown, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning } from './icons'
+import { DSliders, DCode, DChevDown, DChevRight, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning } from './icons'
 
 /** clamp slider/number values to the param's step grid — keeps float noise out of state (UX-AUDIT F13) */
 function roundToStep(n: number, step: number | undefined): number {
@@ -17,68 +17,89 @@ function roundToStep(n: number, step: number | undefined): number {
   return Number((Math.round(n / step) * step).toFixed(decimals))
 }
 
-export default function RightPanel({ mobileShow = false }: { mobileShow?: boolean }) {
+export default function RightPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
   const rightTab = useUi((s) => s.rightTab)
   const setRightTab = useUi((s) => s.setRightTab)
-  const advanced = useUi((s) => s.advanced)
-  const setAdvanced = useUi((s) => s.setAdvanced)
+  const setRightCollapsed = useUi((s) => s.setRightCollapsed)
   const compileStatus = useStore((s) => s.compileStatus)
   const generating = useStore((s) => s.generating)
   const streamText = useStore((s) => s.streamText)
   const params = useStore((s) => s.params)
+  const activeId = useStore((s) => s.activeId)
 
   // teach the causality: the chat is writing the code right now
   const aiWritingCode = generating && streamText.includes('```')
-  // simple by default: the Code tab hides unless Advanced is on — but a render error
-  // always surfaces it (you can't fix what you can't see). SPEC §9.
-  const codeVisible = advanced || compileStatus === 'error'
-  const effectiveTab = rightTab === 'code' && codeVisible ? 'code' : 'params'
+
+  // Param-group collapse state lives HERE (not in ParamsPanel) so it SURVIVES a Code↔Params
+  // tab swap, which unmounts ParamsPanel. Groups seed COLLAPSED the first time each name is
+  // seen so a freshly-created model isn't a wall of sliders, while a manual expand survives
+  // slider edits / recompiles (params identity is unchanged by those). `seeded` + `collapsed`
+  // reset per project so a same-named group in a different model still collapses by default.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const seeded = useRef<Set<string>>(new Set())
+  const groupNames = useMemo(() => [...new Set(params.map((p) => p.group))], [params])
+
+  useEffect(() => {
+    seeded.current = new Set()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCollapsed(new Set())
+  }, [activeId])
+
+  useEffect(() => {
+    const fresh = groupNames.filter((n) => !seeded.current.has(n))
+    if (fresh.length === 0) return
+    fresh.forEach((n) => seeded.current.add(n))
+    setCollapsed((prev) => new Set([...prev, ...fresh]))
+  }, [groupNames])
+
+  const toggle = (group: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(group)) next.delete(group)
+      else next.add(group)
+      return next
+    })
 
   return (
-    <section className={`pane params-pane${mobileShow ? ' sheet-show' : ''}`}>
+    <section className={`pane params-pane${mobileShow ? ' sheet-show' : ''}${paneCollapsed ? ' is-collapsed' : ''}`}>
       <div className="sheet-handle" aria-hidden>
         <span className="grip" />
       </div>
       <div className="panel-tabs" role="tablist">
+        <button className="icon-btn-sm panel-collapse" title="Collapse parameters panel" aria-label="Collapse parameters panel" onClick={() => setRightCollapsed(true)}>
+          <DChevRight />
+        </button>
         <button
           role="tab"
-          aria-selected={effectiveTab === 'params'}
-          className={`panel-tab${effectiveTab === 'params' ? ' active' : ''}`}
+          aria-selected={rightTab === 'params'}
+          className={`panel-tab${rightTab === 'params' ? ' active' : ''}`}
           onClick={() => setRightTab('params')}
         >
           <DSliders /> Parameters
           {params.length > 0 && <span className="count">{params.length}</span>}
         </button>
-        {codeVisible && (
-          <button
-            role="tab"
-            aria-selected={effectiveTab === 'code'}
-            className={`panel-tab${effectiveTab === 'code' ? ' active' : ''}${aiWritingCode ? ' pulse' : ''}${
-              compileStatus === 'error' ? ' err' : ''
-            }`}
-            onClick={() => setRightTab('code')}
-          >
-            <DCode /> Code{compileStatus === 'error' && <IconWarning />}
-          </button>
-        )}
+        <button
+          role="tab"
+          aria-selected={rightTab === 'code'}
+          className={`panel-tab${rightTab === 'code' ? ' active' : ''}${aiWritingCode ? ' pulse' : ''}${
+            compileStatus === 'error' ? ' err' : ''
+          }`}
+          onClick={() => setRightTab('code')}
+        >
+          <DCode /> Code{compileStatus === 'error' && <IconWarning />}
+        </button>
       </div>
 
-      {effectiveTab === 'params' ? <ParamsPanel /> : <CodePanel />}
-
-      <label className="panel-mode-foot" title="Show the code editor, triangle count, and render time">
-        <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
-        <span>Advanced</span>
-      </label>
+      {rightTab === 'code' ? <CodePanel /> : <ParamsPanel collapsed={collapsed} onToggle={toggle} />}
     </section>
   )
 }
 
-function ParamsPanel() {
+function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle: (group: string) => void }) {
   const params = useStore((s) => s.params)
   const paramValues = useStore((s) => s.paramValues)
   const setParamValue = useStore((s) => s.setParamValue)
   const resetParams = useStore((s) => s.resetParams)
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   const groups = useMemo(() => {
     const map = new Map<string, ScadParameter[]>()
@@ -102,20 +123,12 @@ function ParamsPanel() {
     )
   }
 
-  const toggle = (group: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev)
-      if (next.has(group)) next.delete(group)
-      else next.add(group)
-      return next
-    })
-
   return (
     <>
       <div className="panel-scroll">
         {groups.map(([group, items]) => (
           <section key={group} className={`param-group${collapsed.has(group) ? ' collapsed' : ''}`}>
-            <button className="param-group-head" onClick={() => toggle(group)} aria-expanded={!collapsed.has(group)}>
+            <button className="param-group-head" onClick={() => onToggle(group)} aria-expanded={!collapsed.has(group)}>
               <span className="pg-caret">
                 <DChevDown />
               </span>

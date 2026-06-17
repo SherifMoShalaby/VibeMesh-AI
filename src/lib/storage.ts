@@ -1,13 +1,12 @@
 import type { Project } from '../types'
 
 const KEY = 'vibemesh.projects.v1'
-const ACTIVE_KEY = 'vibemesh.activeProject.v1'
 
 // VibeSCAD → Vibemesh-AI rename: copy each legacy key once (old keys are kept
 // untouched so an older build can still open the same browser profile).
 const LEGACY_PREFIX = 'vibescad.'
 const PREFIX = 'vibemesh.'
-for (const suffix of ['projects.v1', 'activeProject.v1', 'engine.v1', 'claudeModel.v1', 'quality.v1']) {
+for (const suffix of ['projects.v1', 'engine.v1', 'claudeModel.v1', 'quality.v1']) {
   try {
     const old = localStorage.getItem(LEGACY_PREFIX + suffix)
     if (old !== null && localStorage.getItem(PREFIX + suffix) === null) {
@@ -20,7 +19,7 @@ for (const suffix of ['projects.v1', 'activeProject.v1', 'engine.v1', 'claudeMod
 
 // One-time cleanup of orphaned keys from removed features (no longer read by
 // any code path). Best-effort; failures are harmless.
-for (const orphan of ['vibemesh.advanced.v1', 'vibescad.advanced.v1']) {
+for (const orphan of ['vibemesh.advanced.v1', 'vibescad.advanced.v1', 'vibemesh.activeProject.v1', 'vibescad.activeProject.v1']) {
   try {
     localStorage.removeItem(orphan)
   } catch {
@@ -57,13 +56,24 @@ export function saveProjects(projects: Project[]): void {
   }
 }
 
-export function loadActiveProjectId(): string | null {
-  return localStorage.getItem(ACTIVE_KEY)
+const LAST_CHAT_KEY = 'vibemesh.lastChat.v1'
+
+/** the chat the user was last on — restored on a same-tab reload / return (see store.init). */
+export function loadLastChatId(): string | null {
+  try {
+    return localStorage.getItem(LAST_CHAT_KEY)
+  } catch {
+    return null
+  }
 }
 
-export function saveActiveProjectId(id: string | null): void {
-  if (id) localStorage.setItem(ACTIVE_KEY, id)
-  else localStorage.removeItem(ACTIVE_KEY)
+export function saveLastChatId(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(LAST_CHAT_KEY, id)
+    else localStorage.removeItem(LAST_CHAT_KEY)
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 export function newId(): string {

@@ -3,13 +3,14 @@ import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
 import { estHistoryTokens, historyBudgetTokens, type ProviderInfo } from '../lib/api'
+import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
-import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh } from './icons'
+import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh, DChevLeft } from './icons'
 
 const MAX_IMAGES = 3
 const IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/
 
-export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean }) {
+export default function ChatPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
   const projects = useStore((s) => s.projects)
   const activeId = useStore((s) => s.activeId)
   const generating = useStore((s) => s.generating)
@@ -28,6 +29,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
   const draftPrompt = useUi((s) => s.draftPrompt)
   const setDraftPrompt = useUi((s) => s.setDraftPrompt)
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
+  const setLeftCollapsed = useUi((s) => s.setLeftCollapsed)
   const autoRepair = useUi((s) => s.autoRepair)
   const setAutoRepair = useUi((s) => s.setAutoRepair)
 
@@ -219,7 +221,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
 
   return (
     <section
-      className={`pane chat-pane${mobileShow ? ' sheet-show' : ''}`}
+      className={`pane chat-pane${mobileShow ? ' sheet-show' : ''}${paneCollapsed ? ' is-collapsed' : ''}`}
       onDragOver={(e) => {
         const hasImage = Array.from(e.dataTransfer.items).some((item) => IMAGE_TYPES.test(item.type))
         if (hasImage) {
@@ -248,6 +250,9 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
         <ContextChip chat={chat} provider={activeProvider} systemTokens={health?.systemTokens} />
         <button className="icon-btn-sm" title="New part" aria-label="New part" onClick={() => newProject()}>
           <DPlus />
+        </button>
+        <button className="icon-btn-sm" title="Collapse chat panel" aria-label="Collapse chat panel" onClick={() => setLeftCollapsed(true)}>
+          <DChevLeft />
         </button>
       </div>
 
@@ -403,8 +408,8 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
               hidden
               onChange={(e) => { attachFiles(e.target.files ?? []); e.target.value = '' }}
             />
-            <button className="chip-btn" title="Attach a photo or sketch — or paste (⌘V) / drag & drop" onClick={() => fileRef.current?.click()}>
-              <DImage /> Reference
+            <button className="chip-btn icon-only" aria-label="Attach a photo or sketch" title="Attach a photo or sketch — or paste (⌘V) / drag & drop" onClick={() => fileRef.current?.click()}>
+              <DImage />
             </button>
             <button
               className="chip-btn"
@@ -415,6 +420,7 @@ export default function ChatPanel({ mobileShow = false }: { mobileShow?: boolean
             >
               <span className={autoRepair ? 'dot-ok' : 'dot-off'} /> Auto-fix
             </button>
+            <ModelMenu />
             <span className="spacer" />
             {generating ? (
               <button className="send-btn stop" onClick={abortGeneration}>Stop</button>

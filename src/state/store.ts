@@ -6,7 +6,12 @@ import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, type HealthInfo } from '../lib/api'
-import { loadActiveProjectId, loadProjects, newId, saveActiveProjectId, saveProjects } from '../lib/storage'
+import { loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
+import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
+
+/** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
+ *  chat while a brand-new window/tab (empty sessionStorage) starts fresh. */
+const SESSION_KEY = 'vibemesh.session.v1'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
 import { buildThreeMF } from '../lib/threeMF'
 import { packPlates } from '../lib/packPlates'
@@ -623,14 +628,52 @@ export const useStore = create<VibeState>((set, get) => {
 
     init: async () => {
       const projects = loadProjects()
-      const savedActive = loadActiveProjectId()
-      const active = projects.find((p) => p.id === savedActive) ?? null
-      set({ projects, activeId: active?.id ?? null })
-      if (active) {
-        const params = parseParameters(active.code)
-        const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...active.paramValues }
-        set({ code: active.code, params, paramValues })
-        if (active.code.trim()) void compile(active.code, buildDefines(params, paramValues))
+      // Which chat opens, in priority order:
+      //  1. a valid id in the URL hash → that chat (covers shared links AND same-tab reloads,
+      //     since the hash persists across reload);
+      //  2. else, on a RELOAD / return to a tab that has loaded before (sessionStorage marker) →
+      //     the last chat the user was on (restore-on-reload);
+      //  3. else (a brand-new window/tab, or no prior chat) → a fresh chat (reusing a pristine
+      //     empty one if present, to avoid piling up "Untitled part"s and to stay idempotent
+      //     under React StrictMode's double-invoke in dev).
+      const hashId = chatIdFromHash()
+      let target = hashId ? projects.find((p) => p.id === hashId) ?? null : null
+      let returning = false
+      try {
+        returning = sessionStorage.getItem(SESSION_KEY) === '1'
+        sessionStorage.setItem(SESSION_KEY, '1')
+      } catch {
+        /* sessionStorage unavailable — treat as a fresh window */
+      }
+      if (!target && returning) {
+        const lastId = loadLastChatId()
+        target = lastId ? projects.find((p) => p.id === lastId) ?? null : null
+      }
+
+      if (target) {
+        set({ projects, activeId: target.id })
+        const params = parseParameters(target.code)
+        const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...target.paramValues }
+        set({ code: target.code, params, paramValues })
+        if (target.code.trim()) void compile(target.code, buildDefines(params, paramValues))
+        setChatHash(target.id, { replace: true })
+        saveLastChatId(target.id)
+      } else {
+        const pristine = projects.find((p) => !p.code.trim() && p.chat.length === 0)
+        const project: Project = pristine ?? {
+          id: newId(),
+          name: 'Untitled part',
+          code: '',
+          paramValues: {},
+          chat: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }
+        const nextProjects = pristine ? projects : [project, ...projects]
+        set({ projects: nextProjects, activeId: project.id, code: '', params: [], paramValues: {} })
+        if (!pristine) saveProjects(nextProjects)
+        setChatHash(project.id, { replace: true })
+        saveLastChatId(project.id)
       }
       await get().refreshHealth()
     },
@@ -648,6 +691,19 @@ export const useStore = create<VibeState>((set, get) => {
 
     newProject: () => {
       clearParamTimer()
+      // Reuse an existing pristine empty chat rather than minting a duplicate (the header
+      // "New chat" button + the bare-hash handler both call this; init() reuses the same way).
+      const existing = get().projects.find((p) => !p.code.trim() && p.chat.length === 0)
+      if (existing) {
+        set({
+          activeId: existing.id, code: '', params: [], paramValues: {}, stl: null, meshTransform: null,
+          vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null,
+          streamText: '', viewMode: 'single', pieces: null, slicing: false,
+        })
+        setChatHash(existing.id)
+        saveLastChatId(existing.id)
+        return
+      }
       const project: Project = {
         id: newId(),
         name: 'Untitled part',
@@ -677,7 +733,8 @@ export const useStore = create<VibeState>((set, get) => {
         slicing: false,
       })
       saveProjects(projects)
-      saveActiveProjectId(project.id)
+      setChatHash(project.id)
+      saveLastChatId(project.id)
     },
 
     openProject: (id) => {
@@ -686,12 +743,12 @@ export const useStore = create<VibeState>((set, get) => {
       clearParamTimer()
       set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
       // transient per-model interaction modes live in the UI store — clear them so a
-      // section cut / selection / measuring session doesn't bleed into the next project
+      // selection / measuring session doesn't bleed into the next project
       const ui = useUi.getState()
       ui.setSelected(false)
       ui.setMeasureMode(false)
-      ui.setSectionOn(false)
-      saveActiveProjectId(id)
+      setChatHash(id)
+      saveLastChatId(id)
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
       set({ code: project.code, params, paramValues })
@@ -705,7 +762,8 @@ export const useStore = create<VibeState>((set, get) => {
       if (get().activeId === id) {
         clearParamTimer()
         set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false })
-        saveActiveProjectId(null)
+        setChatHash(null, { replace: true })
+        saveLastChatId(null)
       }
     },
 
@@ -896,7 +954,8 @@ export const useStore = create<VibeState>((set, get) => {
           compileStatus: 'idle',
         })
         saveProjects(projects)
-        saveActiveProjectId(project.id)
+        setChatHash(project.id)
+        saveLastChatId(project.id)
       }
       adoptCode(example.code)
     },

@@ -54,7 +54,14 @@ One page. The contract for the four surfaces; anything not specified here is und
 ## 7. Viewport tools
 - Left toolbar: shading cycle (Solid / Solid+Edges / Wireframe) · build-plate show/hide (plate is
   translucent — model visible from below) · perspective⇄orthographic · ISO/TOP/FRT/RGT/FIT views
-  (F = fit) · section view (Z clip slider) · measure (two clicks on the model → mm) · PNG snapshot.
+  (F = fit) · measure (two clicks on the model → mm) · PNG snapshot.
+- **Navigation**: left-drag orbits, middle- **or** right-drag pans, scroll-wheel zooms (gentle —
+  `zoomSpeed` halved so one notch is a small step), double-click empty canvas = fit.
+- **Smooth shading**: meshes render with angle-thresholded auto-smooth normals (weld coincident
+  verts → creased normals at a 35° crease angle, in `src/lib/stl.ts`) so curved surfaces look
+  smooth while box corners / chamfers stay crisp — i.e. Blender "shade smooth + auto-smooth".
+- **Projection toggle** re-frames on switch (an orthographic camera mounts unframed and needs its
+  `zoom` set), so perspective⇄orthographic is always visibly different.
 - Click the model to select: highlight + move/rotate gizmo + actions CENTER (XY), DROP (Z=0),
   RESET placement, DELETE (clears viewport only; code stays — undo or APPLY & RENDER restores;
   a HUD note says so with an inline undo link).
@@ -101,24 +108,25 @@ One page. The contract for the four surfaces; anything not specified here is und
 - **One status at a time** (viewport top-left), severity-ordered: render-failed (with an "open Code"
   action that jumps to the Code tab — and opens the params sheet on mobile) > removed-from-view (with
   "undo") > rendering > AI-designing > degraded-quality note > grew-out-of-view (with "fit" action) >
-  first-time "click the part" hint > ✓ Ready (render ms only in advanced mode).
+  first-time "click the part" hint > ✓ Ready (with render ms).
 - **Flow rail** (top-center): 1 DESCRIBE → 2 ADJUST → 3 EXPORT, steps lit by state (code exists /
   model rendered / export ready). Full labels ≥1180px; below that it collapses to numbered dots
   (step names move to the title tooltips) rather than disappearing; hidden entirely on mobile.
-- **Simple by default**: Code tab, render times, triangle counts appear only in **Advanced mode**
-  (persisted checkbox, right-panel footer) — except a render error always surfaces the Code tab
-  (marked ⚠); toggling Advanced off while on the Code tab reverts to Parameters. The code editor is
+- **Power affordances always visible**: the Code tab, render times, and triangle counts are always
+  shown (no Advanced toggle); a render error additionally marks the Code tab ⚠. The code editor is
   CodeMirror 6 (line numbers + C-like syntax highlighting), lazy-loaded so it stays out of the main
   bundle; the failing line is highlighted, and ⌘/Ctrl-Enter / ⌘/Ctrl-S apply.
 - **Toolbar**: SVG icons with aria-labels (no unicode glyph buttons); view buttons read
   ISO/TOP/FRONT/RIGHT/FIT. Mesh shows hover highlight + pointer cursor; a one-time hint chip teaches
   click-to-select (dismissed forever after first selection).
-- **AI plumbing in one place**: the composer has a single AI pill (status dot + engine name) opening
-  the Engines modal; switching engines and the Claude model picker live in the modal (per-row "Use",
-  "IN USE" badge). The topbar chip reads "Engine · <name>" / "Connect AI". The Engines modal groups
-  rows (CLI logins / API keys / local), exposes a per-engine effort selector for Claude engines, an
-  always-editable local base-URL, and disables a row's "Test" button when it needs an API key that
-  isn't set yet (local/CLI rows stay testable).
+- **AI plumbing**: the topbar chip reads "Engine · <name>" / "Connect AI" and opens the Engines modal,
+  where engine SETUP lives — switching engines, API keys, the model picker, effort selector (Claude
+  engines), an always-editable local base-URL, and a per-row "Test" disabled until its key is set
+  (local/CLI rows stay testable), grouped by CLI logins / API keys / local. The composer ALSO carries
+  an in-place **model + effort picker** (shared `ModelMenu`, in both the chat and home composers) that
+  switches model/effort WITHIN the active engine, showing only the controls that engine exposes
+  (claude-code → model + effort, anthropic → effort, kimi → model, local → none); it persists via the
+  same store fields the modal uses and links back to the modal for deeper setup.
 - **Branded dialogs** replace native prompt/confirm/alert: custom bed size (3 validated fields,
   10–2000mm) and delete-project confirmation. Project identity is ONE editable title + a ▾ menu
   (switch / new / delete).
@@ -135,7 +143,7 @@ One page. The contract for the four surfaces; anything not specified here is und
     full-width bottom sheets, not cramped desktop cards.
   - **Header context**: branding collapses to the logo mark; a mobile title shows the project name +
     current screen (Model/Tweak/Chat). The flow rail is hidden.
-- **Project switch resets transient interaction modes** (selection, section cut, measuring) so they
+- **Project switch resets transient interaction modes** (selection, measuring) so they
   don't bleed into the next project. The viewport keydown shortcuts (⌘Z placement-undo, Backspace
   delete) bail while typing in any input **or contentEditable** (the CodeMirror editor) so editing
   code never triggers viewport actions.
@@ -144,3 +152,37 @@ One page. The contract for the four surfaces; anything not specified here is und
 - A render result only applies to the project that started it (switching projects mid-render discards the result).
 - Aborting a generation leaves history consistent (consecutive user messages are merged for the API).
 - The slicer pack only applies if neither the project nor the model changed while it built: every main render bumps a generation token and clears the cached pieces, so an in-flight piece build that a concurrent recompile (e.g. a slider drag in Slicer view) has superseded is discarded rather than shown — the view then rebuilds against the current parameters.
+
+## 11. App shell, home screen & routing (2026-06-17)
+- **Home / new-chat screen** (desktop): when there's no active chat, or an empty one that isn't
+  generating (`isHome = !isMobile && (!activeId || (!code && !generating))`), the side rails are
+  unmounted and ONLY the centered composer shows (the Viewport hosts EmptyState). Sending a prompt
+  (→ generating) or any code flips to the 3-column workspace. On mobile the rails are sheets, so
+  `isHome` is gated to desktop. The home composer is fully functional: text, reference-image attach,
+  and the model/effort picker (parity with the chat composer).
+- **Chat URL routing + session restore** (hash, `src/lib/hashRoute.ts`): every chat (project) has a
+  URL `#/c/<id>`. Hash routing (not path) because `vite base: './'` targets static / GitHub-Pages
+  hosting. Which chat opens on load, in priority: (1) a valid id in the hash → that chat (covers
+  shared links AND same-tab reloads, since the hash persists); (2) else, a RELOAD / return to a tab
+  that has loaded before (a per-tab `sessionStorage` marker) → the **last chat** the user was on
+  (`vibemesh.lastChat.v1`); (3) else — a brand-new window/tab, or no prior chat → a FRESH chat
+  (reusing a pristine empty one if present, idempotent under React StrictMode's double `init`). Net:
+  reload/return restores your work, a new window starts fresh, and a URL with an id always opens that
+  chat. New/open/load-example push the hash + persist the last chat; deleting the active chat clears
+  both (replace). A `hashchange` listener in App.tsx syncs Back/Forward and hand-edited URLs —
+  opening a known id, normalizing a stale/deleted id, and re-syncing a bare in-session hash to the
+  open chat (guarded against an open→sethash→hashchange loop).
+- **Resizable columns** (desktop > 1180px only): the chat | viewport | params separators are drag
+  handles (`.col-resizer`); widths persist (`vibemesh.leftWidth/rightWidth.v1`) and clamp (left
+  280–520, right 240–440) so neither rail can crush the viewport. Between 861–1180px the rails stay
+  on fixed responsive widths (300/280) WITHOUT resizers; ≤860px is the mobile sheet layout. A header
+  **New chat** button is always available.
+- **Collapsible side panels** (desktop workspace): either rail can be collapsed via a chevron in its
+  header (`leftCollapsed`/`rightCollapsed`, persisted). A collapsed rail's grid track goes to 0 and
+  its resizer is dropped, so the viewport reclaims the space; the pane stays MOUNTED but hidden
+  (`.pane.is-collapsed`, `visibility:hidden`) so its draft/scroll state survives. A floating tab
+  (`.rail-expand`) docked at that viewport edge reopens it. Collapse applies only in the desktop
+  workspace (mobile uses sheets; home has no rails).
+- **Parameters collapsed by default**: when a model is created, each param group starts collapsed
+  (seeded once per newly-seen group name, so a manual expand survives slider edits / recompiles and
+  a new AI iteration only auto-collapses groups it newly introduces).

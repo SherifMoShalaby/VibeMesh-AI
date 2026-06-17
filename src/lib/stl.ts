@@ -1,7 +1,14 @@
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import { mergeVertices, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 const loader = new STLLoader()
+
+/** Auto-smooth crease angle: faces meeting at a SHALLOWER angle than this are smoothed
+ *  together (curved surfaces read smooth), sharper edges stay crisp — Blender's
+ *  "shade smooth + auto-smooth". 35° smooths cylinders / fillets / rotate_extrude bodies
+ *  while keeping box corners and chamfers hard. */
+const CREASE_ANGLE_DEG = 35
 
 export interface ModelGeometry {
   geometry: THREE.BufferGeometry
@@ -14,8 +21,16 @@ export interface ModelGeometry {
 }
 
 export function parseStl(buffer: ArrayBuffer): ModelGeometry {
-  const geometry = loader.parse(buffer)
-  geometry.computeVertexNormals()
+  const raw = loader.parse(buffer)
+  // STLLoader returns a NON-indexed geometry (every triangle has its own 3 vertices) with
+  // per-FACE normals, so computeVertexNormals alone just reproduces those facets. Drop the
+  // face normals (they'd otherwise block position-based welding), weld coincident vertices,
+  // then derive angle-thresholded smooth normals so curves read smooth but hard edges stay.
+  raw.deleteAttribute('normal')
+  const welded = mergeVertices(raw)
+  const geometry = toCreasedNormals(welded, THREE.MathUtils.degToRad(CREASE_ANGLE_DEG))
+  raw.dispose()
+  welded.dispose()
   geometry.computeBoundingBox()
   const box = geometry.boundingBox!
   const size = {

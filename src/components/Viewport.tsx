@@ -19,7 +19,6 @@ import {
   DRotate,
   DMove,
   DZoom,
-  DSection,
   DRuler,
   DGrid,
   DCube,
@@ -79,7 +78,6 @@ export default function Viewport() {
   const setViewMode = useStore((s) => s.setViewMode)
   const compilePieces = useStore((s) => s.compilePieces)
 
-  const advanced = useUi((s) => s.advanced)
   const setRightTab = useUi((s) => s.setRightTab)
   const setMobileTab = useUi((s) => s.setMobileTab)
   const shading = useUi((s) => s.shading)
@@ -87,10 +85,6 @@ export default function Viewport() {
   const setBedVisible = useUi((s) => s.setBedVisible)
   const ortho = useUi((s) => s.ortho)
   const setOrtho = useUi((s) => s.setOrtho)
-  const sectionOn = useUi((s) => s.sectionOn)
-  const setSectionOn = useUi((s) => s.setSectionOn)
-  const sectionZ = useUi((s) => s.sectionZ)
-  const setSectionZ = useUi((s) => s.setSectionZ)
   const measureMode = useUi((s) => s.measureMode)
   const setMeasureMode = useUi((s) => s.setMeasureMode)
   const selected = useUi((s) => s.selected)
@@ -127,6 +121,10 @@ export default function Viewport() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stl, stlVersion])
+
+  // free the previous geometry's GPU buffers when it's replaced (r3f never disposes a geometry
+  // passed as a prop — it may be owned outside React — so each re-render would otherwise leak one)
+  useEffect(() => () => model?.geometry.dispose(), [model])
 
   // deselect + clear measurements when geometry changes
   useEffect(() => {
@@ -233,17 +231,12 @@ export default function Viewport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platesView, pieces, slicing])
 
-  // section plane (z cut, fraction of model height)
-  const clipPlanes = useMemo(() => {
-    if (!sectionOn || !tbox) return undefined
-    const cut = tbox.box.min.z + sectionZ * (tbox.box.max.z - tbox.box.min.z)
-    return [new THREE.Plane(new THREE.Vector3(0, 0, -1), cut)]
-  }, [sectionOn, sectionZ, tbox])
-
   const edgesGeometry = useMemo(() => {
     if (!model || shading !== 'edges') return null
     return new THREE.EdgesGeometry(model.geometry, 20)
   }, [model, shading])
+  // same as the model geometry: dispose the previous EdgesGeometry when it changes (prop geometry, not auto-freed)
+  useEffect(() => () => edgesGeometry?.dispose(), [edgesGeometry])
 
   /* ── selection actions ── */
   const commitTransform = () => {
@@ -335,12 +328,15 @@ export default function Viewport() {
       <div className="viewport-vignette" />
       <div className="model-wrap">
       <Canvas
+        // r3f only builds the camera once (it does NOT swap type when `orthographic` flips
+        // post-mount), so key the Canvas on the projection to remount with the correct camera
+        // type. ProjectionFit re-frames on (re)mount, which also sets the orthographic zoom.
+        key={ortho ? 'ortho' : 'persp'}
         camera={{ up: [0, 0, 1], position: [180, -180, 140], fov: 40, near: 0.5, far: 5000 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
         dpr={[1, 2]}
         orthographic={ortho}
         onCreated={({ gl }) => {
-          gl.localClippingEnabled = true
           registerViewportCanvas(gl.domElement)
         }}
         onPointerMissed={() => setSelected(false)}
@@ -385,16 +381,14 @@ export default function Viewport() {
                 color="#b9bdc6"
                 roughness={0.55}
                 metalness={0.12}
-                flatShading
                 wireframe={shading === 'wireframe'}
-                clippingPlanes={clipPlanes}
                 emissive={selected ? '#8a4012' : hovered && !measureMode ? '#3a2a18' : '#000000'}
                 side={THREE.DoubleSide}
               />
             </mesh>
             {edgesGeometry && (
               <lineSegments geometry={edgesGeometry}>
-                <lineBasicMaterial color="#2a2c30" clippingPlanes={clipPlanes} />
+                <lineBasicMaterial color="#2a2c30" />
               </lineSegments>
             )}
           </group>
@@ -418,6 +412,7 @@ export default function Viewport() {
         <CaptureRig tbox={tbox} hasModel={Boolean(model)} />
         <ViewRig tbox={activeTbox} apiRef={viewApi} fileBase="viewport" />
         <OrbitControlsZUp />
+        <ProjectionFit apiRef={viewApi} />
       </Canvas>
       </div>
 
@@ -449,15 +444,6 @@ export default function Viewport() {
             <DZoom />
           </button>
           <div className="rail-sep" />
-          <button
-            className={`tool-btn${sectionOn ? ' active' : ''}`}
-            data-tip="Section view"
-            aria-label="Section view"
-            disabled={platesView}
-            onClick={() => setSectionOn(!sectionOn)}
-          >
-            <DSection />
-          </button>
           <button
             className={`tool-btn${measureMode ? ' active' : ''}`}
             data-tip="Measure"
@@ -503,14 +489,8 @@ export default function Viewport() {
         </div>
       )}
 
-      {sectionOn && !platesView && !showEmpty && (
-        <div className="section-slider" title="Section height">
-          <input type="range" min={0} max={1} step={0.01} value={sectionZ} onChange={(e) => setSectionZ(Number(e.target.value))} />
-        </div>
-      )}
-
-      {/* ── perf readout (top-right) — advanced only (simple-by-default, SPEC §9) ── */}
-      {!platesView && model && advanced && (
+      {/* ── perf readout (top-right) ── */}
+      {!platesView && model && (
         <div className="perf-chip">
           <span>{model.triangles.toLocaleString()} tris</span>
         </div>
@@ -562,7 +542,7 @@ export default function Viewport() {
                 {isAssemblyPreview ? 'Assembly preview' : currentPart ? `Part · ${currentPart}` : 'Model'}
               </span>
               <span className="ac-hint">
-                Drag to orbit · <kbd>Scroll</kbd> zoom · <kbd>F</kbd> frame
+                Drag orbit · <kbd>middle</kbd> pan · <kbd>scroll</kbd> zoom · <kbd>F</kbd> frame
               </span>
               {isAssemblyPreview && <span className="ac-hint">check each part below for bed fit</span>}
               {meshTransform && <span className="ac-hint">moved — placement is saved into exports</span>}
@@ -662,7 +642,7 @@ export default function Viewport() {
                     <>
                       <span className="status-dot" />
                       <span>Model ready</span>
-                      {advanced && compileMs !== null && <span className="time">· {fmtMs(compileMs)}</span>}
+                      {compileMs !== null && <span className="time">· {fmtMs(compileMs)}</span>}
                     </>
                   )
                 return (<><span className="status-dot" /><span>Ready</span></>)
@@ -798,7 +778,19 @@ function matrixOf(t: { position: [number, number, number]; rotation: [number, nu
 type TBox = { box: THREE.Box3; size: THREE.Vector3; center: THREE.Vector3; minZ: number } | null
 
 function OrbitControlsZUp() {
-  return <OrbitControls makeDefault enableDamping dampingFactor={0.12} minDistance={20} maxDistance={2000} />
+  // left-drag orbits, middle/right-drag pans (left/right/up/down), wheel zooms gently
+  // (three's default zoomSpeed=1 dollies a huge step per notch).
+  return (
+    <OrbitControls
+      makeDefault
+      enableDamping
+      dampingFactor={0.12}
+      minDistance={20}
+      maxDistance={2000}
+      zoomSpeed={0.5}
+      mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN }}
+    />
+  )
 }
 
 /** Standard views + fit + snapshot, registered for the toolbar. */
@@ -935,6 +927,21 @@ function CameraFit({ tbox, version }: { tbox: TBox; version: number }) {
   return null
 }
 
+/** Frame the model on (re)mount. The Canvas is keyed on the projection, so it remounts when
+ *  perspective⇄orthographic flips — and this fires each time, re-framing through ViewRig's
+ *  registered fit() (which also sets the orthographic camera's `zoom`; a fresh ortho camera
+ *  otherwise mounts at zoom 1 and looks unchanged). Rendered LAST in the Canvas so its effect
+ *  runs after ViewRig has registered fit() against the fresh camera; the rAF lets r3f finish
+ *  wiring the camera/controls first. CameraFit still handles framing when a new model arrives. */
+function ProjectionFit({ apiRef }: { apiRef: React.MutableRefObject<ViewApi | null> }) {
+  useEffect(() => {
+    const id = requestAnimationFrame(() => apiRef.current?.fit())
+    return () => cancelAnimationFrame(id)
+  }, [apiRef])
+
+  return null
+}
+
 /** The slicer view: each compiled piece packed onto one or more bed-sized plates,
  *  laid out left-to-right and centered. Read-only (no per-piece move/section/measure). */
 function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<string, ModelGeometry>; bed: { x: number; y: number; z: number } }) {
@@ -965,7 +972,7 @@ function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<s
                   rotation={[0, 0, pl.rot === 90 ? Math.PI / 2 : 0]}
                   position={[pl.x - bed.x / 2 - rminX, pl.y - bed.y / 2 - rminY, -bb.min.z]}
                 >
-                  <meshStandardMaterial color="#b9bdc6" roughness={0.55} metalness={0.12} flatShading side={THREE.DoubleSide} />
+                  <meshStandardMaterial color="#b9bdc6" roughness={0.55} metalness={0.12} side={THREE.DoubleSide} />
                 </mesh>
               )
             })}
