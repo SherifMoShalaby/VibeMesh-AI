@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from './state/store'
 import { useUi } from './state/ui'
+import { chatIdFromHash, setChatHash } from './lib/hashRoute'
 import TopBar from './components/TopBar'
 import ChatPanel from './components/ChatPanel'
 import Viewport from './components/Viewport'
@@ -8,35 +9,140 @@ import RightPanel from './components/RightPanel'
 import EnginesModal from './components/EnginesModal'
 import HelpModal from './components/HelpModal'
 import ErrorBoundary from './components/ErrorBoundary'
-import { DCube, DSliders, DSparkFill } from './components/icons'
+import { DCube, DSliders, DSparkFill, DChevLeft, DChevRight } from './components/icons'
 
 const IDLE_TITLE = 'Vibemesh-AI — parametric CAD for 3D printing'
 
-/** At/below 860px the design collapses to a viewport-first layout with a bottom
- *  tab bar (sheets for chat/params). The threshold MUST match the `860px` CSS
- *  breakpoint in styles.css — otherwise 721–860px is a dead-zone: a desktop grid
- *  whose params/code column is hidden with no tab bar to reach it. */
-function useIsMobile() {
-  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 860)
+/** Layout breakpoints, kept in sync with styles.css:
+ *  - `mobile` (≤860px): viewport-first layout with a bottom tab bar (chat/params become sheets).
+ *    The 860 threshold MUST match the CSS breakpoint or 721–860px is a dead-zone.
+ *  - `wide` (>1180px): the draggable 3-column workspace with resizer handles. Between 861–1180px
+ *    we keep the rails but fall back to the fixed responsive grid (styles.css @media 1180) WITHOUT
+ *    resizers, so the rails can't crush the viewport on a small laptop/tablet. */
+function useBreakpoints() {
+  const read = () => ({
+    mobile: typeof window !== 'undefined' && window.innerWidth <= 860,
+    wide: typeof window !== 'undefined' && window.innerWidth > 1180,
+  })
+  const [bp, setBp] = useState(read)
   useEffect(() => {
-    const onResize = () => setMobile(window.innerWidth <= 860)
+    const onResize = () => setBp(read())
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
-  return mobile
+  return bp
+}
+
+/** Drag handle between two panes. Updates the persisted column width in the ui store; the
+ *  left handle grows the chat rail, the right handle grows the params rail. Pointer capture
+ *  + a body cursor/select lock keep the drag smooth even when the pointer leaves the handle. */
+function Resizer({ side }: { side: 'left' | 'right' }) {
+  const leftWidth = useUi((s) => s.leftWidth)
+  const rightWidth = useUi((s) => s.rightWidth)
+  const setLeftWidth = useUi((s) => s.setLeftWidth)
+  const setRightWidth = useUi((s) => s.setRightWidth)
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const handle = e.currentTarget as HTMLElement
+    try {
+      handle.setPointerCapture(e.pointerId) // best-effort; window listeners below are the real guarantee
+    } catch {
+      /* no active pointer (synthetic event) — ignore */
+    }
+    const startX = e.clientX
+    const startW = side === 'left' ? leftWidth : rightWidth
+    const prevCursor = document.body.style.cursor
+    const prevSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const onMove = (ev: PointerEvent) => {
+      const delta = ev.clientX - startX
+      if (side === 'left') setLeftWidth(startW + delta)
+      else setRightWidth(startW - delta)
+    }
+    const onUp = () => {
+      document.body.style.cursor = prevCursor
+      document.body.style.userSelect = prevSelect
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  return <div className="col-resizer" role="separator" aria-orientation="vertical" aria-label={`Resize ${side} panel`} onPointerDown={onPointerDown} />
 }
 
 export default function App() {
   const init = useStore((s) => s.init)
   const generating = useStore((s) => s.generating)
   const compileStatus = useStore((s) => s.compileStatus)
-  const isMobile = useIsMobile()
+  const activeId = useStore((s) => s.activeId)
+  const code = useStore((s) => s.code)
+  const chatLen = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.chat.length ?? 0)
+  const { mobile: isMobile, wide: isWide } = useBreakpoints()
   const mobileTab = useUi((s) => s.mobileTab)
   const setMobileTab = useUi((s) => s.setMobileTab)
+  const leftWidth = useUi((s) => s.leftWidth)
+  const rightWidth = useUi((s) => s.rightWidth)
+  const leftCollapsed = useUi((s) => s.leftCollapsed)
+  const rightCollapsed = useUi((s) => s.rightCollapsed)
+  const setLeftCollapsed = useUi((s) => s.setLeftCollapsed)
+  const setRightCollapsed = useUi((s) => s.setRightCollapsed)
+
+  // Home (Claude-style new-chat screen): no project, or a TRULY empty one — no code, not
+  // generating, and no chat messages. The chat-length check matters: a generation that errors
+  // (or returns only prose) ends with code still '' but a chat history present; without it the
+  // rails would unmount and hide the error behind the home screen. The moment a prompt is sent
+  // (generating), code exists, or any message lands, the 3-column workspace appears. Desktop
+  // only: on mobile the rails are bottom sheets, mounted and toggled via the tab bar.
+  const isHome = !isMobile && (!activeId || (!code.trim() && !generating && chatLen === 0))
+  // workspace = desktop with a model/chat. Resizers (drag handles) only > 1180px; 861–1180px
+  // keeps the rails on fixed responsive widths so they can't squeeze the viewport.
+  const workspace = !isHome && !isMobile
+  const resizable = workspace && isWide
+  // Either rail can be collapsed in the desktop workspace. A collapsed rail's grid track goes to
+  // 0 (the pane stays mounted but is hidden via .is-collapsed, preserving its draft/scroll state)
+  // and its resizer is dropped; a floating tab at the edge brings it back.
+  const lCol = workspace && leftCollapsed
+  const rCol = workspace && rightCollapsed
+  const showResizerL = resizable && !lCol
+  const showResizerR = resizable && !rCol
+  const leftPx = resizable ? leftWidth : 300
+  const rightPx = resizable ? rightWidth : 280
+  const gridTemplate = [
+    lCol ? '0px' : `${leftPx}px`,
+    showResizerL ? 'var(--resizer-w)' : null,
+    '1fr',
+    showResizerR ? 'var(--resizer-w)' : null,
+    rCol ? '0px' : `${rightPx}px`,
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   useEffect(() => {
     void init()
   }, [init])
+
+  // Keep the store in sync with Back/Forward navigation and hand-edited URLs: an id in the
+  // hash opens that chat; a bare URL starts a new chat. The store's setChatHash no-ops when the
+  // hash already matches, and the id!==activeId guard below breaks the open→setHash→hashchange loop.
+  useEffect(() => {
+    const onHash = () => {
+      const id = chatIdFromHash()
+      const s = useStore.getState()
+      if (id && id !== s.activeId && s.projects.some((p) => p.id === id)) {
+        s.openProject(id) // Back/Forward (or pasted URL) to a known chat
+      } else if (id && !s.projects.some((p) => p.id === id)) {
+        setChatHash(s.activeId ?? null, { replace: true }) // stale/deleted id (e.g. Back onto a deleted chat) → normalize the URL, no history entry
+      } else if (!id && s.activeId) {
+        setChatHash(s.activeId, { replace: true }) // bare URL mid-session → re-sync to the open chat (don't spawn a chat or trap Back); cold loads create a fresh chat in init()
+      }
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   // surface long-running work in the tab title (AI runs can take minutes)
   useEffect(() => {
@@ -44,13 +150,28 @@ export default function App() {
   }, [generating, compileStatus])
 
   return (
-    <div className={`app${isMobile ? ' is-mobile' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full">
+    <div className={`app${isMobile ? ' is-mobile' : ''}${isHome ? ' is-home' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full">
       <TopBar />
       <ErrorBoundary>
-        <div className="app-body">
-          <ChatPanel mobileShow={isMobile && mobileTab === 'chat'} />
+        <div
+          className="app-body"
+          style={workspace ? { gridTemplateColumns: gridTemplate } : undefined}
+        >
+          {!isHome && <ChatPanel mobileShow={isMobile && mobileTab === 'chat'} paneCollapsed={lCol} />}
+          {showResizerL && <Resizer side="left" />}
           <Viewport />
-          <RightPanel mobileShow={isMobile && mobileTab === 'params'} />
+          {showResizerR && <Resizer side="right" />}
+          {!isHome && <RightPanel mobileShow={isMobile && mobileTab === 'params'} paneCollapsed={rCol} />}
+          {lCol && (
+            <button className="rail-expand left" title="Show chat panel" aria-label="Show chat panel" onClick={() => setLeftCollapsed(false)}>
+              <DChevRight />
+            </button>
+          )}
+          {rCol && (
+            <button className="rail-expand right" title="Show parameters panel" aria-label="Show parameters panel" onClick={() => setRightCollapsed(false)}>
+              <DChevLeft />
+            </button>
+          )}
         </div>
       </ErrorBoundary>
 

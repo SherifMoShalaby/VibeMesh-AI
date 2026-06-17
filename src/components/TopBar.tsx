@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
 import { downloadBlob } from '../lib/stl'
+import { useClickOutside } from '../lib/useClickOutside'
 import { QUALITY_PRESETS } from '../types'
 import { ConfirmDialog } from './Dialogs'
 import {
@@ -19,20 +20,6 @@ import {
   DArrowRight,
   IconTrash,
 } from './icons'
-
-/** close an open dropdown when clicking anywhere outside it */
-function useClickOutside(open: boolean, onClose: () => void) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-    }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [open, onClose])
-  return ref
-}
 
 export default function TopBar() {
   const projects = useStore((s) => s.projects)
@@ -76,6 +63,9 @@ export default function TopBar() {
       <div className="topbar-sep" />
 
       <div className="project-controls" ref={menuRef}>
+        <button className="newchat-btn" aria-label="New chat" title="Start a new chat" onClick={() => newProject()}>
+          <DPlus /> New chat
+        </button>
         {active ? (
           <input
             className="project-name"
