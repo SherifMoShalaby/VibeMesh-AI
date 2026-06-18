@@ -239,6 +239,7 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   block (`blockCount===1`; the bench gates this). The client parses it with `extractIntent` (tolerant:
   enum-validated, drops unknowns, never throws, null on garble) and **strips the line from the
   displayed prose** so the user sees clean PLAN text.
+- **Vision fields + source-routed build fragment (P6).** From a reference image the INTENT line also carries `sourceType` (photo|drawing|orthographic|multiview|multiobject), `statedDimensions` (legibly-labeled dims, read not invented), `asymmetryFlags`, `confidence`. The assembler injects a source-type-routed build fragment (drawing/ortho → reconcile views into one solid + honor labeled dims; multiobject → model each as a part; photo → estimate scale) — routed by the model's carried `sourceType`, or on the first image turn by a coarse client `sourceHint` from the attached image roles. Never always-on: a text request or an un-classified single image adds nothing.
 - **Intent drives retrieval, carried across turns.** Parsed `intent.domainTags` ride forward in
   `GenerateContext` so a follow-up that drops the mechanism keyword ("make it bigger" after a gear
   request) still retrieves the same skill; the server `selectSkills` matches its TRIGGERS against the
