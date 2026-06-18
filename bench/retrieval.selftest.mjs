@@ -21,6 +21,7 @@ const POSITIVE = [
   ['a clothes-peg leaf spring', 'leaf-spring'],
   ['a bracket with M3 screw holes and a captive nut trap', 'threaded-fastener-seat'],
   ['a fidget spinner that holds three 608 bearings', 'bearing-608-pocket'],
+  ['a planetary gear reduction for a small motor', 'planetary'],
 ]
 
 const NEGATIVE = [
