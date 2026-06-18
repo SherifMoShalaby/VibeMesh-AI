@@ -200,6 +200,106 @@ leafA();
 leafB();
 `
 
+const SPUR_GEAR_EXEMPLAR = `// SKILL: spur-gear pair — a pinion meshing a gear. BOTH share one module (mod). Mandatory:
+// backlash > 0 (teeth thinned for flank clearance) or the pair binds. Center distance =
+// mod*(teeth_p + teeth_g)/2. Teeth are a printable trapezoidal involute approximation.
+
+/* [Kit] */
+part = "all"; // [all, pinion, gear]
+explode = 0; // [0:1:30]
+
+/* [Gears] */
+mod = 2;          // [1:0.5:4]    module (tooth size) — BOTH gears MUST share it
+teeth_p = 12;     // [8:1:30]
+teeth_g = 24;     // [10:1:60]
+thick = 6;        // [3:1:14]
+bore = 5;         // [2:0.5:10]
+backlash = 0.25;  // [0:0.05:0.6] MANDATORY > 0 — tooth-flank clearance
+$fn = 96;
+
+function pol(r, a) = [r*cos(a), r*sin(a)];
+
+module spur(N) {
+  pr = mod*N/2;            // pitch radius
+  rr = pr - 1.25*mod;      // root radius
+  orr = pr + mod;          // outer (addendum) radius
+  p = PI*mod;              // circular pitch
+  hp = ((p/2 - backlash)/2 / pr) * 180/PI;   // half tooth angle at pitch, thinned by backlash
+  hroot = hp + 4;
+  htip = max(hp - 4, 1);
+  difference() {
+    union() {
+      cylinder(h = thick, r = rr + 0.2);
+      for (i = [0:N-1]) rotate([0, 0, i*360/N])
+        linear_extrude(thick) polygon([pol(rr,-hroot), pol(orr,-htip), pol(orr,htip), pol(rr,hroot)]);
+    }
+    translate([0, 0, -1]) cylinder(h = thick+2, r = bore/2);
+  }
+}
+
+C = mod*(teeth_p + teeth_g)/2;   // meshing center distance
+
+if (part == "all") {
+  spur(teeth_p);
+  translate([C + explode, 0, 0]) rotate([0, 0, 180/teeth_g]) spur(teeth_g);   // half-tooth offset to interleave
+} else if (part == "pinion") {
+  spur(teeth_p);
+} else if (part == "gear") {
+  spur(teeth_g);
+}
+`
+
+const RACK_PINION_EXEMPLAR = `// SKILL: rack & pinion — a round pinion meshing a straight rack. SAME module; the rack
+// tooth pitch = PI*mod (linear). Mandatory backlash > 0. Pinion rotation -> rack travel.
+
+/* [Kit] */
+part = "all"; // [all, pinion, rack]
+explode = 0; // [0:1:30]
+
+/* [Mesh] */
+mod = 2.5;        // [1:0.5:5]    shared module
+teeth_p = 14;     // [9:1:30]
+rack_teeth = 12;  // [4:1:30]
+thick = 7;        // [3:1:16]
+bore = 5;         // [2:0.5:10]
+backlash = 0.3;   // [0:0.05:0.7] MANDATORY > 0
+$fn = 96;
+
+function pol(r, a) = [r*cos(a), r*sin(a)];
+p = PI*mod;              // pitch
+tw = p/2 - backlash;     // tooth thickness at pitch, thinned by backlash
+
+module pinion() {
+  pr = mod*teeth_p/2; rr = pr - 1.25*mod; orr = pr + mod;
+  hp = (tw/2 / pr) * 180/PI; hroot = hp + 4; htip = max(hp - 4, 1);
+  difference() {
+    union() {
+      cylinder(h = thick, r = rr + 0.2);
+      for (i = [0:teeth_p-1]) rotate([0, 0, i*360/teeth_p]) linear_extrude(thick)
+        polygon([pol(rr,-hroot), pol(orr,-htip), pol(orr,htip), pol(rr,hroot)]);
+    }
+    translate([0, 0, -1]) cylinder(h = thick+2, r = bore/2);
+  }
+}
+
+module rack() {
+  L = rack_teeth*p;
+  base_h = 1.25*mod + 2;
+  translate([0, -base_h, 0]) cube([L, base_h, thick]);
+  for (i = [0:rack_teeth-1]) translate([i*p + p/2, 0, 0]) linear_extrude(thick)
+    polygon([[-(tw/2 + mod), 0], [-tw/2, mod], [tw/2, mod], [(tw/2 + mod), 0]]);
+}
+
+if (part == "all") {
+  pinion();
+  translate([-rack_teeth*p/2, -(mod*teeth_p/2) - mod - explode, 0]) rack();
+} else if (part == "pinion") {
+  pinion();
+} else if (part == "rack") {
+  rack();
+}
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -333,6 +433,50 @@ export const SKILLS = {
       let s =
         '\n\n# Print-in-place hinge\n\nA print-in-place hinge prints fully assembled and FLAT on the bed, then pivots with no assembly. Interleave the two leaves\' knuckles around one pin; make the pin SOLID through one leaf\'s knuckles and give the other leaf\'s knuckles a radial clearance bore = pin_r + gap (one shared gap parameter). Leave the same gap axially between adjacent knuckles. The gap must be >= one nozzle width (~0.3-0.5mm) or the layers fuse and the joint locks up.'
       if (!isLocal) s += '\n\nReference example (two leaves, interleaved knuckles, captive pin, flat on z=0):\n\n' + PIP_HINGE_EXEMPLAR
+      return s
+    },
+  },
+
+  'spur-gear': {
+    id: 'spur-gear',
+    exemplar: SPUR_GEAR_EXEMPLAR,
+    validate(code) {
+      const b = code.match(/backlash\s*=\s*([\d.]+)/)
+      const bl = b ? parseFloat(b[1]) : null
+      const issues = []
+      if (bl === null) issues.push('spur gear must expose a backlash parameter — meshing teeth need flank clearance')
+      else if (bl <= 0) issues.push('spur-gear backlash must be > 0 — zero-backlash teeth jam; use ~0.1-0.4mm')
+      else if (bl > 1) issues.push(`spur-gear backlash ${bl}mm is excessive (loose, rattly) — use ~0.1-0.4mm`)
+      return issues
+    },
+    brokenControl: (code) => code.replace(/backlash\s*=\s*[\d.]+/, 'backlash = 0'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Spur gears\n\nMeshing gears MUST share one module (tooth size) — never two unrelated tooth definitions. Pitch radius = module*teeth/2; the meshing centre distance = module*(teeth_a + teeth_b)/2. ALWAYS thin the teeth by a backlash allowance (~0.1-0.4mm of flank clearance): zero-backlash printed teeth bind and stall. Expose module, tooth counts, thickness, bore, and backlash as parameters. Offset one gear by half a tooth so the teeth interleave in the assembled view.'
+      if (!isLocal) s += '\n\nReference example (pinion + gear, shared module, backlash > 0, flat on z=0):\n\n' + SPUR_GEAR_EXEMPLAR
+      return s
+    },
+  },
+
+  'rack-pinion': {
+    id: 'rack-pinion',
+    exemplar: RACK_PINION_EXEMPLAR,
+    validate(code) {
+      const b = code.match(/backlash\s*=\s*([\d.]+)/)
+      const bl = b ? parseFloat(b[1]) : null
+      const issues = []
+      if (bl === null) issues.push('rack & pinion must expose a backlash parameter — the meshing teeth need flank clearance')
+      else if (bl <= 0) issues.push('rack-pinion backlash must be > 0 — zero-backlash teeth bind; use ~0.1-0.4mm')
+      else if (bl > 1) issues.push(`rack-pinion backlash ${bl}mm is excessive — use ~0.1-0.4mm`)
+      return issues
+    },
+    brokenControl: (code) => code.replace(/backlash\s*=\s*[\d.]+/, 'backlash = 0'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Rack & pinion\n\nA rack & pinion converts pinion rotation into linear travel of a toothed bar. The rack and pinion MUST share one module; the rack tooth pitch is PI*module (linear), and the pinion is an ordinary spur gear of that module. Thin the teeth by a backlash allowance (~0.1-0.4mm) on both — zero backlash binds. Expose module, pinion tooth count, rack length, thickness, bore, and backlash.'
+      if (!isLocal) s += '\n\nReference example (pinion + straight rack, shared module, backlash > 0, flat on z=0):\n\n' + RACK_PINION_EXEMPLAR
       return s
     },
   },
