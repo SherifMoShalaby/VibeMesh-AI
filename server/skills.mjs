@@ -363,6 +363,67 @@ linear_extrude(height = free_h, twist = 360*turns, convexity = ceil(turns*2))
   translate([coil_d/2, 0, 0]) circle(d = wire_d);
 `
 
+const FASTENER_SEAT_EXEMPLAR = `// SKILL: threaded-fastener seat — holes/pockets sized for STANDARD hardware, not guesses.
+// Pick the screw; the standard table sets the clearance Ø (loose shank), the heat-set
+// insert pocket Ø, and the hex nut trap. Wrong sizes = a screw that won't pass, or strips.
+
+/* [Fastener] */
+screw = "M3"; // [M2.5, M3, M4, M5]
+seat = "all"; // [all, clearance, insert, nut_trap]
+$fn = 48;
+
+// metric hardware (mm): [clearance Ø (close fit), heat-set insert pocket Ø, nut across-flats, nut thickness]
+tbl = screw == "M2.5" ? [2.9, 3.5, 5.0, 2.0]
+    : screw == "M3"   ? [3.4, 4.0, 5.5, 2.4]
+    : screw == "M4"   ? [4.5, 5.6, 7.0, 3.2]
+    :                   [5.5, 6.4, 8.0, 4.0];   // M5
+clear_d = tbl[0]; insert_d = tbl[1]; nut_af = tbl[2]; nut_t = tbl[3];
+
+block = 14;
+module pad() translate([-block/2, -block/2, 0]) cube([block, block, 8]);
+
+module clearance() difference() {            // screw shank passes freely
+  pad();
+  translate([0, 0, -1]) cylinder(h = 10, d = clear_d);
+}
+module insert() difference() {               // heat-set insert pocket + lead-in chamfer
+  pad();
+  translate([0, 0, 2]) cylinder(h = 7, d = insert_d);
+  translate([0, 0, 8 - 1.2]) cylinder(h = 1.3, d1 = insert_d, d2 = insert_d + 1.4);
+}
+module nut_trap() difference() {             // captive hex nut + screw clearance through it
+  pad();
+  translate([0, 0, -1]) cylinder(h = 10, d = clear_d);
+  translate([0, 0, -0.1]) cylinder(h = nut_t, d = nut_af / cos(30), $fn = 6);
+}
+
+if (seat == "all") { clearance(); translate([block+4, 0, 0]) insert(); translate([2*(block+4), 0, 0]) nut_trap(); }
+else if (seat == "clearance") clearance();
+else if (seat == "insert") insert();
+else if (seat == "nut_trap") nut_trap();
+`
+
+const BEARING_POCKET_EXEMPLAR = `// SKILL: bearing pocket (608) — a seat for a standard 608 skate bearing (OD 22, ID 8,
+// W 7 mm). Pocket Ø = OD + fit; a shoulder stops it at depth; a relief bore (> inner-race
+// Ø, < OD) clears the rotating inner race so the seat never rubs it.
+
+/* [Bearing 608] */
+od = 22;          // outer Ø — 608 standard
+id = 8;           // inner Ø (axle)
+w = 7;            // width
+fit = 0.1;        // [0:0.05:0.4]  press(0) .. slip(0.2) into the pocket
+shoulder = 1.5;   // [1:0.5:3]     lip the outer race rests on
+$fn = 96;
+
+body = od + 8;
+module bearing_seat() difference() {
+  cylinder(h = w + shoulder + 2, d = body);
+  translate([0, 0, 2]) cylinder(h = w + 1, d = od + fit*2);                 // the pocket (press/slip fit)
+  translate([0, 0, -1]) cylinder(h = w + shoulder + 4, d = od - 2*shoulder); // relief bore + shoulder lip
+}
+bearing_seat();
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -588,6 +649,46 @@ export const SKILLS = {
       return s
     },
   },
+
+  'threaded-fastener-seat': {
+    id: 'threaded-fastener-seat',
+    exemplar: FASTENER_SEAT_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      if (!/\bM[2-8](?:\.5)?\b/.test(code)) issues.push('threaded-fastener seat must be sized to a STANDARD screw (M2.5/M3/M4/M5…), not an arbitrary hole diameter')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/\bM[2-8](?:\.5)?\b/g, 'Xx'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Threaded-fastener seats\n\nSize fastener features to STANDARD metric hardware, never an arbitrary hole. Three patterns: (1) a clearance hole for the screw shank — close fit ~M3=3.4mm, M4=4.5mm (so the screw passes but does not strip); (2) a heat-set insert pocket sized to the insert OD (~M3=4.0mm, M4=5.6mm) with a lead-in chamfer; (3) a captive hex nut trap (across-flats ~M3=5.5mm, M4=7.0mm) plus a screw clearance through it. Build a hex pocket as a 6-faceted cylinder whose diameter = across_flats / cos(30). Expose the screw size as a parameter and look the dimensions up.'
+      if (!isLocal) s += '\n\nReference example (clearance / heat-set insert / nut-trap, standard sizes, flat on z=0):\n\n' + FASTENER_SEAT_EXEMPLAR
+      return s
+    },
+  },
+
+  'bearing-608-pocket': {
+    id: 'bearing-608-pocket',
+    exemplar: BEARING_POCKET_EXEMPLAR,
+    validate(code) {
+      const m = code.match(/\bod\s*=\s*([\d.]+)/)
+      const od = m ? parseFloat(m[1]) : null
+      const issues = []
+      if (od === null) issues.push('608 bearing pocket must declare the outer Ø (od)')
+      else if (Math.abs(od - 22) > 0.5) issues.push(`608 bearing pocket outer Ø is ${od}mm — the 608 standard is 22mm`)
+      if (!/\bfit\b/.test(code)) issues.push('bearing pocket needs a fit clearance on the pocket Ø (press vs slip), or the bearing will not seat')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/\bod\s*=\s*22\b/, 'od = 30'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Bearing pocket (608)\n\nA 608 skate bearing is OD 22mm, ID 8mm, width 7mm (the de-facto standard for spinners, wheels, lazy-susans). Seat it in a pocket sized OD + a fit allowance (press fit ~0, slip fit ~0.2mm). Add a shoulder/lip the outer race rests on at a defined depth, and a relief bore through the centre that is wider than the rotating inner race but narrower than the OD — so the seat grips the outer race only and never rubs the spinning inner race. Expose the fit as a parameter.'
+      if (!isLocal) s += '\n\nReference example (608 pocket with shoulder + inner-race relief, flat on z=0):\n\n' + BEARING_POCKET_EXEMPLAR
+      return s
+    },
+  },
 }
 
 /** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
@@ -607,6 +708,8 @@ const TRIGGERS = [
   ['ratchet', /\bratchet|\bpawl/i],
   ['coil-spring', /\bcoil[\s-]?spring|\bcompression[\s-]?spring|\bhelical[\s-]?spring|\bcontroller[\s-]?spring|\bbutton[\s-]?spring/i],
   ['leaf-spring', /\bleaf[\s-]?spring|\bcantilever[\s-]?spring|\bflex(?:y|ible)?[\s-]?(?:arm|tab|finger)/i],
+  ['bearing-608-pocket', /\bbearing|\b608\b/i],
+  ['threaded-fastener-seat', /\bscrew|\bbolt\b|\bheat[\s-]?set|\bnut[\s-]?trap|\bthreaded?\b|\bM[2-8](?:\.5)?\b|\btapped\b|\bfasten/i],
 ]
 
 /** Map per-request context to the ordered skill ids to inject.
