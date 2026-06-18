@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { Line, OrbitControls, TransformControls } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useStore } from '../state/store'
@@ -20,6 +20,7 @@ import {
   DMove,
   DZoom,
   DRuler,
+  DShading,
   DGrid,
   DCube,
   DReset,
@@ -81,6 +82,7 @@ export default function Viewport() {
   const setRightTab = useUi((s) => s.setRightTab)
   const setMobileTab = useUi((s) => s.setMobileTab)
   const shading = useUi((s) => s.shading)
+  const setShading = useUi((s) => s.setShading)
   const bedVisible = useUi((s) => s.bedVisible)
   const setBedVisible = useUi((s) => s.setBedVisible)
   const ortho = useUi((s) => s.ortho)
@@ -94,8 +96,10 @@ export default function Viewport() {
 
   const [measurePts, setMeasurePts] = useState<THREE.Vector3[]>([])
   const groupRef = useRef<THREE.Group>(null)
+  const materialRef = useRef<THREE.MeshStandardMaterial>(null)
   const viewApi = useRef<ViewApi | null>(null)
   const bedSelectRef = useRef<HTMLSelectElement>(null)
+  const reduce = usePrefersReducedMotion()
 
   const bed = resolveBed(bedId, customBed)
   const [bedDialog, setBedDialog] = useState(false)
@@ -319,6 +323,7 @@ export default function Viewport() {
     <section className="pane viewport-pane">
     <main
       className="viewport"
+      data-compiling={compileStatus === 'compiling' || undefined}
       onDoubleClick={(e) => {
         // double-click on the 3D canvas (not HUD controls) = fit, like F
         if ((e.target as HTMLElement).tagName === 'CANVAS') doFit()
@@ -328,6 +333,11 @@ export default function Viewport() {
       <div className="viewport-vignette" />
       <div className="model-wrap">
       <Canvas
+        // frameloop='demand' (ADR 0001): render only on invalidate — at idle the rAF stops, so the
+        // glass overlays cost nothing. OrbitControls/TransformControls invalidate on 'change' (damping
+        // stays smooth); every self-driving useFrame rig here (CameraFit, SpawnRig) MUST invalidate()
+        // each tick or it freezes after one frame.
+        frameloop="demand"
         // r3f only builds the camera once (it does NOT swap type when `orthographic` flips
         // post-mount), so key the Canvas on the projection to remount with the correct camera
         // type. ProjectionFit re-frames on (re)mount, which also sets the orthographic zoom.
@@ -378,9 +388,11 @@ export default function Viewport() {
               }}
             >
               <meshStandardMaterial
+                ref={materialRef}
                 color="#b9bdc6"
                 roughness={0.55}
                 metalness={0.12}
+                flatShading={shading === 'flat'}
                 wireframe={shading === 'wireframe'}
                 emissive={selected ? '#8a4012' : hovered && !measureMode ? '#3a2a18' : '#000000'}
                 side={THREE.DoubleSide}
@@ -408,7 +420,8 @@ export default function Viewport() {
           <Line points={[measurePts[0].toArray(), measurePts[1].toArray()]} color="#ff8d49" lineWidth={2} dashed dashScale={2} />
         )}
 
-        <CameraFit tbox={activeTbox} version={fitVersion} />
+        <CameraFit tbox={activeTbox} version={fitVersion} reduce={Boolean(reduce)} />
+        <SpawnRig groupRef={groupRef} matRef={materialRef} version={stlVersion} reduce={Boolean(reduce)} />
         <CaptureRig tbox={tbox} hasModel={Boolean(model)} />
         <ViewRig tbox={activeTbox} apiRef={viewApi} fileBase="viewport" />
         <OrbitControlsZUp />
@@ -455,6 +468,17 @@ export default function Viewport() {
             }}
           >
             <DRuler />
+          </button>
+          <button
+            className={`tool-btn${shading !== 'solid' ? ' active' : ''}`}
+            data-tip={`Shading: ${({ solid: 'Smooth', flat: 'Faceted', edges: 'Edges', wireframe: 'Wireframe' } as const)[shading]}`}
+            aria-label="Cycle shading mode"
+            onClick={() => {
+              const order = ['solid', 'flat', 'edges', 'wireframe'] as const
+              setShading(order[(order.indexOf(shading) + 1) % order.length])
+            }}
+          >
+            <DShading />
           </button>
           <button
             className={`tool-btn${bedVisible ? ' active' : ''}`}
@@ -799,6 +823,7 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
   const gl = useThree((s) => s.gl)
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
   const size = useThree((s) => s.size)
+  const invalidate = useThree((s) => s.invalidate)
 
   useEffect(() => {
     const frame = (dir: THREE.Vector3) => {
@@ -816,6 +841,9 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
         controls.target.copy(target)
         controls.update()
       }
+      // demand mode: a programmatic camera/zoom write does not emit OrbitControls' 'change' event,
+      // so paint it explicitly (covers perspective re-frames AND the ortho zoom write above).
+      invalidate()
     }
     apiRef.current = {
       setView: (v) => {
@@ -842,7 +870,7 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
     return () => {
       apiRef.current = null
     }
-  }, [tbox, camera, gl, controls, size, apiRef])
+  }, [tbox, camera, gl, controls, size, apiRef, invalidate])
 
   return null
 }
@@ -904,25 +932,114 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
   return null
 }
 
-/** Re-frame the camera when a new model arrives. */
-function CameraFit({ tbox, version }: { tbox: TBox; version: number }) {
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
+
+/** matchMedia-backed reduced-motion hook — owned by this module because the CSS @media query
+ *  cannot reach useFrame. When true, every r3f rig snaps to its final state instead of animating. */
+function usePrefersReducedMotion() {
+  const [reduce, setReduce] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const on = () => setReduce(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return reduce
+}
+
+/** Re-frame the camera when a new model arrives — a smooth fly-in (lerp) rather than a hard cut.
+ *  Keyed on `version` (fitVersion) ONLY — never geometry/param changes — so it never fights the
+ *  user's framing mid-iteration. Controls are disabled during the ~450ms flight. Under reduced-motion
+ *  (or an orthographic camera, whose zoom ProjectionFit owns) it snaps. Self-invalidates each tick. */
+function CameraFit({ tbox, version, reduce }: { tbox: TBox; version: number; reduce: boolean }) {
   const camera = useThree((s) => s.camera)
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null
+  const invalidate = useThree((s) => s.invalidate)
   const lastFitted = useRef(-1)
+  const anim = useRef<{ fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTgt: THREE.Vector3; toTgt: THREE.Vector3; t: number } | null>(null)
 
   useEffect(() => {
     if (!tbox || version === lastFitted.current) return
     lastFitted.current = version
     const radius = Math.max(tbox.size.x, tbox.size.y, tbox.size.z, 20)
     const dist = radius * 2.4
-    const target = new THREE.Vector3(tbox.center.x, tbox.center.y, tbox.box.min.z + tbox.size.z / 2)
-    camera.position.set(tbox.center.x + dist * 0.8, tbox.center.y - dist * 0.9, target.z + dist * 0.65)
-    camera.lookAt(target)
-    if (controls) {
-      controls.target.copy(target)
-      controls.update()
+    const toTgt = new THREE.Vector3(tbox.center.x, tbox.center.y, tbox.box.min.z + tbox.size.z / 2)
+    const toPos = new THREE.Vector3(tbox.center.x + dist * 0.8, tbox.center.y - dist * 0.9, toTgt.z + dist * 0.65)
+    if (reduce || camera instanceof THREE.OrthographicCamera) {
+      camera.position.copy(toPos)
+      camera.lookAt(toTgt)
+      if (controls) { controls.target.copy(toTgt); controls.update() }
+      anim.current = null
+      invalidate()
+      return
     }
-  }, [tbox, version, camera, controls])
+    anim.current = { fromPos: camera.position.clone(), toPos, fromTgt: controls?.target.clone() ?? toTgt.clone(), toTgt, t: 0 }
+    invalidate() // controls are gated off on the first animating tick (via state.controls) below
+  }, [tbox, version, camera, controls, reduce, invalidate])
+
+  // read camera/controls from the useFrame `state` arg (not the closure hook value) so the
+  // imperative mutations below aren't flagged by react-hooks/immutability.
+  useFrame((state, dt) => {
+    const a = anim.current
+    if (!a) return
+    const cam = state.camera
+    const ctrls = state.controls as OrbitControlsImpl | null
+    if (a.t === 0 && ctrls) ctrls.enabled = false // gate orbit input for the duration of the flight
+    a.t = Math.min(1, a.t + Math.min(dt, 0.05) / 0.45)
+    const e = easeInOutCubic(a.t)
+    cam.position.lerpVectors(a.fromPos, a.toPos, e)
+    const tgt = a.fromTgt.clone().lerp(a.toTgt, e)
+    cam.lookAt(tgt)
+    if (ctrls) { ctrls.target.copy(tgt); ctrls.update() }
+    state.invalidate() // MANDATORY each animating tick under frameloop='demand' (ADR 0001)
+    if (a.t >= 1) {
+      anim.current = null
+      if (ctrls) ctrls.enabled = true
+    }
+  })
+
+  return null
+}
+
+/** Mesh-spawn: on a new STL (stlVersion) the model group scales 0.92→1 and its material fades 0→1
+ *  over ~320ms so geometry never "pops" in. Mutates the group transform + material via refs ONLY —
+ *  never the disposed geometry prop, never the JSX-controlled emissive/flatShading/wireframe/side. */
+function SpawnRig({ groupRef, matRef, version, reduce }: {
+  groupRef: React.RefObject<THREE.Group | null>
+  matRef: React.RefObject<THREE.MeshStandardMaterial | null>
+  version: number
+  reduce: boolean
+}) {
+  const invalidate = useThree((s) => s.invalidate)
+  const appear = useRef(1)
+
+  useEffect(() => {
+    const m = matRef.current
+    if (reduce) {
+      appear.current = 1
+      groupRef.current?.scale.setScalar(1)
+      if (m) { m.opacity = 1; m.transparent = false; m.needsUpdate = true }
+      return
+    }
+    appear.current = 0
+    groupRef.current?.scale.setScalar(0.92)
+    if (m) { m.transparent = true; m.opacity = 0; m.needsUpdate = true }
+    invalidate()
+  }, [version, reduce, groupRef, matRef, invalidate])
+
+  useFrame((_, dt) => {
+    if (appear.current >= 1) return
+    appear.current = Math.min(1, appear.current + Math.min(dt, 0.05) / 0.32)
+    const e = easeInOutCubic(appear.current)
+    groupRef.current?.scale.setScalar(0.92 + 0.08 * e)
+    const m = matRef.current
+    if (m) m.opacity = e
+    if (appear.current >= 1) {
+      groupRef.current?.scale.setScalar(1)
+      if (m) { m.opacity = 1; m.transparent = false; m.needsUpdate = true } // restore depthWrite for the DoubleSide part
+    }
+    invalidate() // MANDATORY each animating tick under frameloop='demand'
+  })
 
   return null
 }

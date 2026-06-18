@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type Shading = 'solid' | 'edges' | 'wireframe'
+export type Shading = 'solid' | 'flat' | 'edges' | 'wireframe'
 
 // draggable side-panel width clamps (desktop workspace only) — keep each rail usable and
 // leave room for the viewport. Persisted so a resize survives reload.

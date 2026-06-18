@@ -186,3 +186,42 @@ One page. The contract for the four surfaces; anything not specified here is und
 - **Parameters collapsed by default**: when a model is created, each param group starts collapsed
   (seeded once per newly-seen group name, so a manual expand survives slider edits / recompiles and
   a new AI iteration only auto-collapses groups it newly introduces).
+
+## 12. Visual design system & motion contract (2026-06-18 — "Modern Dark Cinema")
+
+Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/CSS) and
+`.claude/skills/vibemesh-3d-motion/SKILL.md` (the `<Canvas>` subtree of `Viewport.tsx`). Plan:
+`docs/UI-UX-UPGRADE-PLAN.md`. Non-negotiable invariants:
+
+- **Tokens are law**: every color/space/radius/shadow/duration/font is a `:root` custom property in
+  `src/styles.css`; accent tints derive from `--accent` via `color-mix()`. Display font is
+  **Bricolage Grotesque** (`--font-display`), UI Hanken Grotesk, mono IBM Plex Mono. Never reintroduce
+  Space Grotesk or Inter (both banned by the frontend-design anti-slop gate).
+- **Glass = viewport overlays only**: `backdrop-filter` is permitted ONLY on the floating canvas chrome
+  (`.tool-rail`, `.hud-bar`, `.assembly-chip`, `.perf-chip`, `.sel-bar`) via the `--glass-1/2/3` tiers;
+  blur is capped at 8px with no `saturate()`. Side panes stay solid `--panel`. Text on glass uses
+  `--text-dim` or lighter (≥4.5:1 over a bright model behind). `body.perf-lite` (low-power /
+  `prefers-reduced-transparency`) and `@supports not (backdrop-filter)` drop blur to opaque —
+  `.perf-lite` is also the field rollback flag for the glass system.
+- **`[data-busy]` animation gate**: `busy = generating || compileStatus==='compiling' || slicing` is
+  reflected on the `.app` root. Decorative entrance/cascade animations are gated
+  `.app:not([data-busy])` so they never compete with the main-thread STL parse. The ONLY loaders that
+  run while busy are the status-dot/`tabpulse` pulses and the `.viewport[data-compiling]` compile ring.
+- **Motion discipline**: DOM motion uses Framer Motion (discrete transitions only — entrances, layout,
+  press, modals; never continuous loops) and obeys `useReducedMotion()`; canvas motion stays inside
+  `useFrame`. transform+opacity only — the sole height exception is param-group collapse
+  (`grid-template-rows: 1fr↔0fr`). Reduced-motion is honored on BOTH surfaces: the CSS
+  `@media (prefers-reduced-motion)` block AND the `usePrefersReducedMotion` hook every r3f rig reads
+  (the CSS query cannot reach `useFrame`); the JS smooth-scroll is `matchMedia`-guarded.
+- **3D scene (ADR `docs/adr/0001-frameloop-demand.md`)**: the `<Canvas>` runs `frameloop='demand'` — at
+  idle the rAF stops so glass is free. **Every self-driving `useFrame` rig MUST call
+  `state.invalidate()` each tick** or it freezes after one frame. Camera fly-in keys on `fitVersion`
+  ONLY (never geometry/params), disables OrbitControls during the ~450ms flight, snaps under
+  reduced-motion / orthographic. Mesh spawn keys on `stlVersion`, lerps group scale 0.92→1 + material
+  opacity 0→1 via refs ONLY (never clones the disposed geometry, never clobbers the JSX-controlled
+  `emissive`/`flatShading`/`wireframe`/`side`), and restores `transparent=false` at settle. Ortho
+  `camera.zoom` writes need an explicit `invalidate()`. `CaptureRig` renders via synchronous
+  `gl.render` and is frameloop-agnostic — keep it that way.
+- **Deferred (not yet implemented)**: drei `<Environment>` IBL (needs a self-hosted HDRI under
+  `public/` — do not ship the remote drei CDN dependency into this local-first app) and
+  `<ContactShadows>` grounding; CSS ambient blobs. See ADR 0001 §5 / plan Phase 3.
