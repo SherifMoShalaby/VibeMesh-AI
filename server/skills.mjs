@@ -173,7 +173,6 @@ leaf_h = 3;       // [2:0.5:6]
 knuckles = 5;     // [3:2:9]
 pin_r = 2.5;      // [1.5:0.25:5]
 gap = 0.45;       // [0.3:0.05:0.7]   radial + axial print clearance (>= one nozzle width)
-$fn = 48;
 
 bore = pin_r + gap;       // free-running clearance on the moving leaf (shared)
 kr = bore + 1.8;          // knuckle outer radius
@@ -215,7 +214,6 @@ teeth_g = 24;     // [10:1:60]
 thick = 6;        // [3:1:14]
 bore = 5;         // [2:0.5:10]
 backlash = 0.25;  // [0:0.05:0.6] MANDATORY > 0 — tooth-flank clearance
-$fn = 96;
 
 function pol(r, a) = [r*cos(a), r*sin(a)];
 
@@ -263,7 +261,6 @@ rack_teeth = 12;  // [4:1:30]
 thick = 7;        // [3:1:16]
 bore = 5;         // [2:0.5:10]
 backlash = 0.3;   // [0:0.05:0.7] MANDATORY > 0
-$fn = 96;
 
 function pol(r, a) = [r*cos(a), r*sin(a)];
 p = PI*mod;              // pitch
@@ -319,7 +316,6 @@ bore = 5;         // [2:0.5:10]
 pawl_len = 22;    // [10:1:50]
 pawl_t = 3;       // [2:0.5:6]
 gap = 0.4;        // [0.3:0.05:0.7]  pivot clearance so the pawl swings
-$fn = 96;
 
 r_in = r_out - tooth_h;
 ta = 360/teeth;
@@ -355,7 +351,6 @@ coil_d = 16;      // [8:1:40]    mean coil diameter
 wire_d = 3;       // [1.6:0.2:6] wire thickness (>= 2 perimeters)
 turns = 6;        // [3:1:14]
 pitch = 6;        // [3:0.5:14]  rise per turn — MUST be > wire_d or the coils fuse
-$fn = 40;
 
 free_h = turns*pitch;
 // helical sweep: a wire circle offset to the coil radius, extruded up while twisting
@@ -370,7 +365,6 @@ const FASTENER_SEAT_EXEMPLAR = `// SKILL: threaded-fastener seat — holes/pocke
 /* [Fastener] */
 screw = "M3"; // [M2.5, M3, M4, M5]
 seat = "all"; // [all, clearance, insert, nut_trap]
-$fn = 48;
 
 // metric hardware (mm): [clearance Ø (close fit), heat-set insert pocket Ø, nut across-flats, nut thickness]
 tbl = screw == "M2.5" ? [2.9, 3.5, 5.0, 2.0]
@@ -413,7 +407,6 @@ id = 8;           // inner Ø (axle)
 w = 7;            // width
 fit = 0.1;        // [0:0.05:0.4]  press(0) .. slip(0.2) into the pocket
 shoulder = 1.5;   // [1:0.5:3]     lip the outer race rests on
-$fn = 96;
 
 body = od + 8;
 module bearing_seat() difference() {
@@ -440,7 +433,6 @@ num_planets = 4;    // [3:1:6]
 thick = 6;          // [3:1:12]
 bore = 4;           // [2:0.5:8]
 backlash = 0.2;     // [0:0.05:0.5] MANDATORY > 0
-$fn = 72;
 
 teeth_ring = teeth_sun + 2*teeth_planet;   // concentricity
 assert((teeth_sun + teeth_ring) % num_planets == 0,
@@ -475,6 +467,63 @@ if (part == "all") {
 } else if (part == "sun") spur(teeth_sun, true);
 else if (part == "planet") spur(teeth_planet, true);
 else if (part == "ring") ring();
+`
+
+const GT2_PULLEY_EXEMPLAR = `// SKILL: GT2 timing pulley — for 2mm-pitch GT2 belt. Pitch Ø = teeth*pitch/PI. Tooth count
+// sets the ratio; flanges keep the belt on; a bore fits the motor shaft (add a set-screw if
+// needed). Belt teeth are approximated as rounded grooves at the 2mm pitch around the rim.
+
+/* [Pulley] */
+teeth = 20;       // [16:1:60]
+bore = 5;         // [3:0.5:8]
+belt_w = 6;       // [6:1:12]   GT2-6 belt
+flange = 1;       // [0.6:0.1:2] rim that retains the belt
+
+pitch = 2;                  // GT2 standard (mm)
+pd = teeth*pitch/PI;        // pitch diameter
+groove = 0.95;              // belt-tooth groove radius
+
+module pulley() difference() {
+  union() {
+    cylinder(h = belt_w, r = pd/2 + 0.4);                               // toothed body
+    cylinder(h = flange, r = pd/2 + 1.6);                               // bottom flange
+    translate([0, 0, belt_w - flange]) cylinder(h = flange, r = pd/2 + 1.6);  // top flange
+  }
+  for (i = [0:teeth-1]) rotate([0, 0, i*360/teeth]) translate([pd/2 + 0.4, 0, -1])
+    cylinder(h = belt_w + 2, r = groove);                               // belt-tooth grooves
+  translate([0, 0, -1]) cylinder(h = belt_w + 2, r = bore/2);           // shaft bore
+}
+pulley();
+`
+
+const HERRINGBONE_EXEMPLAR = `// SKILL: herringbone gear — two mirrored helical halves (a chevron). The opposed helix
+// angles cancel axial thrust (unlike a single helical gear) while meshing smoother and
+// quieter than a straight spur. Still one shared module + mandatory backlash > 0.
+
+/* [Gear] */
+mod = 2;          // [1:0.5:4]   shared module
+teeth = 20;       // [10:1:50]
+thick = 10;       // [6:1:24]
+bore = 5;         // [2:0.5:10]
+helix = 25;       // [10:1:40]   twist per half (deg) — the chevron angle
+backlash = 0.25;  // [0:0.05:0.6] MANDATORY > 0
+
+function pol(r, a) = [r*cos(a), r*sin(a)];
+pr = mod*teeth/2; rr = pr - 1.25*mod; orr = pr + mod;
+hp = ((PI*mod/2 - backlash)/2 / pr) * 180/PI; hroot = hp + 4; htip = max(hp - 4, 1);
+
+module half(tw, h) union() {
+  cylinder(h = h, r = rr + 0.2);
+  for (i = [0:teeth-1]) rotate([0, 0, i*360/teeth]) linear_extrude(h, twist = tw, slices = 20)
+    polygon([pol(rr,-hroot), pol(orr,-htip), pol(orr,htip), pol(rr,hroot)]);
+}
+difference() {
+  union() {
+    half(helix, thick/2);
+    translate([0, 0, thick/2]) rotate([0, 0, helix]) half(-helix, thick/2);   // mirror twist -> chevron, aligned at the seam
+  }
+  translate([0, 0, -1]) cylinder(h = thick + 2, r = bore/2);
+}
 `
 
 export const SKILLS = {
@@ -766,6 +815,51 @@ export const SKILLS = {
       return s
     },
   },
+
+  'gt2-pulley': {
+    id: 'gt2-pulley',
+    exemplar: GT2_PULLEY_EXEMPLAR,
+    validate(code) {
+      const src = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      const m = src.match(/pitch\s*=\s*([\d.]+)/)
+      const p = m ? parseFloat(m[1]) : null
+      const issues = []
+      if (p === null) issues.push('GT2 pulley must declare the belt pitch')
+      else if (Math.abs(p - 2) > 0.01) issues.push(`GT2 belt pitch is 2mm — got ${p}mm`)
+      if (!/teeth\s*\*\s*pitch\s*\/\s*PI|teeth\s*\*\s*2\s*\/\s*PI|pd\s*=[^\n]*teeth[^\n]*PI/i.test(src)) issues.push('pitch diameter must be teeth*pitch/PI for a GT2 pulley')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/pitch\s*=\s*2\b/, 'pitch = 3'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# GT2 timing pulley\n\nA GT2 pulley drives a 2mm-pitch GT2 belt (the standard on most printers/CNC). Pitch diameter = teeth*2/PI; the tooth count sets the gear ratio. Add a flange (raised rim) on each side to keep the belt tracking, and a bore for the shaft (a set-screw flat/hole if it must not slip). Approximate the belt teeth as rounded grooves spaced at the 2mm pitch around the rim. Expose teeth, bore, and belt width.'
+      if (!isLocal) s += '\n\nReference example (flanged GT2 pulley, 2mm pitch, flat on z=0):\n\n' + GT2_PULLEY_EXEMPLAR
+      return s
+    },
+  },
+
+  'herringbone': {
+    id: 'herringbone',
+    exemplar: HERRINGBONE_EXEMPLAR,
+    validate(code) {
+      const src = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      const b = src.match(/backlash\s*=\s*([\d.]+)/)
+      const bl = b ? parseFloat(b[1]) : null
+      const issues = []
+      if (bl === null || bl <= 0) issues.push('herringbone gear must have backlash > 0')
+      if (!/twist|helix/i.test(src)) issues.push('herringbone needs a helix/twist angle — two mirrored helical halves form the chevron')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/backlash\s*=\s*[\d.]+/, 'backlash = 0'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Herringbone / helical gear\n\nA herringbone gear is two mirrored helical halves (a chevron): the opposed helix angles cancel the axial thrust a single helical gear produces, while meshing smoother and quieter than a straight spur. Build each half with a twisted linear_extrude (one +helix, one -helix), aligned at the seam. Still one shared module across a meshing pair and a mandatory backlash > 0. Expose module, tooth count, thickness, helix angle, and bore.'
+      if (!isLocal) s += '\n\nReference example (mirrored helical halves, backlash > 0, flat on z=0):\n\n' + HERRINGBONE_EXEMPLAR
+      return s
+    },
+  },
 }
 
 /** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
@@ -779,7 +873,9 @@ const TRIGGERS = [
   ['wheel-axle', /\bwheel|\baxle|\broll|\bcaster|\bchassis/i],
   ['rack-pinion', /\brack/i],
   ['planetary', /\bplanetary|\bepicyclic|\bsun[\s-]?gear/i],
+  ['herringbone', /\bherringbone|\bhelical/i],
   ['spur-gear', /\bgear|\bcogs?\b|\bpinion/i],
+  ['gt2-pulley', /\bgt2|\bpulley|\btiming[\s-]?belt|\btiming[\s-]?pulley|\bbelt[\s-]?drive/i],
   ['living-hinge', /\bliving[\s-]?hinge|\bflexure|\bfoldable|\bfold[\s-]?flat/i],
   ['print-in-place-hinge', /\bhinge|\bknuckle|\bpivot/i],
   ['snap-fit', /\bsnap[\s-]?fit|\bsnap[\s-]?on|\bclip|\blatch|\bclasp/i],

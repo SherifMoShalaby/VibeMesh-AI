@@ -22,6 +22,8 @@ const POSITIVE = [
   ['a bracket with M3 screw holes and a captive nut trap', 'threaded-fastener-seat'],
   ['a fidget spinner that holds three 608 bearings', 'bearing-608-pocket'],
   ['a planetary gear reduction for a small motor', 'planetary'],
+  ['a GT2 pulley for a 20-tooth stepper', 'gt2-pulley'],
+  ['a herringbone reduction gear', 'herringbone'],
 ]
 
 const NEGATIVE = [
