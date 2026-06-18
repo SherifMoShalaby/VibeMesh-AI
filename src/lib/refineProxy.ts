@@ -16,6 +16,37 @@ import type { DesignIntent } from '../types'
 
 type Axis = 'x' | 'y' | 'z' | 'max'
 
+/** Absolute buildable envelope for an OCR'd/stated dimension, in mm. A value outside this is a
+ *  mis-read or adversarial number and must never reach the refine proxy or a -D define unbounded
+ *  (bed-fit itself is enforced separately by degenerateReason / bed warnings). */
+const MIN_FEATURE_MM = 0.8
+const MAX_DIM_MM = 1000
+
+/** Validate/clamp the dimensions the model read off the reference BEFORE anything consumes them.
+ *  Drops non-finite / <= 0 values; clamps the rest (unit-normalized) into the buildable envelope.
+ *  Returns the cleaned list + human notes for any value changed or dropped (surfaced in the UI). */
+export function clampStatedDimensions(
+  statedDimensions: DesignIntent['statedDimensions'] | undefined,
+): { dimensions: NonNullable<DesignIntent['statedDimensions']>; notes: string[] } {
+  const out: NonNullable<DesignIntent['statedDimensions']> = []
+  const notes: string[] = []
+  for (const d of statedDimensions ?? []) {
+    if (!d || !Number.isFinite(d.value) || d.value <= 0) {
+      if (d) notes.push(`Ignored an unreadable stated dimension (${d.feature || 'unnamed'}: ${d.value}${d.unit || ''}).`)
+      continue
+    }
+    const mm = toMm(d.value, d.unit || '')
+    if (mm < MIN_FEATURE_MM || mm > MAX_DIM_MM) {
+      const clamped = Math.min(MAX_DIM_MM, Math.max(MIN_FEATURE_MM, mm))
+      notes.push(`Clamped a stated ${d.feature || 'dimension'} of ${mm.toFixed(0)}mm to ${clamped.toFixed(0)}mm (outside the buildable range).`)
+      out.push({ value: clamped, unit: 'mm', feature: d.feature })
+    } else {
+      out.push(d)
+    }
+  }
+  return { dimensions: out, notes }
+}
+
 /** Map a stated-dimension feature name to the bbox axis/axes it constrains. */
 function axesFor(feature: string): Axis[] {
   const f = (feature || '').toLowerCase()
