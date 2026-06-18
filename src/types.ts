@@ -1,5 +1,22 @@
 export type ChatRole = 'user' | 'assistant'
 
+/**
+ * Advisory design-intent the model serializes on the PLAN's `INTENT:` line — a
+ * machine-readable summary of the reasoning it already did (archetype / facet verdict /
+ * kit-or-not / mechanism tags). Drives skill retrieval and the applied-patterns chip;
+ * never a competing output block, never required (all fields optional except `form`).
+ */
+export interface DesignIntent {
+  form: 'single' | 'kit' | 'assembly'
+  archetype?: string
+  facetVerdict?: 'faceted' | 'machined' | 'functional'
+  signatureFeatures?: string[]
+  domainTags?: string[]
+  statedDimensions?: { value: number; unit: string; feature: string }[]
+  ambiguityScore?: 'low' | 'med' | 'high'
+  assumptions?: string[]
+}
+
 export interface ChatImage {
   mediaType: string
   /** base64 payload (no data: prefix) */
@@ -23,6 +40,9 @@ export interface ChatMessage {
   /** ids of the skills that fired for this generation (metadata for the applied-patterns
    *  chip; like skillNote, kept out of `text` so it stays out of model history) */
   appliedSkillIds?: string[]
+  /** the model's parsed design intent for this turn (advisory; versions WITH the code on
+   *  this message, so rollback shows this version's intent or none — never stale) */
+  intent?: DesignIntent
 }
 
 export type ParamKind = 'number' | 'slider' | 'bool' | 'enum' | 'string'

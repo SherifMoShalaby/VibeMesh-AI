@@ -42,8 +42,9 @@
     "bench:interference": "node bench/interference.selftest.mjs",
     "bench:skills": "node bench/skills.selftest.mjs",
     "bench:retrieval": "node bench/retrieval.selftest.mjs",
+    "bench:intent": "tsx bench/intent.selftest.ts",
     "test:pack": "tsx bench/packplates.selftest.ts",
-    "bench:gate": "node bench/interference.selftest.mjs && node bench/skills.selftest.mjs && node bench/retrieval.selftest.mjs && node bench/gate.mjs",
+    "bench:gate": "node bench/interference.selftest.mjs && node bench/skills.selftest.mjs && node bench/retrieval.selftest.mjs && tsx bench/intent.selftest.ts && node bench/gate.mjs",
     "bench:baseline": "node bench/gate.mjs --update-baseline"
   },
   "dependencies": {

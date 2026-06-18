@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { BedSize, ChatMessage, CompileResult, ParamValue, ParamValues, Project, ScadParameter } from '../types'
 import { PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
-import { buildDefines, extractScadBlock, parseParameters } from '../lib/params'
+import { buildDefines, extractIntent, extractScadBlock, parseParameters, stripIntentLine } from '../lib/params'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
@@ -486,7 +486,10 @@ export const useStore = create<VibeState>((set, get) => {
       })
       clearTimeout(genTimer)
       genTimer = undefined
-      const { code, prose, blockCount } = extractScadBlock(full)
+      const { code, prose: rawProse, blockCount } = extractScadBlock(full)
+      // parse the advisory INTENT line, then strip it so the user sees clean PLAN prose
+      const intent = extractIntent(rawProse)
+      const prose = stripIntentLine(rawProse)
 
       // Contract enforcement: the reply MUST contain exactly ONE scad block. On 0
       // or >1 blocks, ask once for a single complete program — Opus 4.8 asks more
@@ -536,6 +539,7 @@ export const useStore = create<VibeState>((set, get) => {
         code: code ?? undefined,
         skillNote,
         appliedSkillIds: appliedSkillIds.length ? appliedSkillIds : undefined,
+        intent: intent ?? undefined,
       }
       setChat([...activeChat(), assistantMsg])
       // teach the loop once per project (UX-AUDIT F9): point at sliders / chat / export

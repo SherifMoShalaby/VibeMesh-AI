@@ -1,4 +1,4 @@
-import type { ParamValue, ParamValues, ScadParameter } from '../types'
+import type { DesignIntent, ParamValue, ParamValues, ScadParameter } from '../types'
 
 const ASSIGN_RE = /^\s*([A-Za-z_$][\w$]*)\s*=\s*([^;]+);\s*(?:\/\/\s*(.*))?$/
 const GROUP_RE = /^\s*\/\*\s*\[([^\]]+)\]\s*\*\/\s*$/
@@ -186,4 +186,58 @@ export function extractScadBlock(text: string): { code: string | null; prose: st
   const blockCount = (text.match(/```(?:scad|openscad)\s*\n/g) || []).length
   const prose = text.replace(re, '').replace(/\n{3,}/g, '\n\n').trim()
   return { code, prose, blockCount }
+}
+
+// the model's advisory `INTENT: {json}` PLAN line — a single non-fenced line of plain JSON
+const INTENT_RE_SRC = '^[ \\t]*INTENT:\\s*(\\{.*\\})[ \\t]*$'
+
+/** Parse the advisory `INTENT:` line from a reply's PROSE (run AFTER extractScadBlock, so it
+ *  never sees the code). Tolerant: JSON-parses in try/catch, validates enums against their
+ *  unions and drops unknown values, never throws. Returns null on absence/garble. The last
+ *  INTENT line wins (a refine reply may echo a prior one). Use stripIntentLine() for display. */
+export function extractIntent(prose: string): DesignIntent | null {
+  const re = new RegExp(INTENT_RE_SRC, 'gm')
+  let match: RegExpExecArray | null = null
+  for (let m = re.exec(prose); m; m = re.exec(prose)) match = m
+  if (!match) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(match[1])
+  } catch {
+    return null
+  }
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | undefined =>
+    typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : undefined
+  const strings = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : undefined
+
+  const form = oneOf(o.form, ['single', 'kit', 'assembly'] as const)
+  if (!form) return null // form is the one required field — without it there is no intent
+  const intent: DesignIntent = { form }
+  if (typeof o.archetype === 'string' && o.archetype.trim()) intent.archetype = o.archetype.trim()
+  const fv = oneOf(o.facetVerdict, ['faceted', 'machined', 'functional'] as const)
+  if (fv) intent.facetVerdict = fv
+  const sig = strings(o.signatureFeatures)
+  if (sig?.length) intent.signatureFeatures = sig
+  const tags = strings(o.domainTags)
+  if (tags?.length) intent.domainTags = tags.map((t) => t.toLowerCase())
+  const amb = oneOf(o.ambiguityScore, ['low', 'med', 'high'] as const)
+  if (amb) intent.ambiguityScore = amb
+  const ass = strings(o.assumptions)
+  if (ass?.length) intent.assumptions = ass
+  if (Array.isArray(o.statedDimensions)) {
+    const dims = o.statedDimensions
+      .filter((d): d is Record<string, unknown> => !!d && typeof d === 'object')
+      .map((d) => ({ value: Number(d.value), unit: String(d.unit ?? ''), feature: String(d.feature ?? '') }))
+      .filter((d) => Number.isFinite(d.value))
+    if (dims.length) intent.statedDimensions = dims
+  }
+  return intent
+}
+
+/** Remove the advisory INTENT line from prose for display — it is metadata, not for the user. */
+export function stripIntentLine(prose: string): string {
+  return prose.replace(new RegExp(INTENT_RE_SRC, 'gm'), '').replace(/\n{3,}/g, '\n\n').trim()
 }
