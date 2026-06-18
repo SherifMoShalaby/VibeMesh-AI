@@ -125,6 +125,7 @@ export const DMove = () => (<D><path d="M12 3v18M3 12h18M8 6l4-3 4 3M8 18l4 3 4-
 export const DRotate = () => (<D><path d="M3.5 9a9 9 0 1 1-.6 5" /><path d="M3 4v5h5" /></D>)
 export const DZoom = () => (<D><circle cx="11" cy="11" r="7" /><path d="M16 16l4 4M9 11h4M11 9v4" /></D>)
 export const DRuler = () => (<D><path d="M3 16h18M6 16v-3M10 16v-5M14 16v-3M18 16v-5" /></D>)
+export const DShading = () => (<D><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" /></D>)
 export const DGrid = () =>(<D><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></D>)
 export const DCube = () => (<D><path d="M12 2.5 21 7v10l-9 4.5L3 17V7l9-4.5Z" /><path d="M3 7l9 4.5L21 7M12 11.5V22" /></D>)
 export const DArrowRight = () => (<D><path d="M5 12h14M13 6l6 6-6 6" /></D>)

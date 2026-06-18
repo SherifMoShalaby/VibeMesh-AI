@@ -16,6 +16,7 @@
   --inset:       #0f1114;
   --stage:       #24272d;
   --stage-2:     #1c1f24;
+  --bg:          var(--gutter); /* semantic alias — consumed by .crash-screen (ErrorBoundary) */
 
   --line:        #2a2e35;
   --line-soft:   #21242a;
@@ -57,8 +58,22 @@
   --ring:     0 0 0 2px var(--gutter), 0 0 0 4px var(--accent);
   --glow:     0 0 0 1px var(--accent-line), 0 0 24px -6px var(--accent-glow);
 
+  /* ── COMPONENT · glass + motion (Modern Dark Cinema) ──────────
+     glass tiers float the viewport overlays over the 3D canvas. blur is CAPPED at 8px and
+     carries NO saturate() (compositor cost over a live WebGL canvas). text-bearing surfaces
+     use the higher-opacity tiers (≥88%) so labels keep 4.5:1 over a bright model behind. */
+  --glass-blur:    8px;
+  --glass-blur-sm: 7px;
+  --glass-edge:    rgba(255,255,255,0.08);
+  --glass-1: color-mix(in srgb, var(--panel) 90%, transparent);     /* perf-chip / assembly-chip (carry text) */
+  --glass-2: color-mix(in srgb, var(--panel) 88%, transparent);     /* hud-bar */
+  --glass-3: color-mix(in srgb, var(--panel-hi) 92%, transparent);  /* sel-bar / floating toolbars */
+  --sh-glass: 0 16px 48px rgba(0,0,0,0.5), 0 3px 12px color-mix(in srgb, var(--accent) 6%, transparent), inset 0 1px 0 var(--glass-edge);
+  --glow-accent: 0 0 18px -4px var(--accent-glow);                  /* primary-CTA + focus glow (one token) */
+  --accent-ambient: color-mix(in srgb, var(--accent) 9%, transparent); /* ambient-blob layer (Phase 3) */
+
   /* ── type ─────────────────────────────────────────────────── */
-  --font-display: 'Space Grotesk', 'Hanken Grotesk', sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Hanken Grotesk', sans-serif;
   --font-ui:      'Hanken Grotesk', system-ui, sans-serif;
   --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
   /* legacy alias kept for any straggler references */
@@ -69,6 +84,7 @@
   --fs-body:  13px;
   --fs-title: 15px;
   --fs-lg:    18px;
+  --fs-h2:    22px;   /* consumed by .crash-card h2 (ErrorBoundary) */
   --fs-brand: 19px;
   --fs-hero:  clamp(34px, 4.4vw, 56px);
 
@@ -149,6 +165,32 @@ input[type='checkbox']:focus-visible,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── MOTION · shared (Modern Dark Cinema, Phase 2) ────────────
+   Entrance keyframes reused by the Framer Motion rigs' reduced-motion fallbacks and by CSS-only
+   reveals. Decorative entrances are gated `.app:not([data-busy])` at the call site so they never
+   compete with an in-flight WASM compile / AI stream. transform+opacity only. */
+@keyframes fade-rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@keyframes modal-rise { from { opacity: 0; transform: translateY(8px) scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* tactile press on every interactive control (transform-only; restores on release) */
+.btn:active:not(:disabled),
+.send-btn:active:not(:disabled),
+.chip-btn:active:not(:disabled),
+.icon-btn-sm:active,
+.tool-btn:active:not(:disabled),
+.ex-chip:active,
+.example-card:active,
+.code-chip:not(:disabled):active,
+.seg button:active,
+.part-tog button:active:not(:disabled),
+.plate-chip:active,
+.panel-tab:active,
+.mm-opt:active,
+.newchat-btn:active { transform: scale(0.97); }
+
+/* primary CTAs carry a soft accent glow at rest so they read as the focal action (not the red stop) */
+.send-btn:not(.stop) { box-shadow: var(--sh-raise), var(--glow-accent); }
 
 /* ── shared atoms ──────────────────────────────────────────── */
 .num  { font-family: var(--font-mono); font-feature-settings: 'tnum' 1, 'zero' 1; letter-spacing: -0.01em; }
@@ -746,6 +788,15 @@ input[type='checkbox']:focus-visible,
 }
 .viewport-vignette { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 140px 26px rgba(0,0,0,0.42); z-index: 1; }
 
+/* compile pulse — the ONE sanctioned loader allowed to run while the canvas is busy: a hairline
+   accent ring on the viewport while openscad-wasm renders. Pure CSS (zero canvas cost). */
+.viewport[data-compiling]::after {
+  content: ''; position: absolute; inset: 0; border-radius: var(--r-md); pointer-events: none; z-index: 2;
+  box-shadow: inset 0 0 0 1px var(--accent-line), inset 0 0 22px -3px var(--accent-glow);
+  animation: compile-pulse 1.5s var(--ease) infinite;
+}
+@keyframes compile-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.85; } }
+
 /* the real react-three-fiber canvas mounts as the model layer */
 .model-wrap { position: absolute; inset: 0; }
 .model-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
@@ -759,10 +810,10 @@ input[type='checkbox']:focus-visible,
   background:
     linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0) 30%),
     repeating-linear-gradient(90deg, rgba(255,255,255,0.014) 0 1px, rgba(0,0,0,0) 1px 3px),
-    var(--panel);
+    var(--glass-3);
   border: 1px solid var(--line-strong);
-  box-shadow: var(--sh-float), inset 0 1px 0 rgba(255,255,255,0.07);
-  backdrop-filter: blur(8px);
+  box-shadow: var(--sh-glass);
+  backdrop-filter: blur(var(--glass-blur-sm));
   z-index: 5;
 }
 .tool-rail .rail-sep { height: 1px; margin: 4px 6px; background: linear-gradient(90deg, transparent, var(--line-strong), transparent); }
@@ -793,12 +844,12 @@ input[type='checkbox']:focus-visible,
   max-width: calc(100% - 24px);
   border-radius: var(--r-lg);
   border: 1px solid var(--line-strong);
-  box-shadow: var(--sh-float);
-  backdrop-filter: blur(12px) saturate(1.15);
+  box-shadow: var(--sh-glass);
+  backdrop-filter: blur(var(--glass-blur));
   background:
     linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0) 16%),
     repeating-linear-gradient(90deg, rgba(255,255,255,0.012) 0 1px, rgba(0,0,0,0) 1px 3px),
-    color-mix(in srgb, var(--panel) 84%, transparent);
+    var(--glass-2);
   overflow-x: auto; overflow-y: hidden; z-index: 5;
   scrollbar-width: none;
 }
@@ -877,8 +928,8 @@ input[type='checkbox']:focus-visible,
   position: absolute; left: var(--s4); top: var(--s4);
   display: flex; flex-direction: column; gap: 1px;
   padding: 8px 12px; border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--panel) 78%, transparent);
-  border: 1px solid var(--line); backdrop-filter: blur(8px); box-shadow: var(--sh-raise); z-index: 6;
+  background: var(--glass-1);
+  border: 1px solid var(--line); backdrop-filter: blur(var(--glass-blur-sm)); box-shadow: var(--sh-raise); z-index: 6;
   max-width: 280px;
 }
 .ac-label { font-size: var(--fs-micro); color: var(--text-dim); font-weight: 600; letter-spacing: 0.04em; }
@@ -902,11 +953,26 @@ input[type='checkbox']:focus-visible,
 
 .perf-chip {
   position: absolute; right: var(--s4); top: var(--s4);
-  font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-dim);
   padding: 7px 11px; border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  border: 1px solid var(--line); backdrop-filter: blur(8px); z-index: 4;
+  background: var(--glass-1);
+  border: 1px solid var(--line); backdrop-filter: blur(var(--glass-blur-sm)); z-index: 4;
   display: flex; gap: 10px; align-items: center;
+}
+
+/* glass fallbacks — when backdrop-filter is unsupported, or on low-power GPUs / reduced-transparency
+   (body.perf-lite, set by the App probe), drop the blur and go fully opaque. .perf-lite doubles as
+   the field rollback flag for the glass system since there is no UI test suite. */
+@supports not (backdrop-filter: blur(1px)) {
+  .tool-rail, .hud-bar, .assembly-chip, .perf-chip, .sel-bar { background: var(--panel); }
+}
+.perf-lite .tool-rail,
+.perf-lite .hud-bar,
+.perf-lite .assembly-chip,
+.perf-lite .perf-chip,
+.perf-lite .sel-bar { backdrop-filter: none; background: var(--panel); }
+@media (prefers-reduced-transparency: reduce) {
+  .tool-rail, .hud-bar, .assembly-chip, .perf-chip, .sel-bar { backdrop-filter: none; background: var(--panel); }
 }
 
 /* selection toolbar — floats above the HUD bar */
@@ -914,8 +980,8 @@ input[type='checkbox']:focus-visible,
   position: absolute; left: 50%; bottom: calc(var(--s4) + 56px); transform: translateX(-50%);
   z-index: 6;
   display: flex; gap: 3px; padding: 4px; border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  border: 1px solid var(--line-strong); box-shadow: var(--sh-float); backdrop-filter: blur(10px);
+  background: var(--glass-3);
+  border: 1px solid var(--line-strong); box-shadow: var(--sh-glass); backdrop-filter: blur(var(--glass-blur));
 }
 .plate-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -957,7 +1023,10 @@ input[type='checkbox']:focus-visible,
 .pg-caret { color: var(--text-faint); display: grid; transition: transform var(--t-fast) var(--ease); }
 .pg-caret svg { width: 12px; height: 12px; }
 .param-group.collapsed .pg-caret { transform: rotate(-90deg); }
-.param-group.collapsed .param-list { display: none; }
+/* animatable collapse via grid-rows (the sanctioned height exception — no display:none jump) */
+.param-list-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--t-med) var(--ease); }
+.param-group.collapsed .param-list-wrap { grid-template-rows: 0fr; }
+.param-list-wrap > .param-list { overflow: hidden; min-height: 0; }
 .pg-title { font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
 .pg-line { flex: 1; height: 1px; background: var(--line-soft); }
 .pg-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-ghost); }
@@ -1149,6 +1218,30 @@ input[type='checkbox']:focus-visible,
 .example-blurb { font-size: var(--fs-micro); color: var(--text-faint); line-height: var(--lh-snug); }
 .example-cta { margin-top: 4px; font-size: var(--fs-micro); color: var(--accent-text); font-weight: 600; }
 
+/* home-screen orchestrated reveal — a one-time top-down cascade on mount (the impeccable
+   page-load pattern). transform+opacity only. Gated under .app:not([data-busy]) so it never runs
+   mid-compile/stream, and hard-disabled under reduced-motion below (animation-delay survives the
+   global reduced-motion rule and would otherwise hide blocks). */
+.app:not([data-busy]) .empty > * { animation: fade-rise 0.4s var(--ease-out) both; }
+.empty > .empty-badge      { animation-delay: 0.03s; }
+.empty > h1                { animation-delay: 0.09s; }
+.empty > .lede             { animation-delay: 0.15s; }
+.empty > .empty-composer   { animation-delay: 0.21s; }
+.empty > .empty-examples   { animation-delay: 0.28s; }
+.empty > .empty-steps      { animation-delay: 0.33s; }
+.empty > .empty-cards-label{ animation-delay: 0.38s; }
+.empty > .example-cards    { animation-delay: 0.42s; }
+.app:not([data-busy]) .empty .example-cards .example-card { animation: fade-rise 0.38s var(--ease-out) both; }
+.empty .example-cards .example-card:nth-child(1) { animation-delay: 0.46s; }
+.empty .example-cards .example-card:nth-child(2) { animation-delay: 0.50s; }
+.empty .example-cards .example-card:nth-child(3) { animation-delay: 0.54s; }
+.empty .example-cards .example-card:nth-child(4) { animation-delay: 0.58s; }
+.empty .example-cards .example-card:nth-child(5) { animation-delay: 0.62s; }
+.empty .example-cards .example-card:nth-child(6) { animation-delay: 0.66s; }
+@media (prefers-reduced-motion: reduce) {
+  .empty > *, .empty .example-cards .example-card { animation: none !important; }
+}
+
 /* ───────────────────── DROPDOWN MENU ───────────────────────── */
 .menu-wrap { position: relative; }
 .menu {
@@ -1188,7 +1281,7 @@ input[type='checkbox']:focus-visible,
 
 /* ───────────────────────── MODAL ───────────────────────────── */
 .scrim { position: fixed; inset: 0; background: rgba(6,7,9,0.62); backdrop-filter: blur(3px); z-index: 70; display: grid; place-items: center; padding: var(--s6); animation: menu-in var(--t-med) var(--ease-out); }
-.modal { width: min(560px, 100%); border-radius: var(--r-xl); background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--sh-modal); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+.modal { width: min(560px, 100%); border-radius: var(--r-xl); background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--sh-modal); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 48px); animation: modal-rise var(--t-med) var(--ease-out); }
 .modal.modal-sm { width: min(440px, 100%); }
 .modal-head { display: flex; align-items: center; gap: var(--s3); padding: var(--s5) var(--s5) var(--s4); border-bottom: 1px solid var(--line-soft); }
 .modal-head .mh-icon { width: 38px; height: 38px; border-radius: var(--r-md); display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent-line); flex-shrink: 0; }

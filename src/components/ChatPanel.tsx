@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
@@ -41,6 +42,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
+  const reduce = useReducedMotion()
 
   const chat = projects.find((p) => p.id === activeId)?.chat ?? []
   // versions rolled past via Restore, recoverable until the next prompt diverges the branch
@@ -102,9 +104,16 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     }
   }, [draftPrompt, setDraftPrompt])
 
+  // new message → smooth scroll it into view (reduced-motion → instant). Streaming tokens keep the
+  // bottom pinned with an INSTANT scroll — smooth-scrolling on every token would stutter.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [chat.length, streamText])
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: (reduce ?? false) ? 'auto' : 'smooth' })
+  }, [chat.length, reduce])
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight })
+  }, [streamText])
 
   // auto-fire one refine pass after the first image-grounded model renders (store
   // sets the flag to this project's id; we wait for canRefine, then let R3F paint).
@@ -282,7 +291,13 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
         {chat.map((msg, i) => {
           if (msg.role === 'user') {
             return (
-              <div key={msg.id} className="msg user">
+              <motion.div
+                key={msg.id}
+                className="msg user"
+                initial={reduce ? false : { opacity: 0, y: 7 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+              >
                 <div className="msg-head">
                   <span className="msg-avatar user"><DUser /></span>
                   <span className="msg-who">You</span>
@@ -296,12 +311,18 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                 ) : (
                   <div className="bubble">{msg.text}</div>
                 )}
-              </div>
+              </motion.div>
             )
           }
           const isCurrent = msg.code === currentCode
           return (
-            <div key={msg.id} className={`msg ai${msg.error ? ' err' : ''}`}>
+            <motion.div
+              key={msg.id}
+              className={`msg ai${msg.error ? ' err' : ''}`}
+              initial={reduce ? false : { opacity: 0, y: 7 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+            >
               <div className="msg-head">
                 <span className="msg-avatar ai"><DSparkFill /></span>
                 <span className="msg-who">Vibemesh-AI</span>
@@ -332,7 +353,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                   <span className="cc-text"><span className="cc-title">Retry</span></span>
                 </button>
               )}
-            </div>
+            </motion.div>
           )
         })}
         {rolledBackVersions > 0 && !generating && (

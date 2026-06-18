@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
@@ -100,6 +101,7 @@ function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle
   const paramValues = useStore((s) => s.paramValues)
   const setParamValue = useStore((s) => s.setParamValue)
   const resetParams = useStore((s) => s.resetParams)
+  const reduce = useReducedMotion()
 
   const groups = useMemo(() => {
     const map = new Map<string, ScadParameter[]>()
@@ -126,23 +128,38 @@ function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle
   return (
     <>
       <div className="panel-scroll">
-        {groups.map(([group, items]) => (
-          <section key={group} className={`param-group${collapsed.has(group) ? ' collapsed' : ''}`}>
-            <button className="param-group-head" onClick={() => onToggle(group)} aria-expanded={!collapsed.has(group)}>
-              <span className="pg-caret">
-                <DChevDown />
-              </span>
-              <span className="pg-title">{group}</span>
-              <span className="pg-line" />
-              <span className="pg-count">{items.length}</span>
-            </button>
-            <div className="param-list">
-              {items.map((p) => (
-                <ParamControl key={p.name} param={p} value={paramValues[p.name]} onChange={(v) => setParamValue(p.name, v)} />
-              ))}
-            </div>
-          </section>
-        ))}
+        {groups.map(([group, items]) => {
+          const open = !collapsed.has(group)
+          return (
+            <section key={group} className={`param-group${open ? '' : ' collapsed'}`}>
+              <button className="param-group-head" onClick={() => onToggle(group)} aria-expanded={open}>
+                <span className="pg-caret">
+                  <DChevDown />
+                </span>
+                <span className="pg-title">{group}</span>
+                <span className="pg-line" />
+                <span className="pg-count">{items.length}</span>
+              </button>
+              {/* grid-rows collapse (the sanctioned height exception); items cascade in on expand —
+                  keyed on open state so the stagger replays when the group is opened, never on a
+                  slider drag (the control is controlled by the store, no remount on value change). */}
+              <div className="param-list-wrap">
+                <div className="param-list">
+                  {items.map((p, i) => (
+                    <motion.div
+                      key={`${p.name}|${open ? 'o' : 'c'}`}
+                      initial={reduce ? false : { opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2, delay: reduce ? 0 : Math.min(i * 0.035, 0.2), ease: [0.16, 1, 0.3, 1] }}
+                    >
+                      <ParamControl param={p} value={paramValues[p.name]} onChange={(v) => setParamValue(p.name, v)} />
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )
+        })}
       </div>
       <div className="panel-foot">
         <button className="btn btn-ghost wide" onClick={resetParams} title="Double-click any single slider to reset just that one">

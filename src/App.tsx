@@ -78,6 +78,7 @@ export default function App() {
   const init = useStore((s) => s.init)
   const generating = useStore((s) => s.generating)
   const compileStatus = useStore((s) => s.compileStatus)
+  const slicing = useStore((s) => s.slicing)
   const activeId = useStore((s) => s.activeId)
   const code = useStore((s) => s.code)
   const chatLen = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.chat.length ?? 0)
@@ -107,6 +108,10 @@ export default function App() {
   // and its resizer is dropped; a floating tab at the edge brings it back.
   const lCol = workspace && leftCollapsed
   const rCol = workspace && rightCollapsed
+  // single derived "the canvas/main thread is working" signal. Reflected as [data-busy] on the
+  // app root so CSS can suppress decorative entrance/stagger motion while openscad-wasm parses an
+  // STL or the AI streams — the status-dot/tab pulses are the sanctioned exceptions (kept running).
+  const busy = generating || compileStatus === 'compiling' || slicing
   const showResizerL = resizable && !lCol
   const showResizerR = resizable && !rCol
   const leftPx = resizable ? leftWidth : 300
@@ -149,8 +154,16 @@ export default function App() {
     document.title = generating ? '⌛ AI drafting… · Vibemesh-AI' : compileStatus === 'compiling' ? '⚙ Rendering… · Vibemesh-AI' : IDLE_TITLE
   }, [generating, compileStatus])
 
+  // low-power / reduced-transparency probe → body.perf-lite drops backdrop-blur on the glass
+  // surfaces (cheap, opaque fallback). Runs once; .perf-lite is also the manual rollback flag.
+  useEffect(() => {
+    const lowPower = (navigator.hardwareConcurrency ?? 8) <= 4
+    const reducedTransparency = window.matchMedia?.('(prefers-reduced-transparency: reduce)').matches
+    if (lowPower || reducedTransparency) document.body.classList.add('perf-lite')
+  }, [])
+
   return (
-    <div className={`app${isMobile ? ' is-mobile' : ''}${isHome ? ' is-home' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full">
+    <div className={`app${isMobile ? ' is-mobile' : ''}${isHome ? ' is-home' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full" data-busy={busy || undefined}>
       <TopBar />
       <ErrorBoundary>
         <div
