@@ -222,6 +222,9 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   `emissive`/`flatShading`/`wireframe`/`side`), and restores `transparent=false` at settle. Ortho
   `camera.zoom` writes need an explicit `invalidate()`. `CaptureRig` renders via synchronous
   `gl.render` and is frameloop-agnostic — keep it that way.
-- **Deferred (not yet implemented)**: drei `<Environment>` IBL (needs a self-hosted HDRI under
-  `public/` — do not ship the remote drei CDN dependency into this local-first app) and
-  `<ContactShadows>` grounding; CSS ambient blobs. See ADR 0001 §5 / plan Phase 3.
+- **3D grounding**: studio IBL is shipped via the `StudioEnvironment` rig — a PMREM env map from
+  three's procedural `RoomEnvironment` (local-first; no HDRI/CDN) applied as `scene.environment`
+  (intensity ~0.35), nulled by `CaptureRig` during refine shoots so reflections can't skew the
+  self-critique. `<ContactShadows>` was evaluated and dropped (no contrast on the `#2f3236` stage;
+  the bed grid + ghost plate already ground the model). CSS ambient blobs remain optional/deferred.
+  See ADR 0001 §5.
