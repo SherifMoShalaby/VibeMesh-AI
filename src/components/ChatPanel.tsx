@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
-import { dimDiscrepancies } from '../lib/refineProxy'
+import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
 import { estHistoryTokens, historyBudgetTokens, type ProviderInfo } from '../lib/api'
 import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
@@ -113,7 +113,11 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     // the prompt (not opinion, fix first); the image self-critique is the advisory tie-breaker.
     // When there are no stated dims / all within tolerance, the visual critique is the signal.
     const latestIntent = [...chat].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
-    const geo = dimDiscrepancies(modelDims, latestIntent?.statedDimensions)
+    // validate/clamp the model-read dimensions before they drive the proxy (a mis-read 99999mm
+    // must not push the refine toward an unbuildable size); surface any clamp to the user.
+    const { dimensions: safeDims, notes: clampNotes } = clampStatedDimensions(latestIntent?.statedDimensions)
+    if (clampNotes.length) flashAttachNote(clampNotes[0])
+    const geo = dimDiscrepancies(modelDims, safeDims)
     const geoBlock = geo.length
       ? `GEOMETRIC CHECK — an independent measurement of the current render against your reference's stated dimensions. These are facts, not opinions; FIX THEM FIRST:\n${geo.map((g) => `- ${g}`).join('\n')}\n\n`
       : ''
