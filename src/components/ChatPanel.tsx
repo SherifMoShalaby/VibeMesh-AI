@@ -20,6 +20,14 @@ const SKILL_LABELS: Record<string, string> = {
   'kit-baseplate': 'Kit baseplate',
 }
 const skillLabel = (id: string) => SKILL_LABELS[id] ?? id.replace(/-/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+// the addable mechanism skills (mirrors the server/skills.mjs registry keys) for the chip's
+// "+ add" correction control; kit-baseplate is excluded (it is the multi-part baseplate, not
+// a mechanism the user picks here).
+const ALL_SKILL_IDS = [
+  'wheel-axle', 'living-hinge', 'leaf-spring', 'snap-fit', 'print-in-place-hinge',
+  'spur-gear', 'rack-pinion', 'ratchet', 'coil-spring', 'threaded-fastener-seat',
+  'bearing-608-pocket', 'planetary', 'gt2-pulley', 'herringbone',
+]
 
 export default function ChatPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
   const projects = useStore((s) => s.projects)
@@ -27,6 +35,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const generating = useStore((s) => s.generating)
   const streamText = useStore((s) => s.streamText)
   const sendPrompt = useStore((s) => s.sendPrompt)
+  const regenerateWithSkills = useStore((s) => s.regenerateWithSkills)
   const abortGeneration = useStore((s) => s.abortGeneration)
   const health = useStore((s) => s.health)
   const healthLoaded = useStore((s) => s.healthLoaded)
@@ -382,15 +391,46 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                       {msg.intent?.form ?? 'design'}
                       {msg.intent?.facetVerdict ? ` · ${msg.intent.facetVerdict}` : ''}
                     </span>
-                    {(msg.appliedSkillIds?.length ?? 0) > 0 ? (
-                      <span className="ap-skills">
-                        {msg.appliedSkillIds!.map((id) => (
-                          <span key={id} className="ap-skill">{skillLabel(id)}</span>
-                        ))}
-                      </span>
-                    ) : (
-                      <span className="ap-meta">no mechanism skills applied</span>
-                    )}
+                    {(() => {
+                      const applied = msg.appliedSkillIds ?? []
+                      // editing only on the current model + when idle: a correction regenerates
+                      const editable = isCurrent && !generating
+                      const addable = ALL_SKILL_IDS.filter((id) => !applied.includes(id))
+                      return (
+                        <span className="ap-skills">
+                          {applied.map((id) => (
+                            <span key={id} className="ap-skill">
+                              {skillLabel(id)}
+                              {editable && (
+                                <button
+                                  className="ap-x"
+                                  title={`Remove "${skillLabel(id)}" and regenerate`}
+                                  onClick={() => void regenerateWithSkills(msg.id, applied.filter((x) => x !== id))}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          {applied.length === 0 && !editable && <span className="ap-meta">no mechanism skills applied</span>}
+                          {editable && addable.length > 0 && (
+                            <select
+                              className="ap-add"
+                              value=""
+                              title="Add a mechanism pattern and regenerate"
+                              onChange={(e) => {
+                                if (e.target.value) void regenerateWithSkills(msg.id, [...applied, e.target.value])
+                              }}
+                            >
+                              <option value="">+ pattern</option>
+                              {addable.map((id) => (
+                                <option key={id} value={id}>{skillLabel(id)}</option>
+                              ))}
+                            </select>
+                          )}
+                        </span>
+                      )
+                    })()}
                   </span>
                 </div>
               )}

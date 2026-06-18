@@ -113,6 +113,9 @@ interface VibeState {
   sendPrompt: (text: string, images?: ChatMessage['images'], action?: string) => Promise<void>
   /** re-run the last user prompt after a failed generation (drops the trailing error reply) */
   retryLast: () => Promise<void>
+  /** correct the applied-patterns chip: regenerate the current design with skill retrieval
+   *  OVERRIDDEN by `skillIds` (selectSkills skipped for that turn). Advisory — never blocks. */
+  regenerateWithSkills: (msgId: string, skillIds: string[]) => Promise<void>
   abortGeneration: () => void
   setParamValue: (name: string, value: ParamValue) => void
   /** select a multi-part piece (or 'all'): compiles immediately (no slider debounce) and
@@ -456,7 +459,7 @@ export const useStore = create<VibeState>((set, get) => {
   const MAX_AUTO_FIX = 2
 
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
-  async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0) {
+  async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0, opts: { skillIds?: string[] } = {}) {
     set({ generating: true, streamText: '' })
     abortController = new AbortController()
     const ctrl = abortController
@@ -485,7 +488,9 @@ export const useStore = create<VibeState>((set, get) => {
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
-        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent },
+        // opts.skillIds (from the applied-patterns chip's correction) OVERRIDES retrieval
+        // for this turn — the server assembler injects exactly those fragments, no selectSkills.
+        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent, skillIds: opts.skillIds },
         onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds },
       })
       clearTimeout(genTimer)
@@ -508,7 +513,7 @@ export const useStore = create<VibeState>((set, get) => {
             ? 'Your last reply contained no OpenSCAD code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program, per the response format.'
             : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
         setChat([...activeChat(), { id: newId(), role: 'user', text: nudge, action: 'Fix format' }])
-        await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1)
+        await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1, opts)
         return
       }
 
@@ -580,7 +585,7 @@ export const useStore = create<VibeState>((set, get) => {
         if (canRepair && !compileResult.ok && compileResult.error && compileResult.error !== 'superseded' && compileResult.error !== 'empty') {
           const fixText = buildAutoFixPrompt(compileResult.error)
           setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
-          await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1)
+          await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
         } else if (compileResult.ok) {
           const params = get().params
           const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
@@ -599,7 +604,7 @@ export const useStore = create<VibeState>((set, get) => {
               parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly/mechanism problems, then return the corrected complete program:\n${assembly.map((i) => `- ${i}`).join('\n')}`)
             const fixText = parts.join('\n\n')
             setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
-            await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1)
+            await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
           } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
             // off-bed single part → deterministic drop-to-bed (no AI turn). The export
             // bakes meshTransform, so the exported/printed part sits flat on z=0. This also
@@ -867,6 +872,19 @@ export const useStore = create<VibeState>((set, get) => {
       const lastUser = chat[end - 1]
       setChat(chat.slice(0, end))
       await runGeneration({ text: lastUser.text, action: lastUser.action })
+    },
+
+    regenerateWithSkills: async (_msgId, skillIds) => {
+      if (get().generating) return
+      const labels = skillIds.length ? skillIds.join(', ') : null
+      const text = labels
+        ? `Regenerate the current model using exactly these mechanism patterns: ${labels}. Keep the design otherwise the same.`
+        : `Regenerate the current model with NO mechanism-skill patterns. Keep the design otherwise the same.`
+      // a marker user turn (chip shows an 'Adjust patterns' tag), then generate with the
+      // corrected skillIds OVERRIDING retrieval for this turn. Shares the generating guard +
+      // abortController via runGeneration; the new version carries the corrected appliedSkillIds.
+      setChatAndFuture([...activeChat(), { id: newId(), role: 'user', text, action: 'Adjust patterns' }], [])
+      await runGeneration({ text, action: 'Adjust patterns' }, 0, { skillIds })
     },
 
     abortGeneration: () => {
