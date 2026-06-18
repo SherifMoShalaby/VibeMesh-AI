@@ -214,6 +214,9 @@ export interface GenerateContext {
   bed?: { x: number; y: number; z: number; label?: string }
   /** the latest prompt reads as a buildable kit — reinforces the multi-part/connector rules */
   kit?: boolean
+  /** explicit skill ids to inject (server skills registry); takes precedence over `kit`
+   *  when set. Forward-compat for the selectSkills router; unset on the byte-identical path. */
+  skillIds?: string[]
 }
 
 export interface StreamCallbacks {

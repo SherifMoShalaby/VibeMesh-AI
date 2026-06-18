@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
-import { KIT_EXEMPLAR } from './exemplars.mjs'
+import { SKILLS, selectSkills } from './skills.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
 
@@ -370,12 +370,11 @@ export async function testEngine(engine) {
    Each returns when the stream completes; deltas go to onDelta.
    ──────────────────────────────────────────────────────────────── */
 
-/** Per-request context (bed size, kit intent) appended to the system prompt. */
-function contextText(context, engine) {
-  // local models run in a tiny context window (num_ctx); the ~1K-token KIT_EXEMPLAR few-shot
-  // would push their system message past the whole window for exactly the kit prompts that most
-  // need the rules — so keep the short kit instruction but DROP the exemplar on local engines.
-  const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+/** Per-request context appended to the abstract SYSTEM_PROMPT: bed size + the selected
+ *  skill fragments (server/skills.mjs). Generalizes the former hard-coded kit appendix
+ *  into a keyed-skills assembler. Exported so the prompt-assembly snapshot test
+ *  (bench/prompt-snapshot.mjs) can prove the assembly is byte-identical. */
+export function contextText(context, engine) {
   let out = ''
   if (context?.bed) {
     const { x, y, z, label } = context.bed
@@ -383,17 +382,9 @@ function contextText(context, engine) {
       out += `\n\n# Session context\n\nTarget printer bed: ${x} × ${y} × ${z} mm${label ? ` (${label})` : ''}. Every individually printed piece must fit it.`
     }
   }
-  if (context?.kit) {
-    out +=
-      '\n\n# Build as a KIT\n\nThis request is for a buildable kit. Produce SEPARATE connectable parts, not one fused solid: use the part enum (one module per piece), design real inline mating connectors (studs/tubes, pegs/sockets, snaps, axles/bores) with the fit clearance exposed as a parameter, and render each selected piece flat on z=0 in print orientation. EXCEPTION: if a reference image shows a SINGLE object that merely accepts inserted hardware (a bearing pocket, weight bores, screw holes), it is ONE printable solid — model it as a single faithful part and ignore this kit guidance.'
-    if (!isLocal) {
-      // task-routed few-shot: a compile-verified kit in the exact required style. Pattern only —
-      // the model still outputs its own single complete program for the user's request.
-      out +=
-        '\n\nReference example of a buildable kit in the exact required style (part enum, one module per piece, inline connectors where every female size = the male size plus ONE shared clearance parameter, each piece flat on z=0). Follow this STRUCTURE; do not copy it literally — design for what the user asked:\n\n' +
-        KIT_EXEMPLAR
-    }
-  }
+  // append each selected skill's fragment; the skill decides per-engine budget rules
+  // (e.g. the kit skill drops its heavy exemplar on tiny-context local models).
+  for (const id of selectSkills(context)) out += SKILLS[id].fragment(engine)
   return out
 }
 

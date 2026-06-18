@@ -1,0 +1,34 @@
+{
+  "anthropic|kit=false": {
+    "len": 34481,
+    "sha": "a9ebede9c5718a7c"
+  },
+  "anthropic|kit=true": {
+    "len": 39738,
+    "sha": "6873c648b928c51a"
+  },
+  "kimi|kit=false": {
+    "len": 34481,
+    "sha": "a9ebede9c5718a7c"
+  },
+  "kimi|kit=true": {
+    "len": 39738,
+    "sha": "6873c648b928c51a"
+  },
+  "claude-code|kit=false": {
+    "len": 34481,
+    "sha": "a9ebede9c5718a7c"
+  },
+  "claude-code|kit=true": {
+    "len": 39738,
+    "sha": "6873c648b928c51a"
+  },
+  "local:qwen2.5vl:7b|kit=false": {
+    "len": 34481,
+    "sha": "a9ebede9c5718a7c"
+  },
+  "local:qwen2.5vl:7b|kit=true": {
+    "len": 35065,
+    "sha": "85cdc14bcee126b3"
+  }
+}
