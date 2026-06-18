@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { Line, OrbitControls, TransformControls } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
@@ -355,6 +356,7 @@ export default function Viewport() {
         <hemisphereLight args={['#cdd6e0', '#23262b', 0.85]} />
         <directionalLight position={[180, -140, 260]} intensity={1.25} />
         <directionalLight position={[-160, 120, 80]} intensity={0.35} color="#9fb4ff" />
+        <StudioEnvironment />
         {!platesView && <PrintBed x={bed.x} y={bed.y} visible={bedVisible} />}
 
         {platesView && platePlan && <SlicerScene plates={platePlan.plates} geos={sliceGeos} bed={bed} />}
@@ -881,6 +883,38 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
  * regardless of how the user orbited — and the model sees angles a single iso
  * view hides (true proportions, hole/feature counts on each face).
  */
+/** Procedural studio image-based lighting — builds a PMREM env map from three's RoomEnvironment
+ *  (no external HDRI / CDN; local-first) and applies it as scene.environment at a gentle intensity
+ *  so the matte part picks up soft directional ambient fill. Built once (no ongoing loop). Nulled
+ *  during refine captures by CaptureRig so its reflections can't contaminate the self-critique PNGs. */
+function StudioEnvironment() {
+  // read scene/gl via the imperative getter (not the hook value) so the scene mutations below
+  // aren't flagged by react-hooks/immutability.
+  const get = useThree((s) => s.get)
+  useEffect(() => {
+    const { gl, scene, invalidate } = get()
+    const pmrem = new THREE.PMREMGenerator(gl)
+    const room = new RoomEnvironment()
+    const env = pmrem.fromScene(room, 0.04).texture
+    scene.environment = env
+    scene.environmentIntensity = 0.35
+    invalidate()
+    return () => {
+      if (scene.environment === env) scene.environment = null
+      env.dispose()
+      pmrem.dispose()
+      room.traverse((o) => {
+        const m = o as THREE.Mesh
+        if (m.geometry) m.geometry.dispose()
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
+        else mat?.dispose()
+      })
+    }
+  }, [get])
+  return null
+}
+
 function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
@@ -906,6 +940,9 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
       rim.position.set(target.x + radius * 2.2, target.y - radius * 0.6, target.z + radius * 0.35)
       rim.target.position.copy(target)
       scene.add(rim, rim.target)
+      // drop the env map for the shoots so its reflections don't contaminate the self-critique PNGs
+      const prevEnv = scene.environment
+      scene.environment = null
       const shoot = (pos: THREE.Vector3, up: THREE.Vector3) => {
         camera.up.copy(up)
         camera.position.copy(pos)
@@ -920,6 +957,7 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
         shoot(new THREE.Vector3(target.x, target.y, target.z + dist), new THREE.Vector3(0, 1, 0)),
       ].filter((v): v is NonNullable<typeof v> => v !== null)
       scene.remove(rim, rim.target)
+      scene.environment = prevEnv
       camera.up.copy(prevUp)
       camera.position.copy(prevPos)
       camera.quaternion.copy(prevQuat)
