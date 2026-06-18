@@ -227,6 +227,13 @@ export function extractIntent(prose: string): DesignIntent | null {
   if (amb) intent.ambiguityScore = amb
   const ass = strings(o.assumptions)
   if (ass?.length) intent.assumptions = ass
+  // vision fields (P6) — present only on image-grounded requests
+  const src = oneOf(o.sourceType, ['photo', 'drawing', 'orthographic', 'multiview', 'multiobject'] as const)
+  if (src) intent.sourceType = src
+  const flags = strings(o.asymmetryFlags)
+  if (flags?.length) intent.asymmetryFlags = flags
+  const conf = oneOf(o.confidence, ['low', 'med', 'high'] as const)
+  if (conf) intent.confidence = conf
   if (Array.isArray(o.statedDimensions)) {
     const dims = o.statedDimensions
       .filter((d): d is Record<string, unknown> => !!d && typeof d === 'object')
