@@ -579,18 +579,24 @@ export const useStore = create<VibeState>((set, get) => {
           const bed = resolveBed(get().bedId, get().customBed)
           const dims = get().modelDims
           const degenerate = degenerateReason(dims, bed, !isMultiPart)
-          const structural = structuralReport(code, params).issues
-          if (canRepair && (degenerate || structural.length)) {
+          // assembly/mechanism faults = cheap client structural checks PLUS the retrieved
+          // skills' validators (server-side, received via skillReport). The advisory
+          // skillNote already shows them; here they also drive a BOUNDED auto-fix (gated on
+          // the autoRepair toggle + the shared MAX_AUTO_FIX budget, so it can't loop).
+          const assembly = [...structuralReport(code, params).issues, ...skillReport.flatMap((r) => r.issues)]
+          if (canRepair && (degenerate || assembly.length)) {
             const parts: string[] = []
             if (degenerate) parts.push(`The program rendered but the result is not usable: ${degenerate}. Return a corrected complete program with sensible millimeter dimensions.`)
-            if (structural.length)
-              parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly problems, then return the corrected complete program:\n${structural.map((i) => `- ${i}`).join('\n')}`)
+            if (assembly.length)
+              parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly/mechanism problems, then return the corrected complete program:\n${assembly.map((i) => `- ${i}`).join('\n')}`)
             const fixText = parts.join('\n\n')
             setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
             await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1)
           } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
             // off-bed single part → deterministic drop-to-bed (no AI turn). The export
-            // bakes meshTransform, so the exported/printed part sits flat on z=0.
+            // bakes meshTransform, so the exported/printed part sits flat on z=0. This also
+            // catches the case where the auto-fix budget is exhausted with assembly/skill
+            // issues still unfixed — the part still gets dropped onto the bed.
             get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
             set({ compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
           }
