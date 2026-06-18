@@ -20,7 +20,9 @@ const API = process.env.API || 'http://localhost:5175/api/generate'
 const ENGINE = process.env.ENGINE || 'claude-code'
 const EFFORT = process.env.EFFORT || 'high'
 const REFINES = Math.max(0, Number(process.env.REFINES ?? 2))
-const REF = process.env.REF || '/Users/sherif.shalaby/Downloads/pics/a569b73a-4aba-4d2d-96d4-a7fa47da1792.png'
+// Reference image is user-supplied and gitignored (it may be copyrighted, and is large);
+// drop your own at bench/_ref.png, or point REF=<path> at one.
+const REF = process.env.REF || new URL('./_ref.png', import.meta.url).pathname
 const OUT = process.env.OUT || '/tmp/chess-out'
 // max effort makes Opus think for many minutes; the 15-min default is too low for it.
 const GEN_TIMEOUT = Math.max(60_000, Number(process.env.GEN_TIMEOUT_MS) || 900_000)
