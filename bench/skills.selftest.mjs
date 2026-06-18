@@ -29,7 +29,9 @@ for (const [id, skill] of Object.entries(SKILLS)) {
   if (ownIssues.length) { console.error(`  ${id.padEnd(14)} ✗ validator flags its OWN exemplar: ${ownIssues.join('; ')}`); fail++; continue }
   let caught = true
   if (skill.validate) {
-    const broken = skill.exemplar.replace(/\s*\+\s*\w*(fit|clr|clearance|gap)\b/gi, '')
+    // each skill may define how to break its OWN discipline (web too thick, zero hook
+    // overlap, …); else fall back to stripping named clearances (fits/bores).
+    const broken = skill.brokenControl ? skill.brokenControl(skill.exemplar) : skill.exemplar.replace(/\s*\+\s*\w*(fit|clr|clearance|gap)\b/gi, '')
     caught = skill.validate(broken).length > 0
   }
   if (!caught) { console.error(`  ${id.padEnd(14)} ✗ validator did NOT catch the clearance-broken control`); fail++; continue }
