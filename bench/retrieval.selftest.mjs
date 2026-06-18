@@ -19,6 +19,8 @@ const POSITIVE = [
   ['a cable tie with a ratchet and pawl', 'ratchet'],
   ['a button with a compression coil spring under it', 'coil-spring'],
   ['a clothes-peg leaf spring', 'leaf-spring'],
+  ['a bracket with M3 screw holes and a captive nut trap', 'threaded-fastener-seat'],
+  ['a fidget spinner that holds three 608 bearings', 'bearing-608-pocket'],
 ]
 
 const NEGATIVE = [
