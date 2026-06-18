@@ -27,3 +27,6 @@ bench/results/
 # stray local screenshots
 /final-cockpit.png
 /verify-*.png
+
+# user-supplied bench reference image (may be copyrighted / large — not committed)
+bench/_ref.png
