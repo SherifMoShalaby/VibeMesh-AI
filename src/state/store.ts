@@ -5,7 +5,7 @@ import { buildDefines, extractIntent, extractScadBlock, parseParameters, stripIn
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
-import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, type HealthInfo, type SkillIssue } from '../lib/api'
+import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
 import { loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 
@@ -471,7 +471,7 @@ export const useStore = create<VibeState>((set, get) => {
       // bind history to the active engine's context window (token budget), not a fixed count
       const provider = get().health?.providers.find((p) => p.id === engine)
       const budgetTokens = historyBudgetTokens(provider, get().health?.systemTokens)
-      const messages = toApiMessages(activeChat(), { budgetTokens })
+      const messages = toApiMessages(activeChat(), { budgetTokens, maxImages: imageBudgetFor(provider) })
       const bed = resolveBed(get().bedId, get().customBed)
       // anti-hang: abort a truly-stalled stream after GEN_TIMEOUT. Guards ONLY the
       // network stream and is cleared the instant it resolves, so it can never fire

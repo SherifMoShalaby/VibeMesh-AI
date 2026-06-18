@@ -27,6 +27,15 @@ export interface ProviderInfo {
   contextWindow?: number
   /** tokens this engine reserves for its OWN output (subtracted from the history budget) */
   outputReservation?: number
+  /** max image blocks this engine accepts per request (claude-code CAP=4; local non-vision=0).
+   *  toApiMessages drops lowest-priority images (tiles first) before exceeding it. */
+  maxImages?: number
+}
+
+/** Per-engine image cap. Unknown → no cap (Infinity); a non-vision engine reports 0. */
+export function imageBudgetFor(provider: ProviderInfo | undefined): number {
+  if (provider?.maxImages != null) return provider.maxImages
+  return provider?.vision ? 4 : 0
 }
 
 export interface HealthInfo {
@@ -148,10 +157,33 @@ function recentWithinBudget(clean: ChatMessage[], budget: number): ChatMessage[]
   return clean.slice(start)
 }
 
+/** Pick which images survive the per-engine cap. null = no cap (bench/back-compat — don't
+ *  filter). Keeps the pinned reference first, then by role (global > view > tile — tiles drop
+ *  first), then most-recent, up to maxImages. */
+function imagesWithinCap(
+  windowed: ChatMessage[],
+  firstRef: ChatMessage | undefined,
+  lastRefine: ChatMessage | undefined,
+  maxImages: number | undefined,
+): Set<ChatImage> | null {
+  if (maxImages == null || !Number.isFinite(maxImages)) return null
+  const ROLE_RANK: Record<string, number> = { global: 3, view: 2, tile: 1 }
+  const sendable: { img: ChatImage; rank: number; idx: number; pinned: boolean }[] = []
+  windowed.forEach((msg, idx) => {
+    const stale = msg.role === 'user' && msg.action === 'Refine pass' && msg !== lastRefine
+    if (msg.role !== 'user' || !msg.images?.length || stale) return
+    for (const img of msg.images) sendable.push({ img, rank: ROLE_RANK[img.role ?? 'global'] ?? 3, idx, pinned: msg === firstRef })
+  })
+  if (sendable.length <= maxImages) return new Set(sendable.map((s) => s.img))
+  sendable.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.rank - a.rank || b.idx - a.idx)
+  return new Set(sendable.slice(0, Math.max(0, maxImages)).map((s) => s.img))
+}
+
 /** Convert UI chat history into Anthropic messages, keeping code context. With
  *  opts.budgetTokens, history is trimmed by the engine's context-window token budget;
- *  without it, the legacy HISTORY_LIMIT message count applies (back-compat / bench). */
-export function toApiMessages(chat: ChatMessage[], opts?: { budgetTokens?: number }): ApiMessage[] {
+ *  without it, the legacy HISTORY_LIMIT message count applies (back-compat / bench).
+ *  opts.maxImages caps image blocks (drops tiles first); omit for no cap. */
+export function toApiMessages(chat: ChatMessage[], opts?: { budgetTokens?: number; maxImages?: number }): ApiMessage[] {
   const clean = chat.filter((m) => !m.error)
   const recent = opts?.budgetTokens === undefined ? clean.slice(-HISTORY_LIMIT) : recentWithinBudget(clean, opts.budgetTokens)
   // Pin the original reference image to the front: it is GROUND TRUTH for every
@@ -174,6 +206,10 @@ export function toApiMessages(chat: ChatMessage[], opts?: { budgetTokens?: numbe
   // intermediate refine renders to text so the model corrects toward the reference,
   // not toward its own earlier render, and stale shots don't crowd the window.
   const lastRefine = [...windowed].reverse().find((m) => m.role === 'user' && m.action === 'Refine pass' && (m.images?.length ?? 0) > 0)
+  // Enforce the per-engine image cap (e.g. claude-code=4): when the sendable images exceed it,
+  // KEEP the pinned reference first, then by role (global > view > tile — drop tiles first), then
+  // by recency. Returns the set of ChatImage objects to send; null = no cap (bench/back-compat).
+  const keep = imagesWithinCap(windowed, firstRef, lastRefine, opts?.maxImages)
   const messages: ApiMessage[] = []
   for (const msg of windowed) {
     let text = msg.text
@@ -181,8 +217,9 @@ export function toApiMessages(chat: ChatMessage[], opts?: { budgetTokens?: numbe
       text = `${msg.text}\n\n\`\`\`scad\n${msg.code}\n\`\`\``
     }
     const staleRender = msg.role === 'user' && msg.action === 'Refine pass' && msg !== lastRefine
-    if (msg.role === 'user' && msg.images?.length && !staleRender) {
-      const blocks: ApiContentBlock[] = msg.images.map((img) => ({
+    const imgs = msg.images?.length ? (keep ? msg.images.filter((i) => keep.has(i)) : msg.images) : []
+    if (msg.role === 'user' && imgs.length && !staleRender) {
+      const blocks: ApiContentBlock[] = imgs.map((img) => ({
         type: 'image' as const,
         source: { type: 'base64' as const, media_type: img.mediaType, data: img.data },
       }))
