@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
+import { dimDiscrepancies } from '../lib/refineProxy'
 import { estHistoryTokens, historyBudgetTokens, type ProviderInfo } from '../lib/api'
 import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
@@ -107,8 +108,17 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     const plan = committed
       ? `\n\nEarlier you committed this plan / feature inventory:\n"""${committed}"""\nFor EACH distinct feature you named there, state present/faithful in the current render, then fix any that is missing, collapsed, or simplified away.`
       : ''
+    // PRIMARY refine gate (P6): a model-INDEPENDENT geometric check — the render's measured
+    // bbox vs the dimensions the model read off the reference. When it flags something, it LEADS
+    // the prompt (not opinion, fix first); the image self-critique is the advisory tie-breaker.
+    // When there are no stated dims / all within tolerance, the visual critique is the signal.
+    const latestIntent = [...chat].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
+    const geo = dimDiscrepancies(modelDims, latestIntent?.statedDimensions)
+    const geoBlock = geo.length
+      ? `GEOMETRIC CHECK — an independent measurement of the current render against your reference's stated dimensions. These are facts, not opinions; FIX THEM FIRST:\n${geo.map((g) => `- ${g}`).join('\n')}\n\n`
+      : ''
     void sendPrompt(
-      `${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. First list the most important discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
+      `${geoBlock}${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. ${geo.length ? 'After the geometric fixes above, list' : 'First list'} the most important remaining discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
       views,
       'Refine pass',
     )
