@@ -208,6 +208,22 @@ async function generate(engine, messages, context) {
   })
 }
 
+// Rate-limit-aware retry: on a 429 (e.g. Kimi "rate limit hit") back off and retry
+// instead of failing the sample, so a transient limit mid-matrix doesn't zero the run.
+async function generateWithRetry(engine, messages, context, label) {
+  const waits = [15000, 30000, 60000, 120000]
+  for (let attempt = 0; ; attempt++) {
+    const gen = await generate(engine, messages, context)
+    if (gen.error && /rate limit|429|too many requests/i.test(gen.error) && attempt < waits.length) {
+      const w = waits[attempt]
+      console.log(`[bench] ${label} — rate limited, backing off ${w / 1000}s (retry ${attempt + 1}/${waits.length})`)
+      await new Promise((r) => setTimeout(r, w))
+      continue
+    }
+    return gen
+  }
+}
+
 function extractScad(text) {
   const re = /```(?:scad|openscad)?\s*\n([\s\S]*?)```/g
   let code = null
@@ -359,7 +375,7 @@ const median = (nums) => {
  *  rows). Writes the .scad artifact and updates `history` (last sample wins). */
 async function runTask(engine, task, messages, dir, history, label) {
   console.log(`[bench] ${label} — generating…`)
-  const gen = await generate(engine, messages, task.context)
+  const gen = await generateWithRetry(engine, messages, task.context, label)
   if (gen.error) {
     console.log(`[bench] ${label} — GEN FAILED: ${gen.error}`)
     return { task: task.id, genMs: gen.genMs, error: gen.error }
