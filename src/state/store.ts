@@ -481,6 +481,14 @@ export const useStore = create<VibeState>((set, get) => {
       // keyword ("make it bigger") still retrieves the same skill (server prefers its
       // domainTags over the regex). First turn → none → server-side selectSkills from prompt.
       const priorIntent = [...activeChat()].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
+      // coarse first-turn source hint from the latest user turn's image roles (tiles →
+      // multiview, ≥2 globals → multiobject); the model's own sourceType takes over after.
+      const latestImgs = [...activeChat()].reverse().find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)?.images ?? []
+      const sourceHint = latestImgs.some((im) => im.role === 'tile')
+        ? ('multiview' as const)
+        : latestImgs.filter((im) => (im.role ?? 'global') === 'global').length >= 2
+          ? ('multiobject' as const)
+          : undefined
       let skillReport: SkillIssue[] = []
       let appliedSkillIds: string[] = []
       const full = await streamGenerate(engine, messages, {
@@ -490,7 +498,7 @@ export const useStore = create<VibeState>((set, get) => {
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
         // opts.skillIds (from the applied-patterns chip's correction) OVERRIDES retrieval
         // for this turn — the server assembler injects exactly those fragments, no selectSkills.
-        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent, skillIds: opts.skillIds },
+        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent, skillIds: opts.skillIds, sourceHint },
         onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds },
       })
       clearTimeout(genTimer)

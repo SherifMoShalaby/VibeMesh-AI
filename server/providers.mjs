@@ -389,7 +389,29 @@ export function contextText(context, engine) {
   // append each selected skill's fragment; the skill decides per-engine budget rules
   // (e.g. the kit skill drops its heavy exemplar on tiny-context local models).
   for (const id of selectSkills(context)) out += SKILLS[id].fragment(engine)
+  // source-type-routed vision guidance (P6 ws3): the model-emitted sourceType (carried from
+  // the prior turn's intent) takes precedence; on the first image turn the client's coarse
+  // sourceHint (derived from attached image roles) routes it. Text-only requests add nothing.
+  out += visionSourceFragment(context?.intent?.sourceType ?? context?.sourceHint)
   return out
+}
+
+/** Source-type-specific build guidance for image-grounded requests. Routed, NOT always-on —
+ *  a text request or an un-classified single image adds nothing. */
+const VISION_FRAGMENTS = {
+  drawing:
+    '\n\n# Working from a drawing\n\nThe reference is a line drawing / CAD sketch — its lines and LABELED dimensions are exact, so build to the numbers, never eyeball. If several orthographic views are shown, reconcile them into ONE solid (front = width × height, side = depth, top = plan), not separate pieces.',
+  orthographic:
+    '\n\n# Working from orthographic views\n\nThe reference shows orthographic projections of ONE object. Reconcile them into a single solid — front = width × height, side = depth, top = plan — and honor every labeled dimension exactly. Never model the views as separate parts.',
+  multiview:
+    '\n\n# Working from multiple views\n\nThe images are several views of ONE object (a global plus cropped regions, or front/side/top). Reconcile them into ONE coherent solid; use the crops for detail the global is too coarse to show, and do not duplicate a feature visible in two views.',
+  multiobject:
+    '\n\n# Working from multiple objects\n\nThe reference shows several distinct objects. Model EACH as its own part (a multi-part kit with a `part` enum) unless asked for only one — do not fuse them or model just the most prominent.',
+  photo:
+    '\n\n# Working from a photo\n\nThe reference is a photograph — perspective distorts proportions and there are no exact dimensions. Estimate scale from any in-frame reference and state the assumption; prioritize the silhouette and distinctive features over absolute size.',
+}
+export function visionSourceFragment(sourceType) {
+  return (typeof sourceType === 'string' && VISION_FRAGMENTS[sourceType]) || ''
 }
 
 /** Text of the most recent user turn, for prompt-intent skill retrieval. Handles both

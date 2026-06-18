@@ -263,6 +263,10 @@ export interface GenerateContext {
   /** the PRIOR turn's parsed design intent — its domainTags carry mechanism context forward
    *  so a follow-up that drops the keyword ("make it bigger") still retains the skill. */
   intent?: DesignIntent
+  /** coarse first-turn source classification from the attached image roles (tiles → multiview,
+   *  ≥2 globals → multiobject); routes the vision build fragment until the model's own
+   *  sourceType (carried via `intent`) takes over on later turns. */
+  sourceHint?: DesignIntent['sourceType']
 }
 
 /** A skill's advisory verdict on the generated code (server-side, post-generation). */
