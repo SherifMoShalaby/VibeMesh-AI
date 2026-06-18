@@ -15,6 +15,11 @@ export interface DesignIntent {
   statedDimensions?: { value: number; unit: string; feature: string }[]
   ambiguityScore?: 'low' | 'med' | 'high'
   assumptions?: string[]
+  /** vision fields (P6) — set when working from a reference image; route the source-specific
+   *  build fragment and (statedDimensions) feed the model-independent refine proxy + dim clamp. */
+  sourceType?: 'photo' | 'drawing' | 'orthographic' | 'multiview' | 'multiobject'
+  asymmetryFlags?: string[]
+  confidence?: 'low' | 'med' | 'high'
 }
 
 export interface ChatImage {

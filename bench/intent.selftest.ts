@@ -23,6 +23,14 @@ ok(JSON.stringify(v?.domainTags) === '["gear","bearing"]', 'valid: domainTags lo
 ok(v?.ambiguityScore === 'low', 'valid: ambiguityScore=low')
 ok(v?.assumptions?.length === 1, 'valid: assumptions carried')
 
+// 1b. vision fields (P6) — image-grounded INTENT carries sourceType / statedDimensions / etc
+const vision = extractIntent('INTENT: {"form":"single","sourceType":"drawing","statedDimensions":[{"value":80,"unit":"mm","feature":"height"},{"value":"bad"}],"asymmetryFlags":["left arm longer"],"confidence":"high"}')
+ok(vision?.sourceType === 'drawing', 'vision: sourceType=drawing')
+ok(vision?.statedDimensions?.length === 1 && vision.statedDimensions[0].value === 80, 'vision: statedDimensions parsed, non-finite dropped')
+ok(vision?.asymmetryFlags?.length === 1, 'vision: asymmetryFlags carried')
+ok(vision?.confidence === 'high', 'vision: confidence=high')
+ok(extractIntent('INTENT: {"form":"single","sourceType":"hologram"}')?.sourceType === undefined, 'vision: unknown sourceType dropped')
+
 // 2. absent — no INTENT line
 ok(extractIntent('Just a plain plan with no intent line.\nMaking a cube.') === null, 'absent: returns null')
 
