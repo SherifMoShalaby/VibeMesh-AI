@@ -193,6 +193,13 @@ const VP_HISTORY_LIMIT = 30
 // not 90s+90s), while deliberate one-shot exports get extra headroom.
 const RENDER_TIMEOUT_DRAFT = 20_000
 const RENDER_TIMEOUT_EXPORT = 90_000
+// Per-attempt anti-hang backstop for the AI stream. Deliberately a generous ABSOLUTE
+// cap, NOT an idle-on-delta timer: thinking engines (claude-code/Opus) stream NO deltas
+// for minutes during extended thinking, so a delta-reset idle timer would falsely abort
+// them. This only catches a truly-stalled stream (dead connection / crashed server)
+// without cutting a legitimately-slow generation; on fire it surfaces a recoverable
+// error and does NOT auto-retry (a stalled engine usually stalls again).
+const GEN_TIMEOUT = 1_200_000 // 20 min
 
 /** column-major 4×4 from position + XYZ-order euler rotation (radians) */
 function composeMatrix(p: [number, number, number], r: [number, number, number]): number[] {
@@ -452,6 +459,9 @@ export const useStore = create<VibeState>((set, get) => {
   async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0) {
     set({ generating: true, streamText: '' })
     abortController = new AbortController()
+    const ctrl = abortController
+    let genTimedOut = false
+    let genTimer: ReturnType<typeof setTimeout> | undefined
     try {
       const engine = get().engine
       if (!engine) throw new Error('No AI engine is available — connect one (see the engine menu next to Send).')
@@ -460,13 +470,19 @@ export const useStore = create<VibeState>((set, get) => {
       const budgetTokens = historyBudgetTokens(provider, get().health?.systemTokens)
       const messages = toApiMessages(activeChat(), { budgetTokens })
       const bed = resolveBed(get().bedId, get().customBed)
+      // anti-hang: abort a truly-stalled stream after GEN_TIMEOUT. Guards ONLY the
+      // network stream and is cleared the instant it resolves, so it can never fire
+      // during the downstream compile / auto-fix recursion (which awaits child runs).
+      genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, GEN_TIMEOUT)
       const full = await streamGenerate(engine, messages, {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
-        signal: abortController.signal,
+        signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
       })
+      clearTimeout(genTimer)
+      genTimer = undefined
       const { code, prose, blockCount } = extractScadBlock(full)
 
       // Contract enforcement: the reply MUST contain exactly ONE scad block. On 0
@@ -483,6 +499,23 @@ export const useStore = create<VibeState>((set, get) => {
             : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
         setChat([...activeChat(), { id: newId(), role: 'user', text: nudge, action: 'Fix format' }])
         await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1)
+        return
+      }
+
+      // Contract re-asks exhausted (or a local engine that can't honor the format):
+      // surface a clear, recoverable message instead of silently showing prose with no
+      // model. Both cloud engines have been seen to plan correctly but omit the block.
+      if (code === null) {
+        const tries = engine && !engine.startsWith('local:') ? ` after ${MAX_AUTO_FIX + 1} attempts` : ''
+        setChat([
+          ...activeChat(),
+          {
+            id: newId(),
+            role: 'assistant',
+            text: (prose ? prose + '\n\n' : '') + `I couldn't produce a single OpenSCAD code block${tries}. Try rephrasing or simplifying the request, or switch engines.`,
+            error: true,
+          },
+        ])
         return
       }
 
@@ -577,11 +610,26 @@ export const useStore = create<VibeState>((set, get) => {
         }
       }
     } catch (err) {
-      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // Distinguish a timeout-abort from a user Stop: the timeout surfaces a
+        // recoverable error; a user Stop stays silent.
+        if (genTimedOut) {
+          setChat([
+            ...activeChat(),
+            {
+              id: newId(),
+              role: 'assistant',
+              text: `Generation timed out after ${Math.round(GEN_TIMEOUT / 60000)} min — the engine may be overloaded or unreachable. Try again, or switch to a faster engine / lower effort.`,
+              error: true,
+            },
+          ])
+        }
+      } else {
         const message = err instanceof Error ? err.message : String(err)
         setChat([...activeChat(), { id: newId(), role: 'assistant', text: message, error: true }])
       }
     } finally {
+      if (genTimer) clearTimeout(genTimer)
       abortController = null
       set({ generating: false, streamText: '' })
     }
