@@ -401,6 +401,30 @@ function latestUserText(messages) {
   return ''
 }
 
+/** Largest ```scad fenced block in the model's reply (a server-side mirror of the client
+ *  extractor) — used only for the advisory post-generation skill review. */
+export function extractScadBlock(text) {
+  const re = /```(?:scad|openscad)?\s*\n([\s\S]*?)```/g
+  let best = null
+  let len = 0
+  for (const m of String(text).matchAll(re)) if (m[1].length > len) { len = m[1].length; best = m[1].trim() }
+  return best
+}
+
+/** Run the per-request selected skills' validators on the generated code. ADVISORY ONLY —
+ *  never blocks or rewrites generation; returns [{ id, issues }] for skills that flagged
+ *  something, so the client can show the mechanism check alongside the model. */
+export function reviewWithSkills({ context, messages, code }) {
+  if (!code) return []
+  const sel = selectSkills({ ...context, prompt: context?.prompt ?? latestUserText(messages || []) })
+  const report = []
+  for (const id of sel) {
+    const issues = SKILLS[id]?.validate ? SKILLS[id].validate(code) : []
+    if (issues.length) report.push({ id, issues })
+  }
+  return report
+}
+
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
   // seed prompt-intent retrieval from the latest user turn unless the caller pinned skillIds
   const ctx = contextText({ ...context, prompt: context?.prompt ?? latestUserText(messages) }, engine)

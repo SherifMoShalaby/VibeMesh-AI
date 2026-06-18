@@ -332,6 +332,14 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                 <img key={j} className="msg-img" src={`data:${img.mediaType};base64,${img.data}`} alt="reference" />
               ))}
               <div className="msg-body">{msg.text}</div>
+              {msg.skillNote && (
+                <div className="skill-note" title="Verified-skill mechanism check — advisory">
+                  <span className="sn-head">⚠ Mechanism check</span>
+                  {msg.skillNote.split('\n').map((line, j) => (
+                    <div key={j} className="sn-line">{line}</div>
+                  ))}
+                </div>
+              )}
               {msg.code && (
                 <button
                   className={`code-chip${isCurrent ? ' current' : ''}`}

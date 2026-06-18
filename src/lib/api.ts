@@ -219,6 +219,12 @@ export interface GenerateContext {
   skillIds?: string[]
 }
 
+/** A skill's advisory verdict on the generated code (server-side, post-generation). */
+export interface SkillIssue {
+  id: string
+  issues: string[]
+}
+
 export interface StreamCallbacks {
   onDelta: (text: string) => void
   signal?: AbortSignal
@@ -226,13 +232,15 @@ export interface StreamCallbacks {
   /** reasoning-effort level (Claude engines) — low|medium|high|xhigh|max */
   effort?: string
   context?: GenerateContext
+  /** advisory mechanism-check results from the retrieved skills' validators (if any) */
+  onSkillReport?: (report: SkillIssue[]) => void
 }
 
 /** POST /api/generate and consume the SSE stream. Returns the full reply text. */
 export async function streamGenerate(
   engine: string,
   messages: ApiMessage[],
-  { onDelta, signal, model, effort, context }: StreamCallbacks,
+  { onDelta, signal, model, effort, context, onSkillReport }: StreamCallbacks,
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
@@ -268,11 +276,13 @@ export async function streamGenerate(
       if (!line.startsWith('data: ')) continue
       const payload = JSON.parse(line.slice(6)) as
         | { type: 'delta'; text: string }
-        | { type: 'done'; stopReason: string }
+        | { type: 'done'; stopReason?: string; skillReport?: SkillIssue[] }
         | { type: 'error'; message: string }
       if (payload.type === 'delta') {
         full += payload.text
         onDelta(payload.text)
+      } else if (payload.type === 'done') {
+        if (payload.skillReport?.length) onSkillReport?.(payload.skillReport)
       } else if (payload.type === 'error') {
         throw new Error(payload.message)
       }

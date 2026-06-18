@@ -2,7 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyRuntimeSetting, providerStatus, streamChat, testEngine, SYSTEM_PROMPT_TOKENS, UserFacingError } from './providers.mjs'
+import { applyRuntimeSetting, providerStatus, streamChat, testEngine, SYSTEM_PROMPT_TOKENS, UserFacingError, extractScadBlock, reviewWithSkills } from './providers.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
@@ -70,6 +70,7 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
   })
 
   try {
+    let full = ''
     await streamChat({
       engine,
       model: typeof model === 'string' ? model : undefined,
@@ -77,9 +78,13 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
       messages,
       context,
       signal: abort.signal,
-      onDelta: (text) => send({ type: 'delta', text }),
+      onDelta: (text) => { full += text; send({ type: 'delta', text }) },
     })
-    send({ type: 'done' })
+    // advisory: run the retrieved skills' validators on the generated code (never blocks).
+    // Guarded separately so a validator bug can NEVER turn a good generation into an error.
+    let skillReport = []
+    try { skillReport = reviewWithSkills({ context, messages, code: extractScadBlock(full) }) } catch { /* advisory only */ }
+    send({ type: 'done', skillReport })
   } catch (error) {
     if (abort.signal.aborted || error?.name === 'AbortError') {
       res.end()
