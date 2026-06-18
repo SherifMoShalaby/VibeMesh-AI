@@ -475,13 +475,14 @@ export const useStore = create<VibeState>((set, get) => {
       // during the downstream compile / auto-fix recursion (which awaits child runs).
       genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, GEN_TIMEOUT)
       let skillReport: SkillIssue[] = []
+      let appliedSkillIds: string[] = []
       const full = await streamGenerate(engine, messages, {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
-        onSkillReport: (report) => { skillReport = report },
+        onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds },
       })
       clearTimeout(genTimer)
       genTimer = undefined
@@ -534,6 +535,7 @@ export const useStore = create<VibeState>((set, get) => {
         text: prose || 'Here is the model.',
         code: code ?? undefined,
         skillNote,
+        appliedSkillIds: appliedSkillIds.length ? appliedSkillIds : undefined,
       }
       setChat([...activeChat(), assistantMsg])
       // teach the loop once per project (UX-AUDIT F9): point at sliders / chat / export

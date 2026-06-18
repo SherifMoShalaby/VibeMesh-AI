@@ -20,6 +20,9 @@ export interface ChatMessage {
   /** advisory mechanism-check from the retrieved skills' validators — shown in the UI but
    *  deliberately NOT part of `text`, so it never re-enters the model's next-turn history */
   skillNote?: string
+  /** ids of the skills that fired for this generation (metadata for the applied-patterns
+   *  chip; like skillNote, kept out of `text` so it stays out of model history) */
+  appliedSkillIds?: string[]
 }
 
 export type ParamKind = 'number' | 'slider' | 'bool' | 'enum' | 'string'
