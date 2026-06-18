@@ -6,10 +6,20 @@ import { captureViews } from '../lib/capture'
 import { estHistoryTokens, historyBudgetTokens, type ProviderInfo } from '../lib/api'
 import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
-import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh, DChevLeft } from './icons'
+import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh, DChevLeft, DLayers } from './icons'
 
 const MAX_IMAGES = 3
 const IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/
+
+// human labels for the applied-patterns chip; fall back to Title-cased id for any skill
+const SKILL_LABELS: Record<string, string> = {
+  'gt2-pulley': 'GT2 pulley',
+  'bearing-608-pocket': '608 bearing pocket',
+  'print-in-place-hinge': 'Print-in-place hinge',
+  'threaded-fastener-seat': 'Fastener seat',
+  'kit-baseplate': 'Kit baseplate',
+}
+const skillLabel = (id: string) => SKILL_LABELS[id] ?? id.replace(/-/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 
 export default function ChatPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
   const projects = useStore((s) => s.projects)
@@ -354,6 +364,35 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                   </span>
                   {!isCurrent && <span className="cc-restore"><DRestore /> Restore</span>}
                 </button>
+              )}
+              {msg.code && (msg.intent || (msg.appliedSkillIds?.length ?? 0) > 0) && (
+                <div
+                  className="applied-patterns"
+                  title={[
+                    msg.intent?.archetype && `Archetype: ${msg.intent.archetype}`,
+                    msg.intent?.ambiguityScore && `Ambiguity: ${msg.intent.ambiguityScore}`,
+                    msg.intent?.assumptions?.length && `Assumptions:\n${msg.intent.assumptions.map((a) => `• ${a}`).join('\n')}`,
+                  ]
+                    .filter(Boolean)
+                    .join('\n') || undefined}
+                >
+                  <span className="ap-icon"><DLayers /></span>
+                  <span className="ap-text">
+                    <span className="ap-title">
+                      {msg.intent?.form ?? 'design'}
+                      {msg.intent?.facetVerdict ? ` · ${msg.intent.facetVerdict}` : ''}
+                    </span>
+                    {(msg.appliedSkillIds?.length ?? 0) > 0 ? (
+                      <span className="ap-skills">
+                        {msg.appliedSkillIds!.map((id) => (
+                          <span key={id} className="ap-skill">{skillLabel(id)}</span>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="ap-meta">no mechanism skills applied</span>
+                    )}
+                  </span>
+                </div>
               )}
               {msg.error && i === chat.length - 1 && !generating && (
                 <button className="code-chip" title="Run the same prompt again" onClick={() => void retryLast()}>

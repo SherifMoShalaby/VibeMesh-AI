@@ -553,6 +553,22 @@ input[type='checkbox']:focus-visible,
 }
 .skill-note .sn-head { display: block; font-weight: 600; color: var(--warn); margin-bottom: 2px; }
 .skill-note .sn-line { color: var(--text-dim); }
+/* applied-patterns chip — inspectable design intent + skills that fired (advisory metadata) */
+.applied-patterns {
+  display: flex; align-items: flex-start; gap: var(--s2);
+  margin: var(--s2) 0 0 calc(22px + var(--s2));
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-xs);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  font-size: var(--fs-small);
+}
+.applied-patterns .ap-icon { color: var(--accent-text); display: grid; place-items: center; flex-shrink: 0; margin-top: 1px; }
+.applied-patterns .ap-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.applied-patterns .ap-title { color: var(--accent-text); font-weight: 600; text-transform: capitalize; }
+.applied-patterns .ap-skills { display: flex; flex-wrap: wrap; gap: 4px; }
+.applied-patterns .ap-skill { background: var(--raised); color: var(--text-dim); padding: 1px 8px; border-radius: 999px; }
+.applied-patterns .ap-meta { color: var(--text-faint); }
 .code-chip .cc-icon {
   width: 26px; height: 26px; border-radius: var(--r-xs);
   display: grid; place-items: center; flex-shrink: 0;
