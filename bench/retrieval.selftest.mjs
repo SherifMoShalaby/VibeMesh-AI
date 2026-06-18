@@ -67,5 +67,17 @@ const kitOk = kit[0] === 'kit-baseplate' && kit.includes('spur-gear')
 if (!kitOk) fail++
 console.log(`  ${mark(kitOk)} kit + intent → [${kit.join(', ')}]`)
 
+// carry-forward: a follow-up that drops the keyword still retains the mechanism via the
+// prior turn's carried intent.domainTags
+const carried = selectSkills({ prompt: 'make it bigger', intent: { form: 'single', domainTags: ['gear'] } })
+const carriedOk = carried.includes('spur-gear')
+if (!carriedOk) fail++
+console.log(`  ${mark(carriedOk)} carry-forward ("make it bigger" + prior tags [gear]) → [${carried.join(', ') || '—'}]`)
+
+// no carried tags + a plain follow-up → still nothing (no spurious retention)
+const plainFollowup = selectSkills({ prompt: 'make it 20mm taller' })
+if (plainFollowup.length) fail++
+console.log(`  ${mark(plainFollowup.length === 0)} plain follow-up, no carried tags → [${plainFollowup.join(', ') || '—'}]`)
+
 console.log(fail ? `[retrieval] SELFTEST FAIL (${fail})` : '[retrieval] SELFTEST PASS — intent routing maps prompts to skills, ignores plain shapes, respects the cap and skillIds precedence.')
 process.exit(fail ? 1 : 0)

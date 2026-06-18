@@ -474,6 +474,10 @@ export const useStore = create<VibeState>((set, get) => {
       // network stream and is cleared the instant it resolves, so it can never fire
       // during the downstream compile / auto-fix recursion (which awaits child runs).
       genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, GEN_TIMEOUT)
+      // carry the PRIOR turn's intent forward so a follow-up that drops the mechanism
+      // keyword ("make it bigger") still retrieves the same skill (server prefers its
+      // domainTags over the regex). First turn → none → server-side selectSkills from prompt.
+      const priorIntent = [...activeChat()].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
       let skillReport: SkillIssue[] = []
       let appliedSkillIds: string[] = []
       const full = await streamGenerate(engine, messages, {
@@ -481,7 +485,7 @@ export const useStore = create<VibeState>((set, get) => {
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
-        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
+        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent },
         onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds },
       })
       clearTimeout(genTimer)
