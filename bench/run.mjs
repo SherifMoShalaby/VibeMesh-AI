@@ -16,6 +16,7 @@ import { symmetryScore, moduleDistinctness, assembledScore } from './fidelity.mj
 import { interferenceVol, interferenceScore, hasDebugContract } from './interference.mjs'
 import { judgeModel, judgeVision, judgeAvailable } from './judge.mjs'
 import { renderViews } from './render.mjs'
+import { SKILLS } from '../server/skills.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const API = 'http://localhost:5175/api/generate'
@@ -143,6 +144,36 @@ const TASKS = [
     prompt:
       'A fidget spinner hub with a central bearing seat (press-fit pocket) and several weight bores around the rim. The weight bores must NOT break into the bearing seat — leave solid material between each bore and the bearing race so the bearing still seats. Make it internally consistent and printable.',
     expect: { bboxMax: [120, 120, 25] },
+  },
+  // ── Mechanism-skill tasks (Phase 4). Each forces its skill via context.skillIds and is
+  // scored by that skill's own validator (skillScore: 1 = clean, 0 = the validator flagged a
+  // mechanism fault). Tests the live model WITH the skill, complementing the zero-API walker
+  // that gates the exemplar. New → "not gated until baselined" (seed with a multi-sample run).
+  {
+    id: 'T13-gear-pair',
+    kind: 'fresh',
+    kit: true,
+    prompt: 'A two-gear reduction: a small pinion meshing a larger gear, each with a shaft bore, that I can 3D print as separate parts.',
+    skill: 'spur-gear',
+    context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['spur-gear'] },
+    expect: { bboxMax: [200, 200, 40] },
+  },
+  {
+    id: 'T14-pip-hinge',
+    kind: 'fresh',
+    prompt: 'A print-in-place hinge: two leaves joined by a captive pin, printed flat and already assembled so it pivots straight off the bed.',
+    skill: 'print-in-place-hinge',
+    context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, skillIds: ['print-in-place-hinge'] },
+    expect: { bboxMax: [140, 140, 30] },
+  },
+  {
+    id: 'T15-snap-fit',
+    kind: 'fresh',
+    kit: true,
+    prompt: 'A cantilever snap-fit latch: a clip that snaps into a keeper, as separate printable parts.',
+    skill: 'snap-fit',
+    context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['snap-fit'] },
+    expect: { bboxMax: [120, 120, 60] },
   },
 ]
 
@@ -456,6 +487,16 @@ async function runTask(engine, task, messages, dir, history, label) {
   let intfScore
   if (hasDebugContract(code)) intfScore = interferenceScore(await interferenceVol(code))
 
+  // per-skill functional check (Phase 4): run the task's expected skill validator on the LIVE
+  // output. skillScore = 1 when the mechanism discipline holds (backlash > 0, bore = pin+gap,
+  // L/t >= 6, …), 0 when the validator flags a fault. Deterministic given the code; no API.
+  let skillScore, skillIssues
+  if (task.skill && SKILLS[task.skill]?.validate) {
+    skillIssues = SKILLS[task.skill].validate(code)
+    skillScore = skillIssues.length ? 0 : 1
+    if (skillIssues.length) checks.notes.push(`skill[${task.skill}] FLAGGED: ${skillIssues.join('; ')}`)
+  }
+
   const row = {
     task: task.id,
     genMs: gen.genMs,
@@ -475,6 +516,9 @@ async function runTask(engine, task, messages, dir, history, label) {
     scatterSpan,
     assembledScore: assembled,
     interferenceScore: intfScore,
+    skillScore,
+    skill: task.skill,
+    skillIssues: skillIssues?.length ? skillIssues : undefined,
     gold: gold ?? undefined,
     buildability: buildability ?? undefined,
     overSplit: overSplit || undefined,
@@ -486,7 +530,8 @@ async function runTask(engine, task, messages, dir, history, label) {
   const goldNote = gold ? (gold.error ? ', gold=ERR' : `, IoU=${gold.iou}`) : ''
   const kitNote = buildability ? `, kit=${buildability.score}${buildability.hardFail ? ' (HARD FAIL)' : ''} [${(buildability.pieces ?? []).length}pc]` : ''
   const judgeNote = judge && !judge.error ? `, judge=${judge.score}` : ''
-  console.log(`[bench] ${label} — gen ${Math.round(gen.genMs / 1000)}s, compiled=${compiled.ok}, size=${metrics?.size?.join('×') ?? '—'}, params=${params.count}${goldNote}${kitNote}${judgeNote}`)
+  const skillNote = typeof skillScore === 'number' ? `, skill[${task.skill}]=${skillScore}` : ''
+  console.log(`[bench] ${label} — gen ${Math.round(gen.genMs / 1000)}s, compiled=${compiled.ok}, size=${metrics?.size?.join('×') ?? '—'}, params=${params.count}${goldNote}${kitNote}${judgeNote}${skillNote}`)
   return row
 }
 
@@ -505,6 +550,7 @@ function aggregateRows(task, rows, k) {
   const mods = rows.map((r) => r.moduleDistinctness).filter((n) => typeof n === 'number')
   const assembleds = rows.map((r) => r.assembledScore).filter((n) => typeof n === 'number')
   const intfs = rows.map((r) => r.interferenceScore).filter((n) => typeof n === 'number')
+  const skillScores = rows.map((r) => r.skillScore).filter((n) => typeof n === 'number')
   return {
     task: task.id,
     samples: k,
@@ -524,6 +570,8 @@ function aggregateRows(task, rows, k) {
     scatterSpan: rep.scatterSpan,
     assembledScore: assembleds.length ? median(assembleds) : rep.assembledScore,
     interferenceScore: intfs.length ? median(intfs) : rep.interferenceScore,
+    skillScore: skillScores.length ? median(skillScores) : rep.skillScore,
+    skill: rep.skill,
     gold: ious.length ? { iou: median(ious), samples: ious.length } : rep.gold,
     buildability: buildScores.length ? { ...rep.buildability, score: median(buildScores) } : rep.buildability,
     overSplit: rows.some((r) => r.overSplit) || undefined,

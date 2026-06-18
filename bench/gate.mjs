@@ -60,6 +60,10 @@ function metricsOf(row) {
     // Present only on parts emitting the `_debug` contract. The committed kit exemplar is guarded
     // separately + zero-tolerance by bench/interference.selftest.mjs (runs ahead of this gate).
     interferenceScore: typeof row.interferenceScore === 'number' ? row.interferenceScore : null,
+    // per-skill functional validator on the live output (1 = mechanism discipline holds).
+    // Present only on Phase-4 mechanism tasks; wide tol (binary + live-API noise) until
+    // repeat-sampling, like iou/interferenceScore.
+    skillScore: typeof row.skillScore === 'number' ? row.skillScore : null,
     // advisory LLM-judge — displayed for visibility, never gated (nondeterministic)
     judgeScore: row.judge && !row.judge.error && typeof row.judge.score === 'number' ? row.judge.score : null,
   }
@@ -75,6 +79,7 @@ const NUMERIC = [
   { key: 'moduleDistinctness', label: 'mods', tol: 1 }, // distinct-module count
   { key: 'assembledScore', label: 'asm', tol: 0.25 }, // stepped 0/0.5/1 → tolerate one step
   { key: 'interferenceScore', label: 'intf', tol: 0.1 }, // cutter-vs-structure overlap on generated parts (advisory until baselined)
+  { key: 'skillScore', label: 'skill', tol: 0.5 }, // per-skill validator on live output; binary + noisy → wide tol until repeat-sampling
 ]
 
 function readJson(p, what) {
