@@ -80,11 +80,11 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
       signal: abort.signal,
       onDelta: (text) => { full += text; send({ type: 'delta', text }) },
     })
-    // advisory: run the retrieved skills' validators on the generated code (never blocks).
-    // Guarded separately so a validator bug can NEVER turn a good generation into an error.
-    let skillReport = []
-    try { skillReport = reviewWithSkills({ context, messages, code: extractScadBlock(full) }) } catch { /* advisory only */ }
-    send({ type: 'done', skillReport })
+    // advisory: which skills fired + their validators' verdict on the generated code (never
+    // blocks). Guarded separately so a validator bug can't turn a good generation into error.
+    let review = { skillIds: [], report: [] }
+    try { review = reviewWithSkills({ context, messages, code: extractScadBlock(full) }) } catch { /* advisory only */ }
+    send({ type: 'done', skillIds: review.skillIds, skillReport: review.report })
   } catch (error) {
     if (abort.signal.aborted || error?.name === 'AbortError') {
       res.end()

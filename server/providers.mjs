@@ -411,18 +411,20 @@ export function extractScadBlock(text) {
   return best
 }
 
-/** Run the per-request selected skills' validators on the generated code. ADVISORY ONLY —
- *  never blocks or rewrites generation; returns [{ id, issues }] for skills that flagged
- *  something, so the client can show the mechanism check alongside the model. */
+/** Resolve which skills a request selected (same logic streamChat used to build the prompt)
+ *  and run their validators on the generated code. ADVISORY ONLY — never blocks or rewrites.
+ *  Returns { skillIds } (everything that fired, even with no issues — the client surfaces
+ *  the applied set) and { report } ([{id, issues}] for the ones that flagged something). */
 export function reviewWithSkills({ context, messages, code }) {
-  if (!code) return []
-  const sel = selectSkills({ ...context, prompt: context?.prompt ?? latestUserText(messages || []) })
+  const skillIds = selectSkills({ ...context, prompt: context?.prompt ?? latestUserText(messages || []) })
   const report = []
-  for (const id of sel) {
-    const issues = SKILLS[id]?.validate ? SKILLS[id].validate(code) : []
-    if (issues.length) report.push({ id, issues })
+  if (code) {
+    for (const id of skillIds) {
+      const issues = SKILLS[id]?.validate ? SKILLS[id].validate(code) : []
+      if (issues.length) report.push({ id, issues })
+    }
   }
-  return report
+  return { skillIds, report }
 }
 
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
