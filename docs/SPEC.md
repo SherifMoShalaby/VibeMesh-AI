@@ -21,6 +21,7 @@ One page. The contract for the four surfaces; anything not specified here is und
 - Every assistant message that contained code shows `⌬ MODEL CODE UPDATED · v<N>`; the version matching the live code is marked `· current` (its chip is disabled). All chips are disabled while generating.
 - Clicking `RESTORE` on an older version adopts that code (params reset to that code's defaults), re-renders, **and rolls the conversation back to that point**: every later version is truncated off the lineage so the next prompt's context ends on the restored version — the model continues from the restored version, never the newest one. (Rollback that only swapped the displayed code while leaving later versions in the history would make the next prompt silently build on the newest version again — the bug this prevents.)
 - The truncated newer versions are **set aside, not discarded**: a `Rolled back · N newer version(s) set aside · Bring them back` banner appears under the thread and restores them (undoing the rollback). Sending a new prompt commits to the restored branch and clears the set-aside versions (they become a genuinely abandoned branch) — mirroring placement undo/redo (§7), where a new action clears the redo stack. The set-aside tail persists with the project until then.
+- **Design-intent metadata versions WITH the code** (§13): `intent` + `appliedSkillIds` live on the ChatMessage that carries the code, so rollback/restore (which slice/stash whole messages) and localStorage persistence carry them for free. The applied-patterns chip reads from the message it renders on — never a global "latest" — so a rolled-back-to version shows THAT version's intent/skills, and a pre-skills version shows none.
 
 ## 4. Multi-part designs (PARTS bar + slicer plates)
 - Convention: enum parameter named `part`, first option `all` = assembly preview. UI: PARTS bar in the viewport (⬚ ALL + one chip per piece).
@@ -228,3 +229,27 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   self-critique. `<ContactShadows>` was evaluated and dropped (no contrast on the `#2f3236` stage;
   the bed grid + ghost plate already ground the model). CSS ambient blobs remain optional/deferred.
   See ADR 0001 §5.
+
+## 13. Understanding layer: design intent & applied-patterns chip (2026-06-18 — Phase 5)
+- **INTENT preamble (response-contract surface).** The PLAN ends with exactly ONE machine-readable
+  `INTENT: {json}` line — plain text, **never inside a code fence**, never markdown. It serializes
+  reasoning the model already does (`form` single|kit|assembly, `archetype`, `facetVerdict`
+  faceted|machined|functional, `domainTags`, `ambiguityScore`, `assumptions`) and is **advisory
+  only** — it does not replace the PLAN prose or the code, and there is still **exactly ONE** scad
+  block (`blockCount===1`; the bench gates this). The client parses it with `extractIntent` (tolerant:
+  enum-validated, drops unknowns, never throws, null on garble) and **strips the line from the
+  displayed prose** so the user sees clean PLAN text.
+- **Intent drives retrieval, carried across turns.** Parsed `intent.domainTags` ride forward in
+  `GenerateContext` so a follow-up that drops the mechanism keyword ("make it bigger" after a gear
+  request) still retrieves the same skill; the server `selectSkills` matches its TRIGGERS against the
+  prompt PLUS those carried tags. First turn → server-side selection from the prompt only.
+- **Applied-patterns chip = context/metadata, never a competing output block.** On each code-bearing
+  message a chip renders `form · facetVerdict` + the skills that fired (`appliedSkillIds`, as human
+  labels), with `archetype`/`ambiguity`/`assumptions` in the tooltip. Renders nothing when the message
+  has no metadata (pre-skills versions). `intent` + `appliedSkillIds` version WITH the code (§3).
+- **Wrong-chip recourse → corrected re-generation.** On the current model's chip the user removes
+  (`×`) or adds (`+ pattern`) a skill; `regenerateWithSkills(msgId, skillIds)` appends an
+  `Adjust patterns` marker turn and regenerates with `GenerateContext.skillIds` **overriding**
+  retrieval for that turn (selectSkills skipped — the assembler injects exactly those fragments). It
+  shares the generating-guard + abortController; the new version carries the corrected
+  `appliedSkillIds`. Advisory — corrected ids only change retrieval, never force a competing block.
