@@ -888,13 +888,17 @@ const TRIGGERS = [
 
 /** Map per-request context to the ordered skill ids to inject.
  *  Precedence: (1) an explicit context.skillIds (router / live-check) wins outright;
- *  otherwise (2) context.kit seeds the baseplate skill and (3) context.prompt is matched
- *  against the mechanism TRIGGERS, capped at MAX_AUTO_SKILLS. */
+ *  otherwise (2) context.kit seeds the baseplate skill and (3) the TRIGGERS are matched
+ *  against the current prompt PLUS the prior turn's carried intent.domainTags — so a
+ *  follow-up that drops the keyword ("make it bigger") still retains the mechanism —
+ *  capped at MAX_AUTO_SKILLS. */
 export function selectSkills(context) {
   if (Array.isArray(context?.skillIds)) return context.skillIds.filter((id) => SKILLS[id])
   const out = []
   if (context?.kit) out.push('kit-baseplate')
-  const text = typeof context?.prompt === 'string' ? context.prompt : ''
+  const prompt = typeof context?.prompt === 'string' ? context.prompt : ''
+  const carried = Array.isArray(context?.intent?.domainTags) ? context.intent.domainTags.join(' ') : ''
+  const text = `${prompt} ${carried}`.trim()
   if (text) {
     for (const [id, re] of TRIGGERS) {
       if (out.length >= MAX_AUTO_SKILLS) break

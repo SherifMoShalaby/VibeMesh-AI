@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../types'
+import type { ChatMessage, DesignIntent } from '../types'
 
 export interface ProviderConnect {
   envKey: string
@@ -217,6 +217,9 @@ export interface GenerateContext {
   /** explicit skill ids to inject (server skills registry); takes precedence over `kit`
    *  when set. Forward-compat for the selectSkills router; unset on the byte-identical path. */
   skillIds?: string[]
+  /** the PRIOR turn's parsed design intent — its domainTags carry mechanism context forward
+   *  so a follow-up that drops the keyword ("make it bigger") still retains the skill. */
+  intent?: DesignIntent
 }
 
 /** A skill's advisory verdict on the generated code (server-side, post-generation). */
