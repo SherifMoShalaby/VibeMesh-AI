@@ -300,6 +300,69 @@ if (part == "all") {
 }
 `
 
+const RATCHET_EXEMPLAR = `// SKILL: ratchet & pawl — a sawtooth wheel that turns ONE way only. Each tooth is
+// ASYMMETRIC: a long gentle ramp the pawl rides up, then a steep radial face it locks
+// against. The pawl pivots on a bore with clearance so it can drop into each tooth.
+
+/* [Kit] */
+part = "all"; // [all, wheel, pawl]
+explode = 0; // [0:1:30]
+
+/* [Wheel] */
+teeth = 16;       // [6:1:40]
+r_out = 24;       // [10:1:60]
+tooth_h = 4;      // [2:0.5:8]
+thick = 6;        // [3:1:14]
+bore = 5;         // [2:0.5:10]
+
+/* [Pawl] */
+pawl_len = 22;    // [10:1:50]
+pawl_t = 3;       // [2:0.5:6]
+gap = 0.4;        // [0.3:0.05:0.7]  pivot clearance so the pawl swings
+$fn = 96;
+
+r_in = r_out - tooth_h;
+ta = 360/teeth;
+
+module wheel() difference() {
+  union() {
+    cylinder(h = thick, r = r_in + 0.2);
+    for (i = [0:teeth-1]) rotate([0, 0, i*ta]) linear_extrude(thick)
+      polygon([[r_in, 0], [r_out, 0], [r_in*cos(ta), r_in*sin(ta)]]);   // steep lock face + ramp
+  }
+  translate([0, 0, -1]) cylinder(h = thick+2, r = bore/2);
+}
+
+module pawl() difference() {
+  union() {
+    hull() { cylinder(h = pawl_t, r = 3); translate([pawl_len, 0, 0]) cylinder(h = pawl_t, r = 2); }
+    translate([pawl_len-2, -1.5, 0]) cube([4, 3, pawl_t]);   // catch tip
+  }
+  translate([0, 0, -1]) cylinder(h = pawl_t+2, r = 2 + gap);  // pivot bore (clearance)
+}
+
+if (part == "all") { wheel(); translate([r_out + 10 + explode, 0, 0]) pawl(); }
+else if (part == "wheel") wheel();
+else if (part == "pawl") pawl();
+`
+
+const COIL_SPRING_EXEMPLAR = `// SKILL: compression coil spring — a helical coil. Wire >= printable; pitch > wire so the
+// coils don't fuse into a tube. RENDER COST scales with turns*facets — keep turns modest
+// and $fn sane, or the higher quality presets will time out on this geometry.
+
+/* [Spring] */
+coil_d = 16;      // [8:1:40]    mean coil diameter
+wire_d = 3;       // [1.6:0.2:6] wire thickness (>= 2 perimeters)
+turns = 6;        // [3:1:14]
+pitch = 6;        // [3:0.5:14]  rise per turn — MUST be > wire_d or the coils fuse
+$fn = 40;
+
+free_h = turns*pitch;
+// helical sweep: a wire circle offset to the coil radius, extruded up while twisting
+linear_extrude(height = free_h, twist = 360*turns, convexity = ceil(turns*2))
+  translate([coil_d/2, 0, 0]) circle(d = wire_d);
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -477,6 +540,51 @@ export const SKILLS = {
       let s =
         '\n\n# Rack & pinion\n\nA rack & pinion converts pinion rotation into linear travel of a toothed bar. The rack and pinion MUST share one module; the rack tooth pitch is PI*module (linear), and the pinion is an ordinary spur gear of that module. Thin the teeth by a backlash allowance (~0.1-0.4mm) on both — zero backlash binds. Expose module, pinion tooth count, rack length, thickness, bore, and backlash.'
       if (!isLocal) s += '\n\nReference example (pinion + straight rack, shared module, backlash > 0, flat on z=0):\n\n' + RACK_PINION_EXEMPLAR
+      return s
+    },
+  },
+
+  'ratchet': {
+    id: 'ratchet',
+    exemplar: RATCHET_EXEMPLAR,
+    validate(code) {
+      const g = code.match(/gap\s*=\s*([\d.]+)/)
+      const gp = g ? parseFloat(g[1]) : null
+      const issues = []
+      if (gp === null) issues.push('ratchet pawl needs a pivot/clearance gap so it can swing into each tooth')
+      else if (gp < 0.3) issues.push(`ratchet pawl gap is ${gp}mm — needs >= ~0.3mm or the pawl seizes`)
+      return issues
+    },
+    brokenControl: (code) => code.replace(/gap\s*=\s*[\d.]+/, 'gap = 0'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Ratchet & pawl\n\nA ratchet turns one way and locks the other. The wheel teeth MUST be asymmetric — a long gentle ramp the pawl slides up, then a steep (near-radial) face it jams against. The pawl pivots (or flexes) into each tooth and needs a clearance gap on its pivot so it actually moves. Expose tooth count, radius, tooth height, and the pawl clearance.'
+      if (!isLocal) s += '\n\nReference example (sawtooth wheel + pivoting pawl, flat on z=0):\n\n' + RATCHET_EXEMPLAR
+      return s
+    },
+  },
+
+  'coil-spring': {
+    id: 'coil-spring',
+    exemplar: COIL_SPRING_EXEMPLAR,
+    validate(code) {
+      const w = code.match(/wire_d\s*=\s*([\d.]+)/)
+      const p = code.match(/pitch\s*=\s*([\d.]+)/)
+      const wd = w ? parseFloat(w[1]) : null
+      const pt = p ? parseFloat(p[1]) : null
+      const issues = []
+      if (wd === null) issues.push('coil spring must expose a wire thickness (wire_d)')
+      else if (wd < 1.2) issues.push(`coil wire is ${wd}mm — below the 1.2mm printable minimum`)
+      if (pt !== null && wd !== null && pt <= wd) issues.push(`coil pitch ${pt}mm must EXCEED wire thickness ${wd}mm or the coils fuse into a solid tube`)
+      return issues
+    },
+    brokenControl: (code) => code.replace(/pitch\s*=\s*[\d.]+/, 'pitch = 1'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Compression coil spring\n\nA printed coil spring (e.g. a button-return or controller spring) is a helix: sweep a wire circle, offset to the coil radius, upward while rotating (linear_extrude with twist, or a swept helix). Wire thickness >= ~1.6mm (2+ perimeters); the pitch (rise per turn) MUST exceed the wire thickness or the coils fuse into a tube. Print in TPU/PETG for real springiness. WARNING: render cost grows with turns*facets — keep turns and $fn modest so high-quality renders do not time out.'
+      if (!isLocal) s += '\n\nReference example (helical compression coil, flat on z=0):\n\n' + COIL_SPRING_EXEMPLAR
       return s
     },
   },
