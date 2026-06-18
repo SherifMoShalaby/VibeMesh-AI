@@ -21,6 +21,12 @@ export interface ChatImage {
   mediaType: string
   /** base64 payload (no data: prefix) */
   data: string
+  /** pixel dims (when known) — drive the size-aware token estimate + tiling decisions */
+  width?: number
+  height?: number
+  /** what this image is: a whole reference (global), a cropped region (tile), or a render
+   *  pose captured for a refine pass (view). Optional so persisted projects load. */
+  role?: 'global' | 'tile' | 'view'
 }
 
 export interface ChatMessage {

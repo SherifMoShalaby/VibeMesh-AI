@@ -1,4 +1,4 @@
-import type { ChatMessage, DesignIntent } from '../types'
+import type { ChatImage, ChatMessage, DesignIntent } from '../types'
 
 export interface ProviderConnect {
   envKey: string
@@ -83,14 +83,20 @@ export const HISTORY_LIMIT = 12
  *  discount absorb its ~15-30% under-count on dense code/JSON. The chip uses the SAME
  *  helpers as the assembler so the gauge never drifts from what's actually sent. */
 export const estTokens = (s: string): number => Math.ceil((s?.length ?? 0) / 4)
-/** An image costs a roughly fixed amount — NEVER chars/4 of its base64 blob. */
-export const estImageTokens = (): number => 1500
+/** Per-image token cost — size-aware (Anthropic tile model ≈ w*h/750), clamped 1000..3000.
+ *  NEVER chars/4 of the base64 blob. Falls back to a flat ~1500 when pixel dims are unknown
+ *  (legacy/persisted images), so the gauge and eviction share one consistent per-image cost. */
+export const estImageTokens = (img?: ChatImage): number => {
+  const px = (img?.width ?? 0) * (img?.height ?? 0)
+  if (!px) return 1500
+  return Math.max(1000, Math.min(3000, Math.round(px / 750)))
+}
 
 /** Token cost of one message AS SENT (assistant code re-wrapped; images only when kept). */
 export function msgTokens(m: ChatMessage, keepImages: boolean): number {
   let t = estTokens(m.text || '') + 4
   if (m.role === 'assistant' && m.code) t += estTokens(m.code) + 8
-  if (keepImages && m.images?.length) t += m.images.length * estImageTokens()
+  if (keepImages && m.images?.length) t += m.images.reduce((s, img) => s + estImageTokens(img), 0)
   return t
 }
 

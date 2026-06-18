@@ -214,7 +214,14 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
       reader.onload = () => {
         const dataUrl = reader.result as string
         const data = dataUrl.slice(dataUrl.indexOf(',') + 1)
-        setImages((prev) => (prev.length < MAX_IMAGES ? [...prev, { mediaType: file.type, data }] : prev))
+        // decode to capture pixel dims (size-aware token cost + future tiling) + tag as a
+        // whole reference (role 'global'); add without dims if the probe fails.
+        const probe = new Image()
+        const add = (extra: Partial<ChatImage>) =>
+          setImages((prev) => (prev.length < MAX_IMAGES ? [...prev, { mediaType: file.type, data, role: 'global', ...extra }] : prev))
+        probe.onload = () => add({ width: probe.naturalWidth, height: probe.naturalHeight })
+        probe.onerror = () => add({})
+        probe.src = dataUrl
       }
       reader.readAsDataURL(file)
     }
