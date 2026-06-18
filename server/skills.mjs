@@ -424,6 +424,59 @@ module bearing_seat() difference() {
 bearing_seat();
 `
 
+const PLANETARY_EXEMPLAR = `// SKILL: planetary gearset — sun + N planets + internal ring, ALL one module + backlash.
+// Concentricity: teeth_ring = teeth_sun + 2*teeth_planet. Even spacing (so every planet can
+// engage) requires (teeth_sun + teeth_ring) % num_planets == 0 — enforced by an assert.
+
+/* [Kit] */
+part = "all"; // [all, sun, planet, ring]
+explode = 0; // [0:1:20]
+
+/* [Gears] */
+mod = 1.5;          // [1:0.25:3]   shared module
+teeth_sun = 12;     // [8:1:24]
+teeth_planet = 12;  // [8:1:24]
+num_planets = 4;    // [3:1:6]
+thick = 6;          // [3:1:12]
+bore = 4;           // [2:0.5:8]
+backlash = 0.2;     // [0:0.05:0.5] MANDATORY > 0
+$fn = 72;
+
+teeth_ring = teeth_sun + 2*teeth_planet;   // concentricity
+assert((teeth_sun + teeth_ring) % num_planets == 0,
+  str("planets won't space evenly: (Zs+Zr)=", teeth_sun + teeth_ring, " is not divisible by num_planets=", num_planets));
+
+function pol(r, a) = [r*cos(a), r*sin(a)];
+module spur(N, drill) {
+  pr = mod*N/2; rr = pr - 1.25*mod; orr = pr + mod;
+  hp = ((PI*mod/2 - backlash)/2 / pr) * 180/PI; hroot = hp + 4; htip = max(hp - 4, 1);
+  difference() {
+    union() {
+      cylinder(h = thick, r = rr + 0.2);
+      for (i = [0:N-1]) rotate([0, 0, i*360/N]) linear_extrude(thick)
+        polygon([pol(rr,-hroot), pol(orr,-htip), pol(orr,htip), pol(rr,hroot)]);
+    }
+    if (drill) translate([0, 0, -1]) cylinder(h = thick+2, r = bore/2);
+  }
+}
+module ring() {
+  pr = mod*teeth_ring/2;
+  difference() {
+    cylinder(h = thick, r = pr + mod + 4);
+    translate([0, 0, -1]) linear_extrude(thick + 2) offset(delta = backlash) projection() spur(teeth_ring, false);  // internal teeth = negative of a ring-pitch gear
+  }
+}
+
+carrier = mod*(teeth_sun + teeth_planet)/2;   // sun-planet centre distance
+if (part == "all") {
+  spur(teeth_sun, true);
+  for (i = [0:num_planets-1]) rotate([0, 0, i*360/num_planets]) translate([carrier + explode, 0, 0]) spur(teeth_planet, true);
+  ring();
+} else if (part == "sun") spur(teeth_sun, true);
+else if (part == "planet") spur(teeth_planet, true);
+else if (part == "ring") ring();
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -689,6 +742,30 @@ export const SKILLS = {
       return s
     },
   },
+
+  'planetary': {
+    id: 'planetary',
+    exemplar: PLANETARY_EXEMPLAR,
+    validate(code) {
+      // inspect code, not prose: a comment describing the constraint must not satisfy it
+      const src = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      const issues = []
+      const b = src.match(/backlash\s*=\s*([\d.]+)/)
+      const bl = b ? parseFloat(b[1]) : null
+      if (bl === null || bl <= 0) issues.push('planetary gears must have backlash > 0 on every mesh')
+      if (!/assert\s*\(|%\s*num_planets|%\s*\w*planets?\b/i.test(src)) issues.push('planetary must enforce the even-spacing constraint (Zsun + Zring) % planets == 0 (e.g. an assert) — otherwise the planets cannot all engage')
+      if (!/teeth_ring\s*=[^\n]*teeth_sun[^\n]*teeth_planet/i.test(src)) issues.push('ring teeth must be derived for concentricity: teeth_ring = teeth_sun + 2*teeth_planet')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/assert\s*\([\s\S]*?\);/, ''),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Planetary (epicyclic) gearset\n\nA planetary set is a central sun gear, several planet gears, and an internal ring gear — ALL sharing one module and a backlash allowance. TWO constraints are mandatory, and getting them wrong is the classic failure: (1) concentricity — teeth_ring = teeth_sun + 2*teeth_planet; (2) even spacing — (teeth_sun + teeth_ring) must be divisible by num_planets, or the planets cannot all mesh. Assert the divisibility so a bad tooth count fails loudly. Build the internal ring teeth by subtracting an offset (backlash) projection of a ring-pitch gear from a disc.'
+      if (!isLocal) s += '\n\nReference example (sun + planets + internal ring, asserted constraints, flat on z=0):\n\n' + PLANETARY_EXEMPLAR
+      return s
+    },
+  },
 }
 
 /** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
@@ -701,6 +778,7 @@ export const MAX_AUTO_SKILLS = 3
 const TRIGGERS = [
   ['wheel-axle', /\bwheel|\baxle|\broll|\bcaster|\bchassis/i],
   ['rack-pinion', /\brack/i],
+  ['planetary', /\bplanetary|\bepicyclic|\bsun[\s-]?gear/i],
   ['spur-gear', /\bgear|\bcogs?\b|\bpinion/i],
   ['living-hinge', /\bliving[\s-]?hinge|\bflexure|\bfoldable|\bfold[\s-]?flat/i],
   ['print-in-place-hinge', /\bhinge|\bknuckle|\bpivot/i],
