@@ -17,6 +17,9 @@ export interface ChatMessage {
   error?: boolean
   /** set for app-initiated messages (refine/split/fix) — UI shows a chip instead of the protocol text */
   action?: string
+  /** advisory mechanism-check from the retrieved skills' validators — shown in the UI but
+   *  deliberately NOT part of `text`, so it never re-enters the model's next-turn history */
+  skillNote?: string
 }
 
 export type ParamKind = 'number' | 'slider' | 'bool' | 'enum' | 'string'

@@ -5,7 +5,7 @@ import { buildDefines, extractScadBlock, parseParameters } from '../lib/params'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
-import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, type HealthInfo } from '../lib/api'
+import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, type HealthInfo, type SkillIssue } from '../lib/api'
 import { loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 
@@ -474,12 +474,14 @@ export const useStore = create<VibeState>((set, get) => {
       // network stream and is cleared the instant it resolves, so it can never fire
       // during the downstream compile / auto-fix recursion (which awaits child runs).
       genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, GEN_TIMEOUT)
+      let skillReport: SkillIssue[] = []
       const full = await streamGenerate(engine, messages, {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text) },
+        onSkillReport: (report) => { skillReport = report },
       })
       clearTimeout(genTimer)
       genTimer = undefined
@@ -520,11 +522,18 @@ export const useStore = create<VibeState>((set, get) => {
       }
 
       const isFirstModel = code !== null && !activeChat().some((m) => m.code)
+      // advisory: surface the retrieved skills' mechanism check (verified-skill validators)
+      // next to the model — never blocks, just flags printability issues the model slipped.
+      // Kept off `text` so it does NOT re-enter the model's next-turn history.
+      const skillNote = skillReport.length
+        ? skillReport.flatMap((r) => r.issues).join('\n')
+        : undefined
       const assistantMsg: ChatMessage = {
         id: newId(),
         role: 'assistant',
         text: prose || 'Here is the model.',
         code: code ?? undefined,
+        skillNote,
       }
       setChat([...activeChat(), assistantMsg])
       // teach the loop once per project (UX-AUDIT F9): point at sliders / chat / export

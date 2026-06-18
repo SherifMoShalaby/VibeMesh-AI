@@ -542,6 +542,17 @@ input[type='checkbox']:focus-visible,
 }
 .msg.ai .code-chip { margin-left: calc(22px + var(--s2)); }
 .code-chip:disabled { cursor: default; }
+/* advisory mechanism check (verified-skill validators) — never blocks, just flags */
+.skill-note {
+  margin: var(--s2) 0 0 calc(22px + var(--s2));
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-xs);
+  border: 1px solid var(--warn-soft);
+  background: var(--warn-soft);
+  font-size: var(--fs-small); line-height: var(--lh-body);
+}
+.skill-note .sn-head { display: block; font-weight: 600; color: var(--warn); margin-bottom: 2px; }
+.skill-note .sn-line { color: var(--text-dim); }
 .code-chip .cc-icon {
   width: 26px; height: 26px; border-radius: var(--r-xs);
   display: grid; place-items: center; flex-shrink: 0;
