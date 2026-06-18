@@ -247,6 +247,7 @@ export async function providerStatus() {
       contextWindow: 200000, // conservative login floor (the Agent SDK won't compact a flattened single-turn prompt)
       outputReservation: CLAUDE_CODE_OUTPUT_RESERVE,
       vision: true,
+      maxImages: 4, // CAP=4: a global + the 3 worst regions (the tiler degrades resolution before dropping tiles)
       models: [
         { id: 'default', label: claudeCliDefaultModel() ? `default (${claudeCliDefaultModel()})` : 'default' },
         { id: 'opus', label: 'opus — best quality' },
@@ -265,6 +266,7 @@ export async function providerStatus() {
       contextWindow: 1000000,
       outputReservation: ANTHROPIC_MAX_TOKENS,
       vision: true,
+      maxImages: 8, // 1M window + strong vision → room for a global + several tiles
       connect: { envKey: 'ANTHROPIC_API_KEY', placeholder: 'sk-ant-…', url: 'https://console.anthropic.com/settings/keys', urlLabel: 'Get a key at console.anthropic.com' },
       efforts: EFFORT_CHOICES,
     },
@@ -283,6 +285,7 @@ export async function providerStatus() {
       contextWindow: 200000, // model-dependent; stay conservative — Kimi 400s readily
       outputReservation: KIMI_MAX_TOKENS,
       vision: true,
+      maxImages: 6,
       models: kimiModelChoices(kimiModelIds),
       connect: { envKey: 'KIMI_API_KEY', placeholder: 'Kimi Code console key…', url: 'https://www.kimi.com/code', urlLabel: 'Get a key in the Kimi Code console' },
     },
@@ -305,6 +308,7 @@ export async function providerStatus() {
         contextWindow: LOCAL_NUM_CTX,
         outputReservation: LOCAL_NUM_PREDICT,
         vision: /vl|vision|llava|moondream|gemma|qwen.*vl/i.test(m),
+        maxImages: /vl|vision|llava|moondream|gemma|qwen.*vl/i.test(m) ? 2 : 0, // 0 unless a vision model
         connect: localConnect,
       })
     }
