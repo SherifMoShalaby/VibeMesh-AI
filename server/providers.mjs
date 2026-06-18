@@ -388,8 +388,22 @@ export function contextText(context, engine) {
   return out
 }
 
+/** Text of the most recent user turn, for prompt-intent skill retrieval. Handles both
+ *  plain-string content and the structured array form (image turns carry text parts). */
+function latestUserText(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.role !== 'user') continue
+    if (typeof m.content === 'string') return m.content
+    if (Array.isArray(m.content)) return m.content.filter((p) => p?.type === 'text').map((p) => p.text).join(' ')
+    return ''
+  }
+  return ''
+}
+
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
-  const ctx = contextText(context, engine)
+  // seed prompt-intent retrieval from the latest user turn unless the caller pinned skillIds
+  const ctx = contextText({ ...context, prompt: context?.prompt ?? latestUserText(messages) }, engine)
   // effort applies only to the Claude engines (Kimi 400s on it, local is OpenAI-shaped)
   if (engine === 'anthropic') return streamAnthropic({ messages, ctx, onDelta, signal, effort })
   if (engine === 'kimi') return streamKimi({ messages, ctx, onDelta, signal, model })

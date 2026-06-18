@@ -590,9 +590,39 @@ export const SKILLS = {
   },
 }
 
-/** Map per-request context to the ordered skill ids to inject. Generalizes the single
- *  kit boolean; an explicit context.skillIds (future router output) takes precedence. */
+/** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
+ *  balloon the system prompt. An explicit skillIds list is never capped. */
+export const MAX_AUTO_SKILLS = 3
+
+/** Prompt-intent → skill triggers, in priority order. Deliberately SPECIFIC (named
+ *  mechanisms, not bare words) to keep false-positives low: "leaf spring" / "coil spring"
+ *  fire their skill, but a bare "spring" fires neither. First match wins per skill. */
+const TRIGGERS = [
+  ['wheel-axle', /\bwheel|\baxle|\broll|\bcaster|\bchassis/i],
+  ['rack-pinion', /\brack/i],
+  ['spur-gear', /\bgear|\bcogs?\b|\bpinion/i],
+  ['living-hinge', /\bliving[\s-]?hinge|\bflexure|\bfoldable|\bfold[\s-]?flat/i],
+  ['print-in-place-hinge', /\bhinge|\bknuckle|\bpivot/i],
+  ['snap-fit', /\bsnap[\s-]?fit|\bsnap[\s-]?on|\bclip|\blatch|\bclasp/i],
+  ['ratchet', /\bratchet|\bpawl/i],
+  ['coil-spring', /\bcoil[\s-]?spring|\bcompression[\s-]?spring|\bhelical[\s-]?spring|\bcontroller[\s-]?spring|\bbutton[\s-]?spring/i],
+  ['leaf-spring', /\bleaf[\s-]?spring|\bcantilever[\s-]?spring|\bflex(?:y|ible)?[\s-]?(?:arm|tab|finger)/i],
+]
+
+/** Map per-request context to the ordered skill ids to inject.
+ *  Precedence: (1) an explicit context.skillIds (router / live-check) wins outright;
+ *  otherwise (2) context.kit seeds the baseplate skill and (3) context.prompt is matched
+ *  against the mechanism TRIGGERS, capped at MAX_AUTO_SKILLS. */
 export function selectSkills(context) {
   if (Array.isArray(context?.skillIds)) return context.skillIds.filter((id) => SKILLS[id])
-  return context?.kit ? ['kit-baseplate'] : []
+  const out = []
+  if (context?.kit) out.push('kit-baseplate')
+  const text = typeof context?.prompt === 'string' ? context.prompt : ''
+  if (text) {
+    for (const [id, re] of TRIGGERS) {
+      if (out.length >= MAX_AUTO_SKILLS) break
+      if (!out.includes(id) && SKILLS[id] && re.test(text)) out.push(id)
+    }
+  }
+  return out
 }
