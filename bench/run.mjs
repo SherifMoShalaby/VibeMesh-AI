@@ -27,7 +27,9 @@ const ENGINE_FILTER = process.env.BENCH_ENGINES?.split(',').map((s) => s.trim())
 const TASK_FILTER = process.env.BENCH_TASKS?.split(',').map((s) => s.trim()).filter(Boolean)
 // BENCH_SAMPLES=k runs each task k times and aggregates (median quality scores,
 // compiledRate) — so the gate can trust tight tolerances despite a non-deterministic API.
-const SAMPLES = Math.max(1, Number(process.env.BENCH_SAMPLES) || 1)
+// Default k=3 (the PR-gate standard: cheapest odd count robust to a single bad draw);
+// set BENCH_SAMPLES=1 for fast local single-sample iteration.
+const SAMPLES = Math.max(1, Number(process.env.BENCH_SAMPLES) || 3)
 
 const visionImage = fs.readFileSync(path.join(ROOT, 'vision-sketch.png')).toString('base64')
 

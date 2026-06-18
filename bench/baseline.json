@@ -1,6 +1,6 @@
 [
   {
-    "engine": "claude-code",
+    "engine": "anthropic",
     "results": [
       {
         "task": "T1-cube",
@@ -12,6 +12,10 @@
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -24,6 +28,10 @@
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -36,6 +44,10 @@
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -43,11 +55,15 @@
         "compiled": true,
         "errored": false,
         "dimScore": 1,
-        "iou": 0.998,
+        "iou": 0.99,
         "placementScore": 1,
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -60,6 +76,10 @@
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -72,6 +92,10 @@
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -84,6 +108,10 @@
         "buildabilityScore": 1,
         "buildabilityHardFail": false,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": 1,
+        "interferenceScore": 1,
         "judgeScore": null
       },
       {
@@ -91,11 +119,15 @@
         "compiled": true,
         "errored": false,
         "dimScore": 1,
-        "iou": 0.988,
+        "iou": 0.992,
         "placementScore": 1,
         "buildabilityScore": null,
         "buildabilityHardFail": null,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": null,
         "judgeScore": null
       },
       {
@@ -108,6 +140,58 @@
         "buildabilityScore": 1,
         "buildabilityHardFail": false,
         "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": 1,
+        "interferenceScore": 0,
+        "judgeScore": null
+      },
+      {
+        "task": "T10-spinner",
+        "compiled": true,
+        "errored": false,
+        "dimScore": 1,
+        "iou": null,
+        "placementScore": 1,
+        "buildabilityScore": null,
+        "buildabilityHardFail": null,
+        "overSplit": false,
+        "asymmetryScore": 0.772,
+        "moduleDistinctness": 7,
+        "assembledScore": null,
+        "interferenceScore": null,
+        "judgeScore": null
+      },
+      {
+        "task": "T11-technic",
+        "compiled": true,
+        "errored": false,
+        "dimScore": null,
+        "iou": null,
+        "placementScore": null,
+        "buildabilityScore": 1,
+        "buildabilityHardFail": false,
+        "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": 1,
+        "interferenceScore": 1,
+        "judgeScore": null
+      },
+      {
+        "task": "T12-fidget-interference",
+        "compiled": true,
+        "errored": false,
+        "dimScore": 1,
+        "iou": null,
+        "placementScore": 1,
+        "buildabilityScore": null,
+        "buildabilityHardFail": null,
+        "overSplit": false,
+        "asymmetryScore": null,
+        "moduleDistinctness": null,
+        "assembledScore": null,
+        "interferenceScore": 0,
         "judgeScore": null
       }
     ]
