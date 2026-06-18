@@ -32,7 +32,8 @@ export function canvasToChatImage(canvas: HTMLCanvasElement, maxDim = 896, quali
   ctx.fillRect(0, 0, out.width, out.height)
   ctx.drawImage(canvas, 0, 0, out.width, out.height)
   const dataUrl = out.toDataURL('image/jpeg', quality)
-  return { mediaType: 'image/jpeg', data: dataUrl.slice(dataUrl.indexOf(',') + 1) }
+  // role 'view' — a captured render pose for a refine pass (vs an uploaded reference)
+  return { mediaType: 'image/jpeg', data: dataUrl.slice(dataUrl.indexOf(',') + 1), width: out.width, height: out.height, role: 'view' }
 }
 
 /**
