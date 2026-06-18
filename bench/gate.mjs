@@ -64,6 +64,10 @@ function metricsOf(row) {
     // Present only on Phase-4 mechanism tasks; wide tol (binary + live-API noise) until
     // repeat-sampling, like iou/interferenceScore.
     skillScore: typeof row.skillScore === 'number' ? row.skillScore : null,
+    // P5 intent lane: the reply must keep exactly ONE scad block (the non-fenced INTENT line
+    // must not trip the contract) — categorical, zero-tolerance. Intent-emission rate is advisory.
+    blockCount: typeof row.blockCount === 'number' ? row.blockCount : null,
+    intentEmittedRate: typeof row.intentEmittedRate === 'number' ? row.intentEmittedRate : null,
     // advisory LLM-judge — displayed for visibility, never gated (nondeterministic)
     judgeScore: row.judge && !row.judge.error && typeof row.judge.score === 'number' ? row.judge.score : null,
   }
@@ -146,6 +150,8 @@ for (const [engine, baseTasks] of baseIndex) {
     // categorical, zero-tolerance regressions
     if (bm.compiled && !cm.compiled) regressions.push(`${id}: compiled ✓→✗`)
     if (!bm.overSplit && cm.overSplit) regressions.push(`${id}: NEW over-split (non-kit produced a multi-piece enum)`)
+    // contract: the response must carry exactly ONE scad block (the INTENT preamble must not fence)
+    if (cm.blockCount != null && cm.blockCount > 1) regressions.push(`${id}: ${cm.blockCount} scad blocks (contract requires exactly 1 — the INTENT line must stay non-fenced)`)
     if (bm.buildabilityHardFail === false && cm.buildabilityHardFail === true) regressions.push(`${id}: kit HARD FAIL (was buildable)`)
 
     // numeric metrics

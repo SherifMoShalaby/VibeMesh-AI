@@ -156,7 +156,7 @@ const TASKS = [
     prompt: 'A two-gear reduction: a small pinion meshing a larger gear, each with a shaft bore, that I can 3D print as separate parts.',
     skill: 'spur-gear',
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['spur-gear'] },
-    expect: { bboxMax: [200, 200, 40] },
+    expect: { bboxMax: [200, 200, 40], intentTag: 'gear' },
   },
   {
     id: 'T14-pip-hinge',
@@ -164,7 +164,7 @@ const TASKS = [
     prompt: 'A print-in-place hinge: two leaves joined by a captive pin, printed flat and already assembled so it pivots straight off the bed.',
     skill: 'print-in-place-hinge',
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, skillIds: ['print-in-place-hinge'] },
-    expect: { bboxMax: [140, 140, 30] },
+    expect: { bboxMax: [140, 140, 30], intentTag: 'hinge' },
   },
   {
     id: 'T15-snap-fit',
@@ -173,7 +173,7 @@ const TASKS = [
     prompt: 'A cantilever snap-fit latch: a clip that snaps into a keeper, as separate printable parts.',
     skill: 'snap-fit',
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['snap-fit'] },
-    expect: { bboxMax: [120, 120, 60] },
+    expect: { bboxMax: [120, 120, 60], intentTag: 'snap' },
   },
 ]
 
@@ -267,6 +267,31 @@ function extractScad(text) {
   }
   return code
 }
+
+// scad/openscad-tagged fence count — the response contract is exactly ONE; the advisory
+// INTENT preamble line (non-fenced) must NOT bump this to 2 (P5 WS5 contract guard).
+function blockCountOf(text) {
+  return (text.match(/```(?:scad|openscad)\s*\n/g) || []).length
+}
+
+// lightweight INTENT-line parser for the bench (mirrors src/lib/params.ts extractIntent,
+// kept here so run.mjs stays plain-node). Returns { form, domainTags } or null.
+function parseIntentLine(text) {
+  const m = text.match(/^[ \t]*INTENT:\s*(\{.*\})[ \t]*$/m)
+  if (!m) return null
+  try {
+    const o = JSON.parse(m[1])
+    return {
+      form: typeof o.form === 'string' ? o.form : null,
+      domainTags: Array.isArray(o.domainTags) ? o.domainTags.filter((t) => typeof t === 'string').map((t) => t.toLowerCase()) : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+// terms that count as a "mechanism" domainTag — the negative case asserts a plain shape emits none
+const MECHANISM_TAGS = /gear|hinge|bearing|spring|snap|rack|ratchet|pulley|axle|wheel|planetary|cog|pinion|fastener|screw|thread/i
 
 /* ── compile + measure with the same engine the app uses ── */
 
@@ -497,6 +522,22 @@ async function runTask(engine, task, messages, dir, history, label) {
     if (skillIssues.length) checks.notes.push(`skill[${task.skill}] FLAGGED: ${skillIssues.join('; ')}`)
   }
 
+  // P5 intent lane: the reply must keep exactly ONE scad block (the non-fenced INTENT line
+  // must not trip the contract), and should emit a parseable INTENT line whose domainTags
+  // agree with the task's mechanism (or, for a plain shape, carry NO mechanism tag).
+  const blockCount = blockCountOf(gen.text)
+  if (blockCount !== 1) checks.notes.push(`CONTRACT: ${blockCount} scad blocks (expected 1) — INTENT line may have tripped the fence`)
+  const intent = parseIntentLine(gen.text)
+  const intentTags = intent?.domainTags ?? []
+  if (task.skill) {
+    // mechanism task: the INTENT should carry the expected domain tag
+    if (!intent) checks.notes.push(`intent: no parseable INTENT line emitted`)
+    else if (task.expect?.intentTag && !intentTags.some((t) => t.includes(task.expect.intentTag))) checks.notes.push(`intent: domainTags [${intentTags.join(', ')}] miss expected "${task.expect.intentTag}"`)
+  } else if (intent && intentTags.some((t) => MECHANISM_TAGS.test(t))) {
+    // negative case: a plain shape should NOT emit mechanism tags
+    checks.notes.push(`intent: plain task emitted mechanism tag(s) [${intentTags.filter((t) => MECHANISM_TAGS.test(t)).join(', ')}]`)
+  }
+
   const row = {
     task: task.id,
     genMs: gen.genMs,
@@ -519,6 +560,10 @@ async function runTask(engine, task, messages, dir, history, label) {
     skillScore,
     skill: task.skill,
     skillIssues: skillIssues?.length ? skillIssues : undefined,
+    blockCount,
+    intentEmitted: !!intent,
+    intentForm: intent?.form ?? undefined,
+    intentTags: intentTags.length ? intentTags : undefined,
     gold: gold ?? undefined,
     buildability: buildability ?? undefined,
     overSplit: overSplit || undefined,
@@ -531,7 +576,8 @@ async function runTask(engine, task, messages, dir, history, label) {
   const kitNote = buildability ? `, kit=${buildability.score}${buildability.hardFail ? ' (HARD FAIL)' : ''} [${(buildability.pieces ?? []).length}pc]` : ''
   const judgeNote = judge && !judge.error ? `, judge=${judge.score}` : ''
   const skillNote = typeof skillScore === 'number' ? `, skill[${task.skill}]=${skillScore}` : ''
-  console.log(`[bench] ${label} — gen ${Math.round(gen.genMs / 1000)}s, compiled=${compiled.ok}, size=${metrics?.size?.join('×') ?? '—'}, params=${params.count}${goldNote}${kitNote}${judgeNote}${skillNote}`)
+  const intentNote = `, blocks=${blockCount}${intent ? `, intent=${intent.form}[${intentTags.join('|')}]` : ', intent=none'}`
+  console.log(`[bench] ${label} — gen ${Math.round(gen.genMs / 1000)}s, compiled=${compiled.ok}, size=${metrics?.size?.join('×') ?? '—'}, params=${params.count}${goldNote}${kitNote}${judgeNote}${skillNote}${intentNote}`)
   return row
 }
 
@@ -572,6 +618,11 @@ function aggregateRows(task, rows, k) {
     interferenceScore: intfs.length ? median(intfs) : rep.interferenceScore,
     skillScore: skillScores.length ? median(skillScores) : rep.skillScore,
     skill: rep.skill,
+    // blockCount: surface the WORST sample (any !=1 is a contract violation); intent rate advisory
+    blockCount: (() => { const b = rows.map((r) => r.blockCount).filter((n) => typeof n === 'number'); return b.length ? Math.max(...b) : undefined })(),
+    intentEmittedRate: round2(rows.filter((r) => r.intentEmitted).length / rows.length),
+    intentForm: rep.intentForm,
+    intentTags: rep.intentTags,
     gold: ious.length ? { iou: median(ious), samples: ious.length } : rep.gold,
     buildability: buildScores.length ? { ...rep.buildability, score: median(buildScores) } : rep.buildability,
     overSplit: rows.some((r) => r.overSplit) || undefined,
