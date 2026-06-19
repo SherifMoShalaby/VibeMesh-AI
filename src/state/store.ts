@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { BedSize, ChatMessage, CompileResult, ParamValue, ParamValues, Project, ScadParameter } from '../types'
 import { PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { buildDefines, extractIntent, extractScadBlock, parseParameters, stripIntentLine } from '../lib/params'
+import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
@@ -634,6 +635,12 @@ export const useStore = create<VibeState>((set, get) => {
           const triggerImages = [...activeChat()].reverse().find((m) => m.role === 'user')?.images
           const provider = get().health?.providers.find((p) => p.id === eng)
           const aid = get().activeId
+          // proxy-gated convergence: when the model read off stated dimensions, auto-refine ONLY
+          // while the model-INDEPENDENT dimension check still flags a mismatch — stop the moment the
+          // render matches the read-off dims (don't burn fixed passes). No stated dims → the proxy
+          // has nothing to check, so keep the visual-fidelity refine.
+          const stated = clampStatedDimensions(intent?.statedDimensions).dimensions
+          const proxyWantsRefine = stated.length === 0 || dimDiscrepancies(get().modelDims, stated).length > 0
           if (
             triggerImages?.length &&
             provider?.vision &&
@@ -641,6 +648,7 @@ export const useStore = create<VibeState>((set, get) => {
             !eng.startsWith('local:') &&
             useUi.getState().autoRepair &&
             aid &&
+            proxyWantsRefine &&
             (autoRefinePass.get(aid) ?? 0) < MAX_AUTO_REFINE
           ) {
             set({ pendingAutoRefineFor: aid })
