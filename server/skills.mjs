@@ -529,6 +529,7 @@ difference() {
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
+    paramAliases: { clearance: 'spin_fit', wall: 'wall' },
     exemplar: KIT_EXEMPLAR,
     validate(code) {
       const issues = []
@@ -552,6 +553,7 @@ export const SKILLS = {
 
   'wheel-axle': {
     id: 'wheel-axle',
+    paramAliases: { clearance: 'spin_fit' },
     exemplar: WHEEL_AXLE_EXEMPLAR,
     validate(code) {
       const issues = []
@@ -616,6 +618,7 @@ export const SKILLS = {
 
   'snap-fit': {
     id: 'snap-fit',
+    paramAliases: { clearance: 'fit' },
     exemplar: SNAP_FIT_EXEMPLAR,
     validate(code) {
       const o = code.match(/hook_overlap\s*=\s*([\d.]+)/)
@@ -643,6 +646,7 @@ export const SKILLS = {
 
   'print-in-place-hinge': {
     id: 'print-in-place-hinge',
+    paramAliases: { clearance: 'gap' },
     exemplar: PIP_HINGE_EXEMPLAR,
     validate(code) {
       const issues = []
@@ -772,6 +776,7 @@ export const SKILLS = {
 
   'bearing-608-pocket': {
     id: 'bearing-608-pocket',
+    paramAliases: { clearance: 'fit' },
     exemplar: BEARING_POCKET_EXEMPLAR,
     validate(code) {
       const m = code.match(/\bod\s*=\s*([\d.]+)/)
