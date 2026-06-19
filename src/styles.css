@@ -1374,6 +1374,13 @@ input[type='checkbox']:focus-visible,
 .menu-note { padding: 8px 10px 4px; font-size: var(--fs-micro); color: var(--text-ghost); }
 .menu-scroll { max-height: 240px; overflow-y: auto; }
 
+/* bill-of-materials list in the Export menu */
+.bom-list { padding: 2px 10px 4px; display: flex; flex-direction: column; gap: 5px; max-width: 320px; }
+.bom-row { display: flex; align-items: baseline; gap: 7px; font-size: var(--fs-small); color: var(--text-dim); }
+.bom-tag { flex-shrink: 0; font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-micro); padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); }
+.bom-tag.bearing { background: var(--raised-hi); color: var(--text); }
+.bom-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: var(--fs-micro); }
+
 /* ───────────────────────── MODAL ───────────────────────────── */
 .scrim { position: fixed; inset: 0; background: rgba(6,7,9,0.62); backdrop-filter: blur(3px); z-index: 70; display: grid; place-items: center; padding: var(--s6); animation: menu-in var(--t-med) var(--ease-out); }
 .modal { width: min(560px, 100%); border-radius: var(--r-xl); background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--sh-modal); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 48px); animation: modal-rise var(--t-med) var(--ease-out); }

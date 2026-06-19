@@ -3,6 +3,7 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyRuntimeSetting, providerStatus, streamChat, testEngine, SYSTEM_PROMPT_TOKENS, UserFacingError, extractScadBlock, reviewWithSkills } from './providers.mjs'
+import { SCREWS, BEARINGS } from './hardware.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
@@ -20,6 +21,13 @@ app.get('/api/health', async (_req, res) => {
   // systemTokens lets the client subtract the real shared-system-prompt cost from each engine's
   // context window when budgeting history (no hardcoded guess that drifts as the prompt grows).
   res.json({ ok: true, providers, systemTokens: SYSTEM_PROMPT_TOKENS })
+})
+
+/** The metal-hardware catalog (data only) — the client computes the bill-of-materials over the
+ *  generated code locally, so the server never sees OpenSCAD; this just supplies the dims so the
+ *  catalog stays the single source of truth (no drifting client copy). */
+app.get('/api/hardware', (_req, res) => {
+  res.json({ screws: SCREWS, bearings: BEARINGS })
 })
 
 /** Save a connection setting (API key / base URL) — applied live, persisted to .env. */

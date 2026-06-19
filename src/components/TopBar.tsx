@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
 import { downloadBlob } from '../lib/stl'
+import { useHardwareCatalog, detectBom, formatBomText } from '../lib/bom'
 import { useClickOutside } from '../lib/useClickOutside'
 import { QUALITY_PRESETS } from '../types'
 import { ConfirmDialog } from './Dialogs'
@@ -179,6 +180,14 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const importShareFile = useStore((s) => s.importShareFile)
   const importInputRef = useRef<HTMLInputElement>(null)
 
+  // bill of materials — the real hardware this design needs (catalog fetched once; detected
+  // client-side over the current program so the server never sees the OpenSCAD)
+  const hardwareCatalog = useHardwareCatalog()
+  const bom = useMemo(
+    () => detectBom(applyValuesToCode(code, params, paramValues), hardwareCatalog),
+    [hardwareCatalog, code, params, paramValues],
+  )
+
   const [open, setOpen] = useState(false)
   const ref = useClickOutside(open, () => setOpen(false))
 
@@ -287,6 +296,32 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
             </span>
             <span className="mi-check"><DArrowRight /></span>
           </button>
+          {bom.length > 0 && (
+            <>
+              <div className="menu-sep" />
+              <div className="menu-label">Hardware to buy</div>
+              <div className="bom-list">
+                {bom.map((it) => (
+                  <div key={it.id} className="bom-row" title={it.line}>
+                    <span className={`bom-tag ${it.kind}`}>{it.id}</span>
+                    <span className="bom-line">{it.line.replace(/^[^—]+— /, '')}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="menu-item"
+                role="menuitem"
+                onClick={run(() => downloadBlob(formatBomText(bom, fileBase), `${fileBase}-hardware.txt`, 'text/plain'))}
+              >
+                <span className="mi-icon"><DDownload /></span>
+                <span className="mi-text">
+                  <span className="mi-title">Hardware list <span className="ext">.txt</span></span>
+                  <span className="mi-sub">Real dims for the {bom.length} part{bom.length > 1 ? 's' : ''} above — what to order</span>
+                </span>
+                <span className="mi-check"><DArrowRight /></span>
+              </button>
+            </>
+          )}
           <div className="menu-sep" />
           <div className="menu-note">
             {belowFine ? `Export can re-render curves at Fine — preview is ${qualityLabel}.` : `Exported at ${qualityLabel} quality.`}
