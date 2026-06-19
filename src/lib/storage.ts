@@ -1,6 +1,29 @@
 import type { Project } from '../types'
 
-const KEY = 'vibemesh.projects.v1'
+/**
+ * Persistence facade. Projects + versions live in IndexedDB (async, ~GBs) behind a
+ * SYNCHRONOUS in-memory cache, so the store's many `saveProjects()` call sites stay
+ * synchronous while the durable store escapes localStorage's 5–10MB quota wedge.
+ *
+ * Boot: `await hydrateStorage()` (once, at the top of store.init) opens the DB, runs
+ * forward migrations from the record's `schemaVersion`, and fills the cache — seeding from
+ * the legacy localStorage snapshot on first run and KEEPING it as a backup (never deleted,
+ * so an older build / a recovery still has it). If IndexedDB is unavailable (e.g. some
+ * private-mode browsers), it transparently falls back to localStorage-only mode.
+ *
+ * Small UI prefs (engine, quality, bed, last-chat id) stay in localStorage — they are tiny
+ * and read synchronously at module load.
+ */
+
+const KEY = 'vibemesh.projects.v1' // localStorage: migration seed + backup
+const DB_NAME = 'vibemesh'
+const DB_VERSION = 1 // IndexedDB STRUCTURE version — bump only to add/change object stores (onupgradeneeded)
+const DB_STORE = 'kv'
+const DB_RECORD = 'projects'
+
+/** DATA-shape version of the stored Project[] (orthogonal to DB_VERSION). Bump when the Project
+ *  shape changes, and add the corresponding step to `MIGRATIONS` / `migrateRecord`. */
+export const SCHEMA_VERSION = 1
 
 // VibeSCAD → Vibemesh-AI rename: copy each legacy key once (old keys are kept
 // untouched so an older build can still open the same browser profile).
@@ -27,7 +50,44 @@ for (const orphan of ['vibemesh.advanced.v1', 'vibescad.advanced.v1', 'vibemesh.
   }
 }
 
-export function loadProjects(): Project[] {
+export interface ProjectsRecord {
+  schemaVersion: number
+  projects: Project[]
+}
+
+/** Drop chat images (the bulk of a project's bytes) — the localStorage backup/quota path. */
+export function slimProjects(projects: Project[]): Project[] {
+  return projects.map((p) => ({
+    ...p,
+    chat: p.chat.map((m) => ({ ...m, images: undefined })),
+    chatFuture: p.chatFuture?.map((m) => ({ ...m, images: undefined })),
+  }))
+}
+
+/** Forward migration, indexed by the version it UPGRADES FROM. Empty today: v0 (the raw
+ *  pre-versioning localStorage Project[]) → v1 is shape-identical. Add an entry per bump, e.g.
+ *  `1: (projects) => projects.map(upgradeV1toV2)`. */
+const MIGRATIONS: Record<number, (projects: Project[]) => Project[]> = {}
+
+/**
+ * Forward-migrate a stored record up to SCHEMA_VERSION. A pre-versioning record (raw
+ * Project[] from the old localStorage key) is treated as v0. Pure + deterministic so the
+ * migration ladder is unit-tested without a DB.
+ */
+export function migrateRecord(record: { schemaVersion?: number; projects?: unknown } | null | undefined): ProjectsRecord {
+  let version = typeof record?.schemaVersion === 'number' ? record.schemaVersion : 0
+  let projects: Project[] = Array.isArray(record?.projects) ? (record!.projects as Project[]) : []
+  while (version < SCHEMA_VERSION) {
+    const step = MIGRATIONS[version]
+    if (step) projects = step(projects)
+    version++
+  }
+  return { schemaVersion: SCHEMA_VERSION, projects }
+}
+
+/* ── localStorage primitives (seed + fallback) ── */
+
+function readLocal(): Project[] {
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return []
@@ -38,22 +98,116 @@ export function loadProjects(): Project[] {
   }
 }
 
-export function saveProjects(projects: Project[]): void {
+function writeLocal(projects: Project[]): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(projects))
   } catch {
-    // quota exceeded — drop oldest projects' chat images, then retry once
+    // quota exceeded — drop chat images, then retry once
     try {
-      const slim = projects.map((p) => ({
-        ...p,
-        chat: p.chat.map((m) => ({ ...m, images: undefined })),
-        chatFuture: p.chatFuture?.map((m) => ({ ...m, images: undefined })),
-      }))
-      localStorage.setItem(KEY, JSON.stringify(slim))
+      localStorage.setItem(KEY, JSON.stringify(slimProjects(projects)))
     } catch {
       /* give up silently */
     }
   }
+}
+
+/* ── IndexedDB primitives ── */
+
+function openDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE)
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error ?? new Error('indexedDB open failed'))
+  })
+}
+
+function idbRead(db: IDBDatabase): Promise<ProjectsRecord | null> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readonly')
+    const req = tx.objectStore(DB_STORE).get(DB_RECORD)
+    req.onsuccess = () => resolve((req.result as ProjectsRecord) ?? null)
+    req.onerror = () => reject(req.error ?? new Error('indexedDB read failed'))
+    // a transaction abort (e.g. DB deleted mid-read) must reject, not hang — hydrate awaits this,
+    // and a pending promise would block app boot. Falls through to the localStorage fallback.
+    tx.onabort = () => reject(tx.error ?? new Error('indexedDB read aborted'))
+  })
+}
+
+function idbWrite(db: IDBDatabase, record: ProjectsRecord): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite')
+    tx.objectStore(DB_STORE).put(record, DB_RECORD)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('indexedDB write failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('indexedDB write aborted'))
+  })
+}
+
+/* ── public facade ── */
+
+let cache: Project[] = []
+let hydrated = false
+let db: IDBDatabase | null = null // null → localStorage-only fallback mode
+
+/** Open the DB, migrate, and fill the synchronous cache. Idempotent; awaited once at boot. */
+export async function hydrateStorage(): Promise<void> {
+  if (hydrated) return
+  try {
+    if (typeof indexedDB === 'undefined') throw new Error('no indexedDB')
+    db = await openDb()
+    const rec = await idbRead(db)
+    if (rec) {
+      cache = migrateRecord(rec).projects
+    } else {
+      // first run on IndexedDB: seed from the legacy localStorage snapshot, persist, and
+      // KEEP localStorage untouched as a backup (board: back up old keys before deletion).
+      cache = migrateRecord({ projects: readLocal() }).projects
+      await idbWrite(db, { schemaVersion: SCHEMA_VERSION, projects: cache })
+    }
+  } catch {
+    // IndexedDB unavailable → localStorage-only mode (prior behavior)
+    db = null
+    cache = readLocal()
+  }
+  hydrated = true
+}
+
+export function loadProjects(): Project[] {
+  return cache
+}
+
+// Coalescing async writer: persist the LATEST cache, never overlapping transactions.
+let writing = false
+let pending = false
+async function flushToDb(): Promise<void> {
+  if (!db) return
+  if (writing) {
+    pending = true
+    return
+  }
+  writing = true
+  try {
+    await idbWrite(db, { schemaVersion: SCHEMA_VERSION, projects: cache })
+  } catch (err) {
+    // durable fallback if a write fails mid-session — surface it so a silent degrade is visible
+    console.warn('[storage] IndexedDB write failed; falling back to localStorage', err)
+    writeLocal(cache)
+  }
+  writing = false
+  if (pending) {
+    pending = false
+    void flushToDb()
+  }
+}
+
+export function saveProjects(projects: Project[]): void {
+  cache = projects
+  if (db) void flushToDb()
+  else writeLocal(projects)
 }
 
 const LAST_CHAT_KEY = 'vibemesh.lastChat.v1'

@@ -7,7 +7,7 @@ import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
-import { loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
+import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
@@ -723,6 +723,7 @@ export const useStore = create<VibeState>((set, get) => {
     vpFuture: [],
 
     init: async () => {
+      await hydrateStorage() // open IndexedDB + migrate + fill the sync cache before first read
       const projects = loadProjects()
       // Which chat opens, in priority order:
       //  1. a valid id in the URL hash → that chat (covers shared links AND same-tab reloads,
