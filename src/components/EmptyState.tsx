@@ -3,6 +3,8 @@ import { useStore } from '../state/store'
 import { EXAMPLES, PROMPT_IDEAS } from '../lib/examples'
 import ModelMenu from './ModelMenu'
 import type { ChatImage } from '../types'
+import { imageBudgetFor } from '../lib/api'
+import { tileReference } from '../lib/tile'
 import { DSpark, DImage, DSparkFill, DArrowRight, DBox, DCamera, DGrid, DCylinder } from './icons'
 
 const CHIP_ICONS = [DBox, DCamera, DGrid, DCylinder]
@@ -22,17 +24,18 @@ export default function EmptyState() {
   const activeProvider = health?.providers.find((p) => p.id === engine)
   const canAttach = !activeProvider || activeProvider.vision !== false
   const noVision = images.length > 0 && activeProvider != null && !activeProvider.vision
+  const imgBudget = Math.max(1, imageBudgetFor(activeProvider) || MAX_IMAGES)
 
-  const attachFiles = (files: Iterable<File>) => {
+  const attachFiles = async (files: Iterable<File>) => {
     const accepted = Array.from(files).filter((f) => IMAGE_TYPES.test(f.type))
+    // tile at attach time (busy sheet → global + crops, clean photo → one global), bounded by the
+    // engine's image budget; same cap re-enforced at send. Each output carries pixel dims + role.
+    const collected: ChatImage[] = []
     for (const file of accepted) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const dataUrl = reader.result as string
-        setImages((prev) => (prev.length < MAX_IMAGES ? [...prev, { mediaType: file.type, data: dataUrl.slice(dataUrl.indexOf(',') + 1) }] : prev))
-      }
-      reader.readAsDataURL(file)
+      if (collected.length >= imgBudget) break
+      collected.push(...(await tileReference(file, imgBudget)))
     }
+    if (collected.length) setImages((prev) => [...prev, ...collected].slice(0, imgBudget))
   }
 
   const generate = () => {
@@ -97,7 +100,7 @@ export default function EmptyState() {
             className="chip-btn icon-only"
             aria-label="Add a reference photo"
             title={canAttach ? 'Add a reference photo or sketch' : 'This engine cannot see images — switch engine to attach a reference'}
-            disabled={images.length >= MAX_IMAGES || !canAttach}
+            disabled={images.length >= imgBudget || !canAttach}
             onClick={() => fileRef.current?.click()}
           >
             <DImage />
