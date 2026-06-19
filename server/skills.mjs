@@ -526,6 +526,87 @@ difference() {
 }
 `
 
+const FIT_PAIR_EXEMPLAR = `// SKILL: fit-pair — a generic peg + socket joint demonstrating the FIT LADDER. The female bore is
+// ALWAYS the male diameter PLUS a named clearance; pick the fit for the function (press/slide/free).
+
+/* [Kit] */
+part = "all"; // [all, peg, socket]
+explode = 0; // [0:1:20]
+
+/* [Fit] */
+peg_d = 8;        // [3:0.5:20]
+fit = 0.2;        // [0:0.05:0.5]   bore = peg_d + fit  (press ~0.05 · slide ~0.2 · free ~0.35)
+depth = 12;       // [6:1:30]       engagement depth
+wall = 2;         // [1.2:0.1:4]
+
+bore = peg_d + fit;                       // female bore — shared clearance, never a bare equal bore
+module peg() cylinder(d = peg_d, h = depth + 3);
+module socket() difference() {
+  cylinder(d = peg_d + 2*wall, h = depth + wall);
+  translate([0, 0, wall]) cylinder(d = bore, h = depth + 1);
+}
+
+if (part == "all") { socket(); translate([0, 0, wall + explode]) peg(); }   // peg seated in the socket bore
+else if (part == "peg") peg();
+else if (part == "socket") socket();
+`
+
+const BISTABLE_EXEMPLAR = `// SKILL: bistable snap — a shallow PRE-CURVED arch beam that buckles between two stable states (a
+// click). The beam is THIN so it snaps elastically; print PETG/Nylon with layers across the arch.
+
+/* [Bistable] */
+span = 40;        // [20:1:80]    anchor-to-anchor
+rise = 6;         // [3:0.5:12]   arch height = the snap travel
+beam_t = 1.0;     // [0.6:0.1:1.8] beam thickness — THIN enough to buckle, not snap off
+width = 10;       // [5:1:24]
+post = 4;         // anchor blocks
+
+function arch(x) = rise * (1 - pow(2*x/span - 1, 2));   // shallow parabola: 0 at the ends, rise at center
+steps = 24;
+top = [for (i = [0:steps]) [i*span/steps, arch(i*span/steps) + beam_t]];
+bot = [for (i = [steps:-1:0]) [i*span/steps, arch(i*span/steps)]];
+
+module beam() linear_extrude(width) polygon(concat(top, bot));
+beam();
+cube([post, width, post]);                                   // left anchor (envelops the beam end)
+translate([span - post, 0, 0]) cube([post, width, post]);    // right anchor
+`
+
+const BUTTON_RETURN_EXEMPLAR = `// SKILL: button-return — a push button that travels in a guide bore and returns on a SEATED metal
+// compression spring (a pocket sized for a standard spring — NOT a printed coil). Shaft slides on
+// a clearance fit; the cap stops at the housing mouth.
+
+/* [Kit] */
+part = "all"; // [all, housing, button]
+explode = 0; // [0:1:20]
+
+/* [Button] */
+cap_d = 14;       // [8:1:30]
+shaft_d = 6;      // [3:0.5:12]
+fit = 0.3;        // [0.2:0.05:0.5]   guide clearance: bore = shaft_d + fit
+travel = 4;       // [2:0.5:10]
+spring_d = 5;     // [3:0.5:10]       metal compression spring OD (seated, not printed)
+spring_h = 8;     // [4:1:16]
+wall = 2;         // [1.2:0.1:4]
+
+bore = shaft_d + fit;                          // shaft slides in the guide bore (shared clearance)
+housing_d = cap_d + 2*wall;
+housing_h = spring_h + travel + wall;
+module housing() difference() {
+  cylinder(d = housing_d, h = housing_h);
+  translate([0, 0, wall]) cylinder(d = spring_d + 1, h = spring_h);          // spring seat pocket (metal spring)
+  translate([0, 0, wall + spring_h]) cylinder(d = bore, h = housing_h);      // guide bore above the seat
+}
+module button() {
+  cylinder(d = shaft_d, h = spring_h + travel);                              // shaft rests on the spring, rides the bore
+  translate([0, 0, spring_h + travel]) cylinder(d = cap_d, h = 3);           // cap
+}
+
+if (part == "all") { housing(); translate([0, 0, wall + explode]) button(); }
+else if (part == "housing") housing();
+else if (part == "button") button();
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -880,6 +961,67 @@ export const SKILLS = {
       return s
     },
   },
+
+  'fit-pair': {
+    id: 'fit-pair',
+    version: 1,
+    paramAliases: { clearance: 'fit', wall: 'wall' },
+    exemplar: FIT_PAIR_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      if (!clearanceFitOk(code, 'peg_d')) issues.push('fit-pair bore must be the male size + a named clearance (bore = peg_d + fit) — a bare equal-size bore seizes')
+      return issues
+    },
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Fit-pair (peg + socket)\n\nFor ANY mating pair, the female bore is the male dimension PLUS a named clearance parameter — never two independent equal numbers (they fuse instead of joining). Pick the fit by function: press ~0.05mm (permanent), slide ~0.2mm (assembly), free ~0.35mm (spins). Expose the male size + one clearance; derive the bore.'
+      if (!isLocal) s += '\n\nReference example (peg + socket, bore = peg_d + fit, flat on z=0):\n\n' + FIT_PAIR_EXEMPLAR
+      return s
+    },
+  },
+
+  'bistable': {
+    id: 'bistable',
+    version: 1,
+    exemplar: BISTABLE_EXEMPLAR,
+    validate(code) {
+      const m = code.match(/beam_t\s*=\s*([\d.]+)/)
+      const t = m ? parseFloat(m[1]) : null
+      const issues = []
+      if (t === null) issues.push('bistable must expose a thin beam thickness (beam_t)')
+      else if (t < 0.4 || t > 1.8) issues.push(`bistable beam is ${t}mm — must be ~0.6-1.2mm so the arch buckles elastically; too thick snaps off, too thin will not hold a state`)
+      return issues
+    },
+    brokenControl: (code) => code.replace(/beam_t\s*=\s*[\d.]+/, 'beam_t = 3'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Bistable snap\n\nA bistable click is a shallow PRE-CURVED arch beam anchored at both ends that buckles between two stable states. The beam must be THIN (~0.6-1.2mm) so it snaps elastically without breaking; the arch rise is the snap travel. Print PETG/Nylon with layer lines running across the arch (not along it). Expose span, rise, and beam thickness.'
+      if (!isLocal) s += '\n\nReference example (anchored shallow arch beam, flat on z=0):\n\n' + BISTABLE_EXEMPLAR
+      return s
+    },
+  },
+
+  'button-return': {
+    id: 'button-return',
+    version: 1,
+    paramAliases: { clearance: 'fit', wall: 'wall' },
+    exemplar: BUTTON_RETURN_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      if (!clearanceFitOk(code, 'shaft_d')) issues.push('button-return guide bore must be shaft_d + a clearance (bore = shaft_d + fit), or the button binds')
+      if (!/\bspring_d\b/.test(code)) issues.push('button-return must seat a STANDARD metal compression spring (a spring_d pocket) — do not print a coil spring')
+      return issues
+    },
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Button-return\n\nA returning push button rides in a guide bore (bore = shaft_d + a clearance fit) and returns on a SEATED metal compression spring — a pocket sized to a standard spring OD, NOT a printed coil (printed coils are unreliable + render-heavy). The shaft rests on the spring; a cap stops at the housing mouth; expose travel, the spring pocket, and the guide clearance.'
+      if (!isLocal) s += '\n\nReference example (housing with a spring seat + a guided button, flat on z=0):\n\n' + BUTTON_RETURN_EXEMPLAR
+      return s
+    },
+  },
 }
 
 /** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
@@ -904,6 +1046,9 @@ const TRIGGERS = [
   ['leaf-spring', /\bleaf[\s-]?spring|\bcantilever[\s-]?spring|\bflex(?:y|ible)?[\s-]?(?:arm|tab|finger)/i],
   ['bearing-608-pocket', /\bbearing|\b608\b/i],
   ['threaded-fastener-seat', /\bscrew|\bbolt\b|\bheat[\s-]?set|\bnut[\s-]?trap|\bthreaded?\b|\bM[2-8](?:\.5)?\b|\btapped\b|\bfasten/i],
+  ['button-return', /\bbutton|\bpush[\s-]?button|\bplunger|\bkeycap|\breturn[\s-]?spring/i],
+  ['bistable', /\bbistable|\bsnap[\s-]?through|\bclicker\b|\bmono?stable/i],
+  ['fit-pair', /\bfit[\s-]?pair|\bpeg\b|\bsockets?\b|\bdowel/i],
 ]
 
 /** A skill is selectable only if it exists AND is not quarantined. Quarantine (an entry flag)
