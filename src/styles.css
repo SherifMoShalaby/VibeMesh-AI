@@ -936,6 +936,32 @@ input[type='checkbox']:focus-visible,
 .hud-dims .unit { font-size: var(--fs-micro); color: var(--text-faint); font-family: var(--font-mono); }
 .hud-dims.over .dim-val { color: var(--warn); }
 
+/* Printability Inspector badge + hover/focus popover */
+.print-badge { display: flex; align-items: center; gap: 7px; white-space: nowrap; cursor: default; outline: none; }
+.print-badge .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); flex-shrink: 0; }
+.print-badge .status-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.print-badge .status-dot.err { background: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
+.print-badge .pb-label { font-size: var(--fs-small); font-weight: 600; color: var(--text); }
+.print-badge.warn .pb-label { color: var(--warn); }
+.print-badge.fail .pb-label { color: var(--err); }
+.print-pop {
+  position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%) translateY(4px);
+  width: min(340px, 78vw); padding: 10px 12px; border-radius: var(--r-sm);
+  background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop, 0 8px 24px rgba(0,0,0,0.4));
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+  z-index: 20; white-space: normal; text-align: left;
+}
+.print-badge:hover .print-pop, .print-badge:focus-visible .print-pop, .print-badge:focus-within .print-pop {
+  opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); pointer-events: auto;
+}
+.print-pop .pp-title { font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 7px; }
+.print-pop .pp-row { display: flex; align-items: flex-start; gap: 7px; padding: 3px 0; font-size: var(--fs-small); color: var(--text-dim); line-height: 1.35; }
+.print-pop .pp-row .status-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--ok); box-shadow: 0 0 0 2px var(--ok-soft); flex-shrink: 0; }
+.print-pop .pp-row .status-dot.warn { background: var(--warn); box-shadow: 0 0 0 2px var(--warn-soft); }
+.print-pop .pp-row .status-dot.err { background: var(--err); box-shadow: 0 0 0 2px var(--err-soft); }
+.print-pop .pp-row b { color: var(--text); font-weight: 600; }
+.print-pop .pp-note { margin-top: 7px; font-size: var(--fs-micro); color: var(--text-ghost); }
+
 .hud-parts { display: flex; align-items: center; gap: 8px; }
 .part-tog { display: flex; gap: 3px; padding: 3px; border-radius: var(--r-sm); background: var(--inset); border: 1px solid var(--line); }
 .part-tog button {
