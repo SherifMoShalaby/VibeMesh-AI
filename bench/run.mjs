@@ -216,6 +216,17 @@ const TASKS = [
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['wheel-axle', 'snap-fit'] },
     expect: { partEnumMin: 2, bboxMax: [220, 220, 80] },
   },
+  {
+    // Hard-surface / stylized fidelity lane — makes the "faceted edges + recessed panels + a
+    // faceted accent, NOT a smooth blob" prompt vocabulary RATCHETABLE. Geometry is prompt-determined
+    // (gold at bench/gold/T17-hardsurface.scad → voxel-IoU). `hardSurface` opts it into the advisory
+    // judgeVision per-feature fidelity check. New lane → not gated until baselined.
+    id: 'T17-hardsurface',
+    kind: 'fresh',
+    prompt:
+      'A sci-fi hard-surface desk token: a hexagonal pillar 30mm across the flats and 50mm tall, with a 2mm 45-degree chamfer around the top edge, a shallow recessed rectangular panel centered on each of the six faces, and a short low-poly faceted pyramidal finial on top. Keep it printable and flat on the bed.',
+    expect: { bboxMax: [40, 40, 70], hardSurface: true },
+  },
 ]
 
 /* ── SSE generation via the app's API ── */
@@ -531,7 +542,7 @@ async function runTask(engine, task, messages, dir, history, label) {
   // advisory VISION judge for image/asymmetric tasks: rasterize the result (bench/render.mjs)
   // and let the judge compare it to the reference. Only when enabled, so normal runs pay nothing.
   let visionJudge
-  if (judgeAvailable() && compiled.ok && compiled.stl && (task.expect?.asymmetric || task.kind === 'image')) {
+  if (judgeAvailable() && compiled.ok && compiled.stl && (task.expect?.asymmetric || task.expect?.hardSurface || task.kind === 'image')) {
     const renderImages = renderViews(compiled.stl)
     const referenceImage = task.kind === 'image' ? { base64: visionImage, mediaType: 'image/png' } : undefined
     visionJudge = await judgeVision({ prompt: task.prompt ?? '(custom)', code, referenceImage, renderImages })
