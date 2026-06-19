@@ -24,6 +24,9 @@ const POSITIVE = [
   ['a planetary gear reduction for a small motor', 'planetary'],
   ['a GT2 pulley for a 20-tooth stepper', 'gt2-pulley'],
   ['a herringbone reduction gear', 'herringbone'],
+  ['a peg and socket press-fit joint', 'fit-pair'],
+  ['a bistable snap-through clicker', 'bistable'],
+  ['a push button with a spring return', 'button-return'],
 ]
 
 const NEGATIVE = [

@@ -29,6 +29,7 @@ const ALL_SKILL_IDS = [
   'wheel-axle', 'living-hinge', 'leaf-spring', 'snap-fit', 'print-in-place-hinge',
   'spur-gear', 'rack-pinion', 'ratchet', 'coil-spring', 'threaded-fastener-seat',
   'bearing-608-pocket', 'planetary', 'gt2-pulley', 'herringbone',
+  'fit-pair', 'bistable', 'button-return',
 ]
 
 export default function ChatPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
