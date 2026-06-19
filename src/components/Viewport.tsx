@@ -8,6 +8,7 @@ import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
+import { analyzePrintability, type PrintabilityReport } from '../lib/printability'
 import { packPlates, type Placement } from '../lib/packPlates'
 import { canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
 import EmptyState from './EmptyState'
@@ -190,6 +191,14 @@ export default function Viewport() {
 
   // ── slicer (multi-plate) view: pack each compiled piece onto bed-sized plates ──
   const platesView = viewMode === 'plates' && partParam !== undefined
+
+  // AI-free printability verdict (off the compile hot path — recomputes only when the
+  // mesh / placement / bed changes, never per render). Skipped in the plates/slicer view.
+  const printability = useMemo<PrintabilityReport | null>(() => {
+    if (!tbox || platesView) return null
+    return analyzePrintability({ size: tbox.size, minZ: tbox.minZ, bed, stl, isAssembly: isAssemblyPreview })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stl, stlVersion, tbox, bed.x, bed.y, bed.z, isAssemblyPreview, platesView])
   const sliceGeos = useMemo(() => {
     const m = new Map<string, ModelGeometry>()
     for (const p of pieces ?? []) {
@@ -684,6 +693,26 @@ export default function Viewport() {
                   {tbox.size.x.toFixed(1)}<span className="x">×</span>{tbox.size.y.toFixed(1)}<span className="x">×</span>{tbox.size.z.toFixed(1)}
                 </span>
                 <span className="unit">mm</span>
+              </div>
+            </div>
+          )}
+          {!platesView && printability && (
+            <div className="hud-seg hud-print">
+              <div className={`print-badge ${printability.level}`} tabIndex={0}>
+                <span className={`status-dot${printability.level === 'fail' ? ' err' : printability.level === 'warn' ? ' warn' : ''}`} />
+                <span className="pb-label">
+                  {printability.level === 'fail' ? "Won't print" : printability.level === 'warn' ? 'Print: caution' : 'Printable'}
+                </span>
+                <div className="print-pop" role="tooltip">
+                  <div className="pp-title">Printability — {isAssemblyPreview ? 'assembly preview' : 'this part'}</div>
+                  {printability.checks.map((c) => (
+                    <div key={c.id} className={`pp-row ${c.level}`}>
+                      <span className={`status-dot${c.level === 'fail' ? ' err' : c.level === 'warn' ? ' warn' : ''}`} />
+                      <span className="pp-text"><b>{c.label}</b> — {c.detail}</span>
+                    </div>
+                  ))}
+                  <div className="pp-note">Advisory · assumes the authored print orientation, 0.4mm nozzle.</div>
+                </div>
               </div>
             </div>
           )}
