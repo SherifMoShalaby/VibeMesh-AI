@@ -608,6 +608,79 @@ else if (part == "housing") housing();
 else if (part == "button") button();
 `
 
+// ── Stylized hard-surface FORM recipes (backlog) ─────────────────────────────────────────────
+// Reusable parametric modules for the stylized features that most often COLLAPSE when a model
+// reads them correctly but can't synthesize them: a flared crown, a hollow crenellated crown, an
+// open forked cradle. Each encodes the anti-collapse invariant as a parameter the validator checks.
+
+const CROWN_CORONET_EXEMPLAR = `// SKILL: crown / coronet — a flared, fluted collar WIDEST AT THE TOP (a king/queen crown, a trophy
+// coronet). The collapse mode is a blocky inverted cone (top narrower than base) — so top_d MUST
+// exceed base_d. A hollow shell with an open, scalloped (pointed) rim. Flat on z=0.
+
+/* [Coronet] */
+base_d = 16;      // [10:1:40]   diameter at the neck (BOTTOM)
+top_d = 28;       // [14:1:60]   diameter at the rim (TOP) — MUST exceed base_d (it FLARES OUTWARD)
+height = 20;      // [8:1:40]
+points = 6;       // [4:1:12]    scallops/points around the rim
+wall = 2.4;       // [1.6:0.2:4]
+
+seg = max(24, 4*points);
+module flare(d0, dt, h) linear_extrude(height = h, scale = dt/d0, convexity = 5) circle(d = d0, $fn = seg);
+
+difference() {
+  flare(base_d, top_d, height);                                       // flared outer shell
+  translate([0, 0, wall]) flare(base_d - 2*wall, top_d - 2*wall, height + 1);  // hollow, open rim
+  for (i = [0:points-1]) rotate([0, 0, 360/points*i])                 // scallop the rim into points
+    translate([top_d/2, 0, height]) sphere(d = max(2, top_d/points*1.1), $fn = 16);
+}
+`
+
+const HOLLOW_CRENELLATION_EXEMPLAR = `// SKILL: hollow crenellation — a castle/rook battlement crown: a ring of merlons separated by
+// crenel gaps AND a SUNKEN hollow interior. The collapse mode is a solid closed cylinder (no
+// notches, no hollow) — so inner_d MUST be > 0 and < outer_d, with merlons >= 2. Flat on z=0.
+
+/* [Battlement] */
+outer_d = 26;     // [14:1:60]
+inner_d = 16;     // [6:1:50]    the HOLLOW bore — MUST be > 0 and < outer_d
+height = 16;      // [8:1:40]
+merlons = 6;      // [4:1:12]    teeth, with a crenel gap between each
+crenel = 6;       // [3:1:14]    notch depth from the top
+
+seg = max(24, 4*merlons);
+gapw = outer_d * sin(180/merlons);
+difference() {
+  cylinder(d = outer_d, h = height, $fn = seg);
+  translate([0, 0, 2]) cylinder(d = inner_d, h = height, $fn = seg);          // sunken hollow interior
+  for (i = [0:merlons-1]) rotate([0, 0, 360/merlons*i])                       // crenel gaps in the rim
+    translate([outer_d/2, 0, height - crenel/2]) cube([outer_d, gapw, crenel + 1], center = true);
+}
+`
+
+const OPEN_PRONG_ORB_EXEMPLAR = `// SKILL: open prongs cradling an orb — a bishop's split mitre, a forked claw holder: two+ prongs
+// that DO NOT TOUCH (an open gap) cradling a SEPARATE smooth orb. The collapse mode is the prongs
+// fusing into a solid blob — so gap MUST be > 0 and the orb is its own body. Flat on z=0.
+
+/* [Fork] */
+prongs = 3;       // [2:1:6]
+gap = 4;          // [1:0.5:14]   the open gap that keeps the prong tips apart — MUST be > 0
+prong_h = 30;     // [12:1:60]
+prong_w = 5;      // [2:0.5:12]
+orb_d = 16;       // [8:1:40]
+base_d = 20;      // [10:1:50]
+
+ring_r = orb_d/2 + gap + prong_w/2;   // prongs sit a gap away from the orb surface
+module prong(a) rotate([0, 0, a]) hull() {
+  translate([base_d/3, 0, 0]) cylinder(d = prong_w, h = 0.1, $fn = 20);
+  translate([ring_r, 0, prong_h]) cylinder(d = prong_w, h = 0.1, $fn = 20);
+}
+
+union() {
+  cylinder(d = base_d, h = 4, $fn = 48);                       // base
+  for (i = [0:prongs-1]) prong(360/prongs*i);                  // open prongs — separated by gap, never meet
+  translate([0, 0, prong_h]) sphere(d = orb_d, $fn = 40);      // the cradled orb (its own body)
+}
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -1024,6 +1097,73 @@ export const SKILLS = {
       return s
     },
   },
+
+  'crown-coronet': {
+    id: 'crown-coronet',
+    version: 1,
+    exemplar: CROWN_CORONET_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      const t = code.match(/\btop_d\s*=\s*([\d.]+)/)
+      const b = code.match(/\bbase_d\s*=\s*([\d.]+)/)
+      if (!t || !b) issues.push('coronet must declare base_d (neck, bottom) and top_d (rim, top)')
+      else if (parseFloat(t[1]) <= parseFloat(b[1])) issues.push(`coronet must FLARE OUTWARD: top_d (${t[1]}) must exceed base_d (${b[1]}) — top ≤ base is the blocky inverted-cone collapse`)
+      return issues
+    },
+    brokenControl: (code) => code.replace(/\btop_d\s*=\s*[\d.]+/, 'top_d = 10'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Crown / coronet\n\nA crown or coronet FLARES OUTWARD — it is WIDEST AT THE TOP rim, never a blocky inverted cone. Build it as a hollow shell (linear_extrude with scale > 1 from a neck diameter up to a larger rim diameter), then scallop or notch the open rim into points. Keep top_d > base_d; the points are recessed cuts, not a polygonized whole body.'
+      if (!isLocal) s += '\n\nReference example (flared hollow coronet with a scalloped rim, flat on z=0):\n\n' + CROWN_CORONET_EXEMPLAR
+      return s
+    },
+  },
+
+  'hollow-crenellation': {
+    id: 'hollow-crenellation',
+    version: 1,
+    exemplar: HOLLOW_CRENELLATION_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      const o = code.match(/\bouter_d\s*=\s*([\d.]+)/)
+      const i = code.match(/\binner_d\s*=\s*([\d.]+)/)
+      if (!o || !i) issues.push('crenellation must declare outer_d and inner_d (the hollow bore)')
+      else if (parseFloat(i[1]) <= 0 || parseFloat(i[1]) >= parseFloat(o[1])) issues.push(`crenellation must be HOLLOW: inner_d (${i[1]}) must be > 0 and < outer_d (${o[1]}) — a solid closed cylinder is the collapse`)
+      if (!/\bmerlons\b/.test(code)) issues.push('crenellation needs merlons (teeth) with crenel gaps between them, not a smooth rim')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/\binner_d\s*=\s*[\d.]+/, 'inner_d = 0'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Hollow crenellation (battlement)\n\nA castle/rook battlement crown is HOLLOW (a sunken interior bore, inner_d > 0 and < outer_d) and its rim is a ring of merlons separated by crenel gaps — never a solid closed cylinder. Subtract the central bore AND the crenel gaps from the top.'
+      if (!isLocal) s += '\n\nReference example (hollow crenellated crown with merlon/crenel rim, flat on z=0):\n\n' + HOLLOW_CRENELLATION_EXEMPLAR
+      return s
+    },
+  },
+
+  'open-prong-cradle': {
+    id: 'open-prong-cradle',
+    version: 1,
+    exemplar: OPEN_PRONG_ORB_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      const g = code.match(/\bgap\s*=\s*([\d.]+)/)
+      if (!g) issues.push('open-prong cradle must declare a gap between the prongs')
+      else if (parseFloat(g[1]) <= 0) issues.push(`prongs must stay OPEN: gap (${g[1]}) must be > 0 — gap 0 fuses the fork into a solid blob`)
+      if (!/\borb_d\b/.test(code)) issues.push('the cradled orb must be its own body (orb_d), not merged into the prongs')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/\bgap\s*=\s*[\d.]+/, 'gap = 0'),
+    fragment(engine) {
+      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+      let s =
+        '\n\n# Open forked cradle\n\nA bishop\'s split mitre / a forked claw is OPEN — two or more prongs that DO NOT touch (a positive gap between the tips) cradling a separate smooth orb. Never fuse the prongs into a solid wedge. Keep gap > 0 and model the orb as its own body resting in the fork.'
+      if (!isLocal) s += '\n\nReference example (open prongs + a separate cradled orb, flat on z=0):\n\n' + OPEN_PRONG_ORB_EXEMPLAR
+      return s
+    },
+  },
 }
 
 /** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
@@ -1059,6 +1199,10 @@ const TRIGGERS = [
   ['button-return', /\bbutton|\bpush[\s-]?button|\bplunger|\bkeycap|\breturn[\s-]?spring/i],
   ['bistable', /\bbistable|\bsnap[\s-]?through|\bclicker\b|\bmono?stable/i],
   ['fit-pair', /\bfit[\s-]?pair|\bpeg\b|\bsockets?\b|\bdowel/i],
+  // stylized hard-surface FORM recipes (general, not chess-specific)
+  ['crown-coronet', /\bcrown|\bcoronet|\btiara|\bdiadem/i],
+  ['hollow-crenellation', /\bcrenell?at|\bbattlement|\bmerlon|\bturret|\bparapet|\brook\b|\bcastle\b/i],
+  ['open-prong-cradle', /\bprong|\bforked?\b|\bclaw\b|\bmitre|\bmiter|\bcradl/i],
 ]
 
 /** A skill is selectable only if it exists AND is not quarantined. Quarantine (an entry flag)
