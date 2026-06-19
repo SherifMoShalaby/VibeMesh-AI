@@ -27,8 +27,10 @@ export function getHardwareCatalog(): Promise<HardwareCatalog | null> {
   return cached
 }
 
+/** Escape every regex metacharacter (not just '.') before embedding a catalog key in a pattern. */
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /** Whole-token match that tolerates the dotted M2.5 and won't match M3 inside M30 / 608 inside 6082. */
-const tokenRe = (token: string) => new RegExp(`(^|[^A-Za-z0-9.])${token.replace(/\./g, '\\.')}([^A-Za-z0-9.]|$)`, 'i')
+const tokenRe = (token: string) => new RegExp(`(^|[^A-Za-z0-9.])${escapeRe(token)}([^A-Za-z0-9.]|$)`, 'i')
 
 /** Detect the catalog hardware referenced by a program. Deduped by id; empty when none. */
 export function detectBom(code: string, cat: HardwareCatalog | null): BomItem[] {
