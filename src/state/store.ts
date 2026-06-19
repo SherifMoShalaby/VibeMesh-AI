@@ -492,6 +492,7 @@ export const useStore = create<VibeState>((set, get) => {
           : undefined
       let skillReport: SkillIssue[] = []
       let appliedSkillIds: string[] = []
+      let droppedSkillIds: string[] = []
       const full = await streamGenerate(engine, messages, {
         onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
         signal: ctrl.signal,
@@ -500,7 +501,7 @@ export const useStore = create<VibeState>((set, get) => {
         // opts.skillIds (from the applied-patterns chip's correction) OVERRIDES retrieval
         // for this turn — the server assembler injects exactly those fragments, no selectSkills.
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent, skillIds: opts.skillIds, sourceHint },
-        onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds },
+        onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
       })
       clearTimeout(genTimer)
       genTimer = undefined
@@ -557,6 +558,7 @@ export const useStore = create<VibeState>((set, get) => {
         code: code ?? undefined,
         skillNote,
         appliedSkillIds: appliedSkillIds.length ? appliedSkillIds : undefined,
+        droppedSkillIds: droppedSkillIds.length ? droppedSkillIds : undefined,
         intent: intent ?? undefined,
       }
       setChat([...activeChat(), assistantMsg])
