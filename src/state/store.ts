@@ -9,6 +9,7 @@ import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
 import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
 import { buildShareFile, parseShareFile, serializeShareFile, shareFileToProject } from '../lib/shareFile'
+import { loadSkillStats, saveSkillStats, recordUses, recordRemovals, type SkillStats } from '../lib/skillStats'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
@@ -55,6 +56,9 @@ interface VibeState {
   degradedToDraft: boolean
   /** measured bounding box of the last successful render */
   modelDims: StlBBox | null
+  /** LOCAL, privacy-preserving per-skill outcome counts (uses/removals) — drives the chip's
+   *  "consider quarantining" hint. Never leaves the browser. */
+  skillStats: SkillStats
   /** viewport arrangement: position + rotation (rad, XYZ order) applied to the mesh and baked into single-STL export */
   meshTransform: { position: [number, number, number]; rotation: [number, number, number] } | null
   setMeshTransform: (t: VibeState['meshTransform']) => void
@@ -567,6 +571,12 @@ export const useStore = create<VibeState>((set, get) => {
         intent: intent ?? undefined,
       }
       setChat([...activeChat(), assistantMsg])
+      // local skill-health signal: count this application (paired with chip removals below)
+      if (appliedSkillIds.length) {
+        const ns = recordUses(get().skillStats, appliedSkillIds)
+        set({ skillStats: ns })
+        saveSkillStats(ns)
+      }
       // teach the loop once per project (UX-AUDIT F9): point at sliders / chat / export
       if (isFirstModel) {
         setChat([
@@ -707,6 +717,7 @@ export const useStore = create<VibeState>((set, get) => {
     compileNote: null,
     degradedToDraft: false,
     modelDims: null,
+    skillStats: loadSkillStats(),
     meshTransform: null,
     stl: null,
     stlVersion: 0,
@@ -967,8 +978,16 @@ export const useStore = create<VibeState>((set, get) => {
       await runGeneration({ text: lastUser.text, action: lastUser.action })
     },
 
-    regenerateWithSkills: async (_msgId, skillIds) => {
+    regenerateWithSkills: async (msgId, skillIds) => {
       if (get().generating) return
+      // health signal: skills the user just REMOVED from this message's chip are a wrong-fit vote
+      const edited = activeChat().find((m) => m.id === msgId)
+      const removed = (edited?.appliedSkillIds ?? []).filter((id) => !skillIds.includes(id))
+      if (removed.length) {
+        const ns = recordRemovals(get().skillStats, removed)
+        set({ skillStats: ns })
+        saveSkillStats(ns)
+      }
       const labels = skillIds.length ? skillIds.join(', ') : null
       const text = labels
         ? `Regenerate the current model using exactly these mechanism patterns: ${labels}. Keep the design otherwise the same.`
