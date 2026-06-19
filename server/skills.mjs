@@ -1027,12 +1027,20 @@ export const SKILLS = {
 }
 
 /** Cap on auto-retrieved skills, so a prompt that name-drops several mechanisms can't
- *  balloon the system prompt. An explicit skillIds list is never capped. */
+ *  balloon the system prompt. The scored router keeps the top-N by relevance (NOT the
+ *  array tail) and surfaces what it dropped. */
 export const MAX_AUTO_SKILLS = 3
 
-/** Prompt-intent → skill triggers, in priority order. Deliberately SPECIFIC (named
- *  mechanisms, not bare words) to keep false-positives low: "leaf spring" / "coil spring"
- *  fire their skill, but a bare "spring" fires neither. First match wins per skill. */
+/** Hard ceiling on an EXPLICIT skillIds list (applied-patterns chip / router). The chip
+ *  sends the full curated set, so the explicit path is REPLACE — but it must still be bounded:
+ *  an unbounded list (all 18 → a full exemplar each) would balloon the prompt, a risk that
+ *  became acute once a router can emit lists. Higher than the auto cap (explicit = intentional). */
+export const MAX_SKILLS = 6
+
+/** Prompt-intent → skill triggers, in TIE-BREAK priority order (when two skills score equal,
+ *  the earlier row wins). Deliberately SPECIFIC (named mechanisms, not bare words) to keep
+ *  false-positives low: "leaf spring" / "coil spring" fire their skill, a bare "spring" fires
+ *  neither. The router scores every match; this order only breaks ties. */
 const TRIGGERS = [
   ['wheel-axle', /\bwheel|\baxle|\broll|\bcaster|\bchassis/i],
   ['rack-pinion', /\brack/i],
@@ -1059,24 +1067,85 @@ const TRIGGERS = [
  *  by the zero-API walker, which blocks merging a broken exemplar.) */
 const usable = (id) => !!SKILLS[id] && !SKILLS[id].quarantine
 
-/** Map per-request context to the ordered skill ids to inject.
- *  Precedence: (1) an explicit context.skillIds (router / live-check) wins outright;
- *  otherwise (2) context.kit seeds the baseplate skill and (3) the TRIGGERS are matched
- *  against the current prompt PLUS the prior turn's carried intent.domainTags — so a
- *  follow-up that drops the keyword ("make it bigger") still retains the mechanism —
- *  capped at MAX_AUTO_SKILLS. Quarantined skills are never selected. */
-export function selectSkills(context) {
-  if (Array.isArray(context?.skillIds)) return context.skillIds.filter(usable)
-  const out = []
-  if (context?.kit && usable('kit-baseplate')) out.push('kit-baseplate')
+/** Tie-break order: a skill's index in TRIGGERS (earlier = higher priority when scores tie). */
+const TRIGGER_INDEX = new Map(TRIGGERS.map(([id], i) => [id, i]))
+
+/** Co-requirement edges: when the requirer is a candidate AND the required skill ALSO matched,
+ *  the required skill rides just above its requirer so the cap can't split a pair that belongs
+ *  together (the board's named case: a wheel running on a bearing). Never ADDS a skill that did
+ *  not match on its own — only re-ranks, so no false positives. */
+const COREQUIRES = { 'wheel-axle': ['bearing-608-pocket'] }
+
+/** Score every triggerable (non-quarantined) skill against the request. Higher = more relevant.
+ *  A direct prompt hit (2) outweighs the model's carried intent.domainTags (2), archetype (1),
+ *  and signatureFeatures (1). Deterministic: identical context → identical scores (so the
+ *  zero-API retrieval.selftest still gates the router — no embedding/LLM call on the hot path). */
+function scoreSkills(context) {
   const prompt = typeof context?.prompt === 'string' ? context.prompt : ''
-  const carried = Array.isArray(context?.intent?.domainTags) ? context.intent.domainTags.join(' ') : ''
-  const text = `${prompt} ${carried}`.trim()
-  if (text) {
-    for (const [id, re] of TRIGGERS) {
-      if (out.length >= MAX_AUTO_SKILLS) break
-      if (!out.includes(id) && usable(id) && re.test(text)) out.push(id)
-    }
+  const intent = context?.intent ?? {}
+  const tags = Array.isArray(intent.domainTags) ? intent.domainTags.join(' ') : ''
+  const arche = typeof intent.archetype === 'string' ? intent.archetype : ''
+  const sig = Array.isArray(intent.signatureFeatures) ? intent.signatureFeatures.join(' ') : ''
+  const sources = [
+    [prompt, 2],
+    [tags, 2],
+    [arche, 1],
+    [sig, 1],
+  ]
+  const score = {}
+  for (const [id, re] of TRIGGERS) {
+    if (!usable(id)) continue
+    let sc = 0
+    for (const [text, w] of sources) if (text && re.test(text)) sc += w
+    if (sc > 0) score[id] = sc
   }
-  return out
+  for (const [req, deps] of Object.entries(COREQUIRES)) {
+    if (score[req] == null) continue
+    for (const d of deps) if (score[d] != null && usable(d)) score[d] = Math.max(score[d], score[req] + 0.1)
+  }
+  return score
+}
+
+/**
+ * Resolve the skills for a request, exposing BOTH what was selected and what the cap dropped.
+ *  - explicit context.skillIds (applied-patterns chip / router): the authoritative curated set,
+ *    deduped, usable-filtered, and bounded by MAX_SKILLS (REPLACE — the chip sends the full set).
+ *  - otherwise: context.kit seeds kit-baseplate, then the scored router ranks every match
+ *    (prompt + carried intent) and keeps the top MAX_AUTO_SKILLS by RELEVANCE; the rest are
+ *    `dropped` (observable, never silently truncated). `scores` is returned for telemetry.
+ */
+export function selectSkillsDetailed(context) {
+  if (Array.isArray(context?.skillIds)) {
+    const seen = new Set()
+    const selected = []
+    const dropped = []
+    for (const id of context.skillIds) {
+      if (!usable(id) || seen.has(id)) continue
+      seen.add(id)
+      if (selected.length < MAX_SKILLS) selected.push(id)
+      else dropped.push(id)
+    }
+    return { selected, dropped, scores: {} }
+  }
+  const selected = []
+  if (context?.kit && usable('kit-baseplate')) selected.push('kit-baseplate')
+  const score = scoreSkills(context)
+  // tie-break by TRIGGERS index; `?? Infinity` defends a future co-required dep that isn't itself a
+  // TRIGGERS row (else the comparator yields NaN and the sort becomes implementation-defined).
+  const ranked = Object.keys(score).sort(
+    (a, b) => score[b] - score[a] || (TRIGGER_INDEX.get(a) ?? Infinity) - (TRIGGER_INDEX.get(b) ?? Infinity),
+  )
+  const dropped = []
+  for (const id of ranked) {
+    if (selected.includes(id)) continue
+    if (selected.length < MAX_AUTO_SKILLS) selected.push(id)
+    else dropped.push(id)
+  }
+  return { selected, dropped, scores: score }
+}
+
+/** Ordered skill ids to inject for a request (the selected set). Back-compat wrapper over
+ *  selectSkillsDetailed — callers that also want the dropped set call the detailed form. */
+export function selectSkills(context) {
+  return selectSkillsDetailed(context).selected
 }

@@ -243,8 +243,18 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
 - **Vision fields + source-routed build fragment (P6).** From a reference image the INTENT line also carries `sourceType` (photo|drawing|orthographic|multiview|multiobject), `statedDimensions` (legibly-labeled dims, read not invented), `asymmetryFlags`, `confidence`. The assembler injects a source-type-routed build fragment (drawing/ortho → reconcile views into one solid + honor labeled dims; multiobject → model each as a part; photo → estimate scale) — routed by the model's carried `sourceType`, or on the first image turn by a coarse client `sourceHint` from the attached image roles. Never always-on: a text request or an un-classified single image adds nothing.
 - **Intent drives retrieval, carried across turns.** Parsed `intent.domainTags` ride forward in
   `GenerateContext` so a follow-up that drops the mechanism keyword ("make it bigger" after a gear
-  request) still retrieves the same skill; the server `selectSkills` matches its TRIGGERS against the
-  prompt PLUS those carried tags. First turn → server-side selection from the prompt only.
+  request) still retrieves the same skill. First turn → server-side selection from the prompt only.
+- **Scored deterministic router (§4 board pick).** `selectSkills` no longer takes the first matches in
+  array order — `scoreSkills` weights each skill by where it matched (prompt hit 2 · carried
+  `intent.domainTags` 2 · `archetype`/`signatureFeatures` 1 each), ranks by score, and keeps the top
+  `MAX_AUTO_SKILLS` **by relevance** (TRIGGERS array index only breaks ties — so existing single-match
+  routing is byte-identical). Co-requirement edges (`COREQUIRES`, e.g. wheel-axle→bearing-608-pocket)
+  float a matched dependency in alongside its requirer so the cap can't split a pair. It stays
+  **deterministic and zero-API** (no embedding/LLM call on the hot path) so `bench/retrieval.selftest`
+  still gates it. `selectSkillsDetailed` returns `{selected, dropped, scores}`; the cap's `dropped`
+  set rides the SSE `done` event to the client so truncation is never silent. An **explicit** skillIds
+  list (chip/router) is REPLACE but **deduped and bounded by `MAX_SKILLS`** (an unbounded list would
+  balloon the prompt — acute once a router emits lists).
 - **Applied-patterns chip = context/metadata, never a competing output block.** On each code-bearing
   message a chip renders `form · facetVerdict` + the skills that fired (`appliedSkillIds`, as human
   labels), with `archetype`/`ambiguity`/`assumptions` in the tooltip. Renders nothing when the message
@@ -255,6 +265,10 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   retrieval for that turn (selectSkills skipped — the assembler injects exactly those fragments). It
   shares the generating-guard + abortController; the new version carries the corrected
   `appliedSkillIds`. Advisory — corrected ids only change retrieval, never force a competing block.
+  The chip always sends the **full curated set** (`[...applied, added]` / `applied.filter(≠removed)`),
+  which is why the explicit path is REPLACE. The chip also lists the router's **dropped** skills
+  (`droppedSkillIds`, "· considered:") with a `+ promote` affordance that regenerates with that skill
+  added — so a cap-truncated mechanism is one click from inclusion, never lost.
 
 ## 14. Composition: multi-skill merge + mated all-view (2026-06-19 — Phase 7)
 - **Shared-parameter merge.** Each skill registry entry may carry `paramAliases` mapping a canonical

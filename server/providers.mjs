@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
-import { SKILLS, selectSkills } from './skills.mjs'
+import { SKILLS, selectSkills, selectSkillsDetailed } from './skills.mjs'
 import { billOfMaterials } from './hardware.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
@@ -481,10 +481,14 @@ export function extractScadBlock(text) {
 
 /** Resolve which skills a request selected (same logic streamChat used to build the prompt)
  *  and run their validators on the generated code. ADVISORY ONLY — never blocks or rewrites.
- *  Returns { skillIds } (everything that fired, even with no issues — the client surfaces
- *  the applied set) and { report } ([{id, issues}] for the ones that flagged something). */
+ *  Returns { skillIds } (everything that fired), { droppedSkillIds } (matched but cut by the
+ *  cap, so the client can offer to promote one instead of silently losing it), and { report }
+ *  ([{id, issues}] for the ones that flagged something). */
 export function reviewWithSkills({ context, messages, code }) {
-  const skillIds = selectSkills({ ...context, prompt: context?.prompt ?? latestUserText(messages || []) })
+  const { selected: skillIds, dropped: droppedSkillIds } = selectSkillsDetailed({
+    ...context,
+    prompt: context?.prompt ?? latestUserText(messages || []),
+  })
   const report = []
   if (code) {
     for (const id of skillIds) {
@@ -492,7 +496,7 @@ export function reviewWithSkills({ context, messages, code }) {
       if (issues.length) report.push({ id, issues })
     }
   }
-  return { skillIds, report }
+  return { skillIds, droppedSkillIds, report }
 }
 
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {

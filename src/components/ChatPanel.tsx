@@ -447,6 +447,31 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                               ))}
                             </select>
                           )}
+                          {(() => {
+                            // skills that matched the prompt but the cap cut — surfaced so the
+                            // truncation is never silent; promote one to regenerate WITH it.
+                            const dropped = (msg.droppedSkillIds ?? []).filter((id) => !applied.includes(id))
+                            if (!dropped.length) return null
+                            return (
+                              <span className="ap-dropped" title="Matched your prompt but cut by the cap — promote one to include it">
+                                <span className="ap-meta">· considered:</span>
+                                {dropped.map((id) =>
+                                  editable ? (
+                                    <button
+                                      key={`d-${id}`}
+                                      className="ap-promote"
+                                      title={`Promote "${skillLabel(id)}" and regenerate`}
+                                      onClick={() => void regenerateWithSkills(msg.id, [...applied, id])}
+                                    >
+                                      + {skillLabel(id)}
+                                    </button>
+                                  ) : (
+                                    <span key={`d-${id}`} className="ap-skill ap-dropped-chip">{skillLabel(id)}</span>
+                                  ),
+                                )}
+                              </span>
+                            )
+                          })()}
                         </span>
                       )
                     })()}

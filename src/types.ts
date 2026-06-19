@@ -51,6 +51,9 @@ export interface ChatMessage {
   /** ids of the skills that fired for this generation (metadata for the applied-patterns
    *  chip; like skillNote, kept out of `text` so it stays out of model history) */
   appliedSkillIds?: string[]
+  /** skills that MATCHED but were cut by the auto-cap — surfaced in the chip so the user can
+   *  promote one (never silently truncated). Metadata only, kept out of `text`. */
+  droppedSkillIds?: string[]
   /** the model's parsed design intent for this turn (advisory; versions WITH the code on
    *  this message, so rollback shows this version's intent or none — never stale) */
   intent?: DesignIntent

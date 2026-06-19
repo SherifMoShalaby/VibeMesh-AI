@@ -82,9 +82,9 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
     })
     // advisory: which skills fired + their validators' verdict on the generated code (never
     // blocks). Guarded separately so a validator bug can't turn a good generation into error.
-    let review = { skillIds: [], report: [] }
+    let review = { skillIds: [], droppedSkillIds: [], report: [] }
     try { review = reviewWithSkills({ context, messages, code: extractScadBlock(full) }) } catch { /* advisory only */ }
-    send({ type: 'done', skillIds: review.skillIds, skillReport: review.report })
+    send({ type: 'done', skillIds: review.skillIds, droppedSkillIds: review.droppedSkillIds, skillReport: review.report })
   } catch (error) {
     if (abort.signal.aborted || error?.name === 'AbortError') {
       res.end()

@@ -282,8 +282,9 @@ export interface StreamCallbacks {
   /** reasoning-effort level (Claude engines) — low|medium|high|xhigh|max */
   effort?: string
   context?: GenerateContext
-  /** the skills that fired for this request + their advisory mechanism-check verdict */
-  onSkillReport?: (info: { skillIds: string[]; report: SkillIssue[] }) => void
+  /** the skills that fired for this request, the ones the cap dropped (matched but cut), and
+   *  the fired skills' advisory mechanism-check verdict */
+  onSkillReport?: (info: { skillIds: string[]; dropped: string[]; report: SkillIssue[] }) => void
 }
 
 /** POST /api/generate and consume the SSE stream. Returns the full reply text. */
@@ -326,14 +327,14 @@ export async function streamGenerate(
       if (!line.startsWith('data: ')) continue
       const payload = JSON.parse(line.slice(6)) as
         | { type: 'delta'; text: string }
-        | { type: 'done'; stopReason?: string; skillIds?: string[]; skillReport?: SkillIssue[] }
+        | { type: 'done'; stopReason?: string; skillIds?: string[]; droppedSkillIds?: string[]; skillReport?: SkillIssue[] }
         | { type: 'error'; message: string }
       if (payload.type === 'delta') {
         full += payload.text
         onDelta(payload.text)
       } else if (payload.type === 'done') {
-        if (payload.skillIds?.length || payload.skillReport?.length) {
-          onSkillReport?.({ skillIds: payload.skillIds ?? [], report: payload.skillReport ?? [] })
+        if (payload.skillIds?.length || payload.droppedSkillIds?.length || payload.skillReport?.length) {
+          onSkillReport?.({ skillIds: payload.skillIds ?? [], dropped: payload.droppedSkillIds ?? [], report: payload.skillReport ?? [] })
         }
       } else if (payload.type === 'error') {
         throw new Error(payload.message)
