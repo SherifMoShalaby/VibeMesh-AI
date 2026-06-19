@@ -4,7 +4,8 @@ import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { captureViews } from '../lib/capture'
 import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
-import { estHistoryTokens, historyBudgetTokens, type ProviderInfo } from '../lib/api'
+import { estHistoryTokens, historyBudgetTokens, imageBudgetFor, type ProviderInfo } from '../lib/api'
+import { tileReference } from '../lib/tile'
 import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
 import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh, DChevLeft, DLayers } from './icons'
@@ -212,33 +213,29 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     )
   }
 
-  const attachFiles = (files: Iterable<File>) => {
+  const attachFiles = async (files: Iterable<File>) => {
     const all = Array.from(files)
-    const room = MAX_IMAGES - images.length
-    const accepted = all.filter((f) => IMAGE_TYPES.test(f.type)).slice(0, Math.max(room, 0))
+    const accepted = all.filter((f) => IMAGE_TYPES.test(f.type))
     if (all.length > 0 && accepted.length === 0) {
-      flashAttachNote(room <= 0 ? `max ${MAX_IMAGES} images per message` : 'only PNG, JPEG, WebP or GIF images')
+      flashAttachNote('only PNG, JPEG, WebP or GIF images')
       return
     }
-    if (accepted.length < all.length) {
-      flashAttachNote(`attached ${accepted.length} of ${all.length} — images only, max ${MAX_IMAGES}`)
-    }
+    if (accepted.length < all.length) flashAttachNote(`attached ${accepted.length} of ${all.length} — images only`)
+    // tile at attach time: a busy/ortho sheet becomes a global thumbnail + region crops; a clean
+    // photo stays one global. Bounded by the engine's image budget (claude-code=4); the same cap
+    // is re-enforced at send (toApiMessages). Each output carries pixel dims + a role.
+    const provider = health?.providers.find((p) => p.id === engine)
+    const budget = Math.max(1, imageBudgetFor(provider) || MAX_IMAGES)
+    const collected: ChatImage[] = []
     for (const file of accepted) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const dataUrl = reader.result as string
-        const data = dataUrl.slice(dataUrl.indexOf(',') + 1)
-        // decode to capture pixel dims (size-aware token cost + future tiling) + tag as a
-        // whole reference (role 'global'); add without dims if the probe fails.
-        const probe = new Image()
-        const add = (extra: Partial<ChatImage>) =>
-          setImages((prev) => (prev.length < MAX_IMAGES ? [...prev, { mediaType: file.type, data, role: 'global', ...extra }] : prev))
-        probe.onload = () => add({ width: probe.naturalWidth, height: probe.naturalHeight })
-        probe.onerror = () => add({})
-        probe.src = dataUrl
-      }
-      reader.readAsDataURL(file)
+      if (collected.length >= budget) break
+      collected.push(...(await tileReference(file, budget)))
     }
+    if (!collected.length) {
+      flashAttachNote('could not read the image')
+      return
+    }
+    setImages((prev) => [...prev, ...collected].slice(0, budget))
   }
 
   const onPaste = (e: React.ClipboardEvent) => {
