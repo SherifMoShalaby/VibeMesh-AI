@@ -27,6 +27,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test (zero-API client-seam unit net)
+        run: npm run test:run
+
       - name: Build
         run: npm run build
 
