@@ -41,7 +41,9 @@ for (const [id, skill] of Object.entries(SKILLS)) {
     if (!new RegExp(`(^|\\n)\\s*${param}\\s*=`).test(skill.exemplar)) aliasBad = `${concept}→${param} (not a parameter in the exemplar)`
   }
   if (aliasBad) { console.error(`  ${id.padEnd(14)} ✗ paramAlias ${aliasBad}`); fail++; continue }
-  console.log(`  ${id.padEnd(14)} ✓ compiles (${tris} tris) · validates · catches broken control`)
+  // P7: every entry carries a version (provenance + the applied-patterns chip)
+  if (typeof skill.version !== 'number') { console.error(`  ${id.padEnd(14)} ✗ missing numeric version field`); fail++; continue }
+  console.log(`  ${id.padEnd(14)} ✓ v${skill.version} compiles (${tris} tris) · validates · catches broken control`)
 }
 console.log(fail ? `[skills] SELFTEST FAIL (${fail})` : '[skills] SELFTEST PASS — every exemplar compiles, validates, and its validator catches a broken control.')
 process.exit(fail ? 1 : 0)

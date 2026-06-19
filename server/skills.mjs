@@ -529,6 +529,7 @@ difference() {
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
+    version: 1,
     paramAliases: { clearance: 'spin_fit', wall: 'wall' },
     exemplar: KIT_EXEMPLAR,
     validate(code) {
@@ -553,6 +554,7 @@ export const SKILLS = {
 
   'wheel-axle': {
     id: 'wheel-axle',
+    version: 1,
     paramAliases: { clearance: 'spin_fit' },
     exemplar: WHEEL_AXLE_EXEMPLAR,
     validate(code) {
@@ -576,6 +578,7 @@ export const SKILLS = {
 
   'living-hinge': {
     id: 'living-hinge',
+    version: 1,
     exemplar: LIVING_HINGE_EXEMPLAR,
     validate(code) {
       const m = code.match(/web_thick\s*=\s*([\d.]+)/)
@@ -597,6 +600,7 @@ export const SKILLS = {
 
   'leaf-spring': {
     id: 'leaf-spring',
+    version: 1,
     exemplar: LEAF_SPRING_EXEMPLAR,
     validate(code) {
       const r = code.match(/root_thick\s*=\s*([\d.]+)/)
@@ -618,6 +622,7 @@ export const SKILLS = {
 
   'snap-fit': {
     id: 'snap-fit',
+    version: 1,
     paramAliases: { clearance: 'fit' },
     exemplar: SNAP_FIT_EXEMPLAR,
     validate(code) {
@@ -646,6 +651,7 @@ export const SKILLS = {
 
   'print-in-place-hinge': {
     id: 'print-in-place-hinge',
+    version: 1,
     paramAliases: { clearance: 'gap' },
     exemplar: PIP_HINGE_EXEMPLAR,
     validate(code) {
@@ -669,6 +675,7 @@ export const SKILLS = {
 
   'spur-gear': {
     id: 'spur-gear',
+    version: 1,
     exemplar: SPUR_GEAR_EXEMPLAR,
     validate(code) {
       const b = code.match(/backlash\s*=\s*([\d.]+)/)
@@ -691,6 +698,7 @@ export const SKILLS = {
 
   'rack-pinion': {
     id: 'rack-pinion',
+    version: 1,
     exemplar: RACK_PINION_EXEMPLAR,
     validate(code) {
       const b = code.match(/backlash\s*=\s*([\d.]+)/)
@@ -713,6 +721,7 @@ export const SKILLS = {
 
   'ratchet': {
     id: 'ratchet',
+    version: 1,
     exemplar: RATCHET_EXEMPLAR,
     validate(code) {
       const g = code.match(/gap\s*=\s*([\d.]+)/)
@@ -734,6 +743,7 @@ export const SKILLS = {
 
   'coil-spring': {
     id: 'coil-spring',
+    version: 1,
     exemplar: COIL_SPRING_EXEMPLAR,
     validate(code) {
       const w = code.match(/wire_d\s*=\s*([\d.]+)/)
@@ -758,6 +768,7 @@ export const SKILLS = {
 
   'threaded-fastener-seat': {
     id: 'threaded-fastener-seat',
+    version: 1,
     exemplar: FASTENER_SEAT_EXEMPLAR,
     validate(code) {
       const issues = []
@@ -776,6 +787,7 @@ export const SKILLS = {
 
   'bearing-608-pocket': {
     id: 'bearing-608-pocket',
+    version: 1,
     paramAliases: { clearance: 'fit' },
     exemplar: BEARING_POCKET_EXEMPLAR,
     validate(code) {
@@ -799,6 +811,7 @@ export const SKILLS = {
 
   'planetary': {
     id: 'planetary',
+    version: 1,
     exemplar: PLANETARY_EXEMPLAR,
     validate(code) {
       // inspect code, not prose: a comment describing the constraint must not satisfy it
@@ -823,6 +836,7 @@ export const SKILLS = {
 
   'gt2-pulley': {
     id: 'gt2-pulley',
+    version: 1,
     exemplar: GT2_PULLEY_EXEMPLAR,
     validate(code) {
       const src = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
@@ -846,6 +860,7 @@ export const SKILLS = {
 
   'herringbone': {
     id: 'herringbone',
+    version: 1,
     exemplar: HERRINGBONE_EXEMPLAR,
     validate(code) {
       const src = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
@@ -891,23 +906,29 @@ const TRIGGERS = [
   ['threaded-fastener-seat', /\bscrew|\bbolt\b|\bheat[\s-]?set|\bnut[\s-]?trap|\bthreaded?\b|\bM[2-8](?:\.5)?\b|\btapped\b|\bfasten/i],
 ]
 
+/** A skill is selectable only if it exists AND is not quarantined. Quarantine (an entry flag)
+ *  disables a skill found to misbehave post-ship WITHOUT deleting it — selectSkills never injects
+ *  a quarantined skill, even via an explicit skillIds list. (Compile failure is caught earlier,
+ *  by the zero-API walker, which blocks merging a broken exemplar.) */
+const usable = (id) => !!SKILLS[id] && !SKILLS[id].quarantine
+
 /** Map per-request context to the ordered skill ids to inject.
  *  Precedence: (1) an explicit context.skillIds (router / live-check) wins outright;
  *  otherwise (2) context.kit seeds the baseplate skill and (3) the TRIGGERS are matched
  *  against the current prompt PLUS the prior turn's carried intent.domainTags — so a
  *  follow-up that drops the keyword ("make it bigger") still retains the mechanism —
- *  capped at MAX_AUTO_SKILLS. */
+ *  capped at MAX_AUTO_SKILLS. Quarantined skills are never selected. */
 export function selectSkills(context) {
-  if (Array.isArray(context?.skillIds)) return context.skillIds.filter((id) => SKILLS[id])
+  if (Array.isArray(context?.skillIds)) return context.skillIds.filter(usable)
   const out = []
-  if (context?.kit) out.push('kit-baseplate')
+  if (context?.kit && usable('kit-baseplate')) out.push('kit-baseplate')
   const prompt = typeof context?.prompt === 'string' ? context.prompt : ''
   const carried = Array.isArray(context?.intent?.domainTags) ? context.intent.domainTags.join(' ') : ''
   const text = `${prompt} ${carried}`.trim()
   if (text) {
     for (const [id, re] of TRIGGERS) {
       if (out.length >= MAX_AUTO_SKILLS) break
-      if (!out.includes(id) && SKILLS[id] && re.test(text)) out.push(id)
+      if (!out.includes(id) && usable(id) && re.test(text)) out.push(id)
     }
   }
   return out

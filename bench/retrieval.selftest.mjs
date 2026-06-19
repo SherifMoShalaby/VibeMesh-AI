@@ -6,7 +6,7 @@
  *
  *   node bench/retrieval.selftest.mjs
  */
-import { selectSkills, MAX_AUTO_SKILLS } from '../server/skills.mjs'
+import { selectSkills, MAX_AUTO_SKILLS, SKILLS } from '../server/skills.mjs'
 
 const POSITIVE = [
   ['a toy car whose wheels roll on an axle', 'wheel-axle'],
@@ -78,6 +78,15 @@ console.log(`  ${mark(carriedOk)} carry-forward ("make it bigger" + prior tags [
 const plainFollowup = selectSkills({ prompt: 'make it 20mm taller' })
 if (plainFollowup.length) fail++
 console.log(`  ${mark(plainFollowup.length === 0)} plain follow-up, no carried tags → [${plainFollowup.join(', ') || '—'}]`)
+
+// quarantine: a quarantined skill is NEVER selected — not via retrieval, not via explicit skillIds
+SKILLS['spur-gear'].quarantine = true
+const qAuto = selectSkills({ prompt: 'a two-gear gearbox' })
+const qForced = selectSkills({ skillIds: ['spur-gear', 'snap-fit'] })
+delete SKILLS['spur-gear'].quarantine
+const qOk = !qAuto.includes('spur-gear') && !qForced.includes('spur-gear') && qForced.includes('snap-fit')
+if (!qOk) fail++
+console.log(`  ${mark(qOk)} quarantine: gearbox→[${qAuto.join(', ') || '—'}], forced→[${qForced.join(', ') || '—'}] (spur-gear excluded both)`)
 
 console.log(fail ? `[retrieval] SELFTEST FAIL (${fail})` : '[retrieval] SELFTEST PASS — intent routing maps prompts to skills, ignores plain shapes, respects the cap and skillIds precedence.')
 process.exit(fail ? 1 : 0)
