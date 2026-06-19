@@ -393,6 +393,17 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                   {!isCurrent && <span className="cc-restore"><DRestore /> Restore</span>}
                 </button>
               )}
+              {msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low') && (
+                <div className={`expect-banner ${msg.intent?.sourceType === 'photo' ? 'photo' : 'lowconf'}`}>
+                  <span className="eb-icon">{msg.intent?.sourceType === 'photo' ? <DImage /> : <IconWarning />}</span>
+                  <span className="eb-text">
+                    {msg.intent?.sourceType === 'photo'
+                      ? 'Working from a photo — exact sizes are estimated, and smooth or organic curves become a printable hard-surface approximation. Tell me what to refine.'
+                      : 'Low-confidence read of this reference — a best-effort interpretation. Correct me if a feature looks off.'}
+                    {msg.intent?.confidence && <span className="eb-conf">confidence {msg.intent.confidence}</span>}
+                  </span>
+                </div>
+              )}
               {msg.code && (msg.intent || (msg.appliedSkillIds?.length ?? 0) > 0) && (
                 <div
                   className="applied-patterns"
