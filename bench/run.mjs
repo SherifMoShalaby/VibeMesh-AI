@@ -18,6 +18,7 @@ import { judgeModel, judgeVision, judgeAvailable } from './judge.mjs'
 import { renderViews } from './render.mjs'
 import { SKILLS } from '../server/skills.mjs'
 import { decodePng, encodePng, crop } from './imgcrop.mjs'
+import { classifyError } from './gate.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const API = 'http://localhost:5175/api/generate'
@@ -473,13 +474,16 @@ async function runTask(engine, task, messages, dir, history, label) {
   console.log(`[bench] ${label} — generating…`)
   const gen = await generateWithRetry(engine, messages, task.context, label)
   if (gen.error) {
-    console.log(`[bench] ${label} — GEN FAILED: ${gen.error}`)
-    return { task: task.id, genMs: gen.genMs, error: gen.error }
+    // classify so the gate can tell an environmental miss (rate-limit/5xx/timeout →
+    // inconclusive) from a real generation failure (→ compiled✓→✗ candidate).
+    const errorClass = classifyError(gen.error)
+    console.log(`[bench] ${label} — GEN FAILED (${errorClass}): ${gen.error}`)
+    return { task: task.id, genMs: gen.genMs, error: gen.error, errorClass }
   }
   const code = extractScad(gen.text)
   if (!code) {
     console.log(`[bench] ${label} — NO CODE BLOCK in reply (${gen.text.length} chars)`)
-    return { task: task.id, genMs: gen.genMs, error: 'no scad code block in reply', replyChars: gen.text.length }
+    return { task: task.id, genMs: gen.genMs, error: 'no scad code block in reply', errorClass: 'generation', replyChars: gen.text.length }
   }
   fs.writeFileSync(path.join(dir, `${task.id}.scad`), code)
   if (task.kind === 'fresh') history[task.id] = { prompt: task.prompt, replyText: gen.text }
@@ -621,13 +625,22 @@ async function runTask(engine, task, messages, dir, history, label) {
   return row
 }
 
-/** Aggregate k samples of one task into a single row: median quality scores,
- *  compiledRate, and a representative (last compiled) sample for code-derived
- *  fields. A k=1 run is byte-identical to runTask's row (no aggregation). */
+/** Aggregate k>1 samples of one task into a single row: median quality scores,
+ *  compiledRate (over EVALUABLE, i.e. non-transport, samples), and a representative
+ *  (last compiled) sample for code-derived fields. The k=1 path skips aggregation but
+ *  stamps the same `samples`/`evaluableSamples`/`compiledRate`/`errorClass` provenance
+ *  so the gate sees a sub-threshold draw and refuses to render a verdict. */
 function aggregateRows(task, rows, k) {
-  const rep = [...rows].reverse().find((r) => r.compiled) ?? rows[rows.length - 1]
-  const okRows = rows.filter((r) => r.compiled)
-  const compiledRate = round2(okRows.length / rows.length)
+  // transport-errored samples (rate-limit/5xx/timeout) say nothing about the change
+  // under test — exclude them from the compiledRate denominator so a transient outage
+  // can't poison the verdict. A task whose samples ALL hit transport errors is
+  // inconclusive (compiled:null, errorClass:'transport') and the gate forces a re-run.
+  const evaluable = rows.filter((r) => (r.errorClass ?? classifyError(r.error)) !== 'transport')
+  const transportErrors = rows.length - evaluable.length
+  const allTransport = evaluable.length === 0
+  const rep = [...rows].reverse().find((r) => r.compiled) ?? [...evaluable].reverse()[0] ?? rows[rows.length - 1]
+  const okRows = evaluable.filter((r) => r.compiled)
+  const compiledRate = allTransport ? null : round2(okRows.length / evaluable.length)
   const ious = okRows.map((r) => (r.gold && !r.gold.error ? r.gold.iou : null)).filter((n) => typeof n === 'number')
   const dimScores = rows.map((r) => r.dimScore).filter((n) => typeof n === 'number')
   const placements = rows.map((r) => r.placementScore).filter((n) => typeof n === 'number')
@@ -640,10 +653,15 @@ function aggregateRows(task, rows, k) {
   return {
     task: task.id,
     samples: k,
+    evaluableSamples: evaluable.length,
+    transportErrors: transportErrors || undefined,
     compiledRate,
+    // all samples lost to transport → inconclusive (gate exit 2), not a compile fault
+    errorClass: allTransport ? 'transport' : undefined,
+    error: allTransport ? (rep.error ?? 'all samples hit transport errors') : undefined,
     genMs: median(rows.map((r) => r.genMs)),
     renderMs: median(okRows.map((r) => r.renderMs)),
-    compiled: compiledRate >= 0.5, // majority — the gate treats compiled as categorical
+    compiled: allTransport ? null : compiledRate >= 0.5, // majority of EVALUABLE samples — categorical
     compileError: rep.compiled ? undefined : rep.compileError,
     size: rep.size,
     minZ: rep.minZ,
@@ -711,7 +729,19 @@ async function runEngine(engine) {
     }
 
     if (SAMPLES === 1) {
-      results.push(await runTask(engine, task, messages, dir, history, label))
+      // stamp the same sampling provenance the aggregated path carries, so the gate
+      // can see this was a single (sub-threshold) draw and refuse to render a verdict.
+      const row = await runTask(engine, task, messages, dir, history, label)
+      const ec = row.errorClass ?? classifyError(row.error)
+      const transport = ec === 'transport'
+      results.push({
+        ...row,
+        samples: 1,
+        evaluableSamples: transport ? 0 : 1,
+        transportErrors: transport ? 1 : undefined,
+        errorClass: ec ?? undefined,
+        compiledRate: transport ? null : row.compiled ? 1 : 0,
+      })
     } else {
       const rows = []
       for (let s = 0; s < SAMPLES; s++) {
