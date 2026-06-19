@@ -179,6 +179,26 @@ function imagesWithinCap(
   return new Set(sendable.slice(0, Math.max(0, maxImages)).map((s) => s.img))
 }
 
+/**
+ * DETERMINISTIC carry-summary of the turns the budget evicted. When the rolling window drops the
+ * oldest turns, their geometric result is already carried in the CURRENT code — but the user's
+ * stated instructions/constraints are not. Rather than an extra LLM summarization round-trip (cost,
+ * latency, a non-deterministic failure mode, on a path that triggers only on very long sessions),
+ * extract the evicted USER prompts into one compact note. Pure + deterministic → unit-testable,
+ * protocol-portable (plain text, no thinking/cache blocks). '' when nothing user-authored was cut.
+ */
+export function summarizeEvicted(evicted: ChatMessage[], firstRef?: ChatMessage): string {
+  const asks = evicted
+    .filter((m) => m.role === 'user' && m !== firstRef && (m.text?.trim().length ?? 0) > 0)
+    .map((m) => m.text.trim().replace(/\s+/g, ' '))
+  if (!asks.length) return ''
+  const MAX = 6
+  const shown = asks.slice(-MAX) // keep the most recent of the evicted (closest to current state)
+  const bullets = shown.map((t) => `• ${t.length > 140 ? t.slice(0, 139) + '…' : t}`).join('\n')
+  const more = asks.length > MAX ? `\n(+${asks.length - MAX} earlier request(s))` : ''
+  return `Earlier in this conversation (older turns trimmed to fit context) you were asked:\n${bullets}${more}\nThe current code already reflects these — keep their intent and constraints.`
+}
+
 /** Convert UI chat history into Anthropic messages, keeping code context. With
  *  opts.budgetTokens, history is trimmed by the engine's context-window token budget;
  *  without it, the legacy HISTORY_LIMIT message count applies (back-compat / bench).
@@ -192,16 +212,29 @@ export function toApiMessages(chat: ChatMessage[], opts?: { budgetTokens?: numbe
   // inside the window, prepend it (it's a user message, so the first-must-be-user
   // and role-merge passes below stay valid).
   const firstRef = clean.find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)
+  // Compaction (budget path only): the turns trimmed off the front are summarized into a compact
+  // carried note so the user's earlier instructions survive eviction. Prepended as a tiny
+  // user→assistant exchange so it never merges into the reference turn. The HISTORY_LIMIT
+  // (no-budget / bench) path stays byte-identical.
+  const evicted = opts?.budgetTokens !== undefined ? clean.slice(0, Math.max(0, clean.length - recent.length)) : []
+  const digestText = summarizeEvicted(evicted, firstRef)
+  const digestPair: ChatMessage[] = digestText
+    ? [
+        { id: 'history-digest', role: 'user', text: digestText },
+        { id: 'history-digest-ack', role: 'assistant', text: 'Understood — I will keep those earlier requirements in mind.' },
+      ]
+    : []
   // If the window starts on a user turn, splice a tiny assistant ack between the
   // pinned reference and it, so the role-merge below doesn't fuse the reference
   // images into an unrelated user turn (which would mis-attribute the images).
   const refSep: ChatMessage = { id: 'pinned-ref-separator', role: 'assistant', text: 'Noted the reference image above.' }
-  const windowed =
+  const pinned =
     firstRef && !recent.includes(firstRef)
       ? recent[0]?.role === 'user'
         ? [firstRef, refSep, ...recent]
         : [firstRef, ...recent]
       : recent
+  const windowed = [...digestPair, ...pinned]
   // Keep render screenshots only on the MOST RECENT refine pass — strip older
   // intermediate refine renders to text so the model corrects toward the reference,
   // not toward its own earlier render, and stale shots don't crowd the window.

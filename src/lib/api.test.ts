@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   toApiMessages,
+  summarizeEvicted,
   estTokens,
   estImageTokens,
   imageBudgetFor,
@@ -48,10 +49,10 @@ describe('toApiMessages — role normalization (Anthropic-protocol gotchas)', ()
     expect(out[0].role).toBe('user')
   })
 
-  it('keeps at least the latest message under a tiny token budget', () => {
+  it('keeps the latest message (+ a carry-summary of evicted turns) under a tiny token budget', () => {
     const out = toApiMessages([um('x'.repeat(4000)), am('mid'), um('latest')], { budgetTokens: 1 })
-    expect(out).toHaveLength(1)
-    expect(out[0].content).toBe('latest')
+    expect(out.at(-1)!.content).toBe('latest') // the latest turn always survives
+    expect(out[0].content).toMatch(/Earlier in this conversation/) // evicted turns are digested, not dropped
   })
 })
 
@@ -76,6 +77,51 @@ describe('toApiMessages — images', () => {
     expect(datas).toContain('G') // global kept
     expect(datas).toContain('V') // view kept
     expect(datas.filter((d) => d.startsWith('T'))).toHaveLength(2) // one tile dropped
+  })
+})
+
+describe('summarizeEvicted (deterministic compaction)', () => {
+  it('returns "" when nothing user-authored was evicted', () => {
+    expect(summarizeEvicted([])).toBe('')
+    expect(summarizeEvicted([am('just an assistant turn')])).toBe('')
+  })
+  it('digests the evicted user prompts into one note', () => {
+    const note = summarizeEvicted([um('a 50mm bracket'), am('ok'), um('make it 80mm')])
+    expect(note).toMatch(/Earlier in this conversation/)
+    expect(note).toMatch(/• a 50mm bracket/)
+    expect(note).toMatch(/• make it 80mm/)
+  })
+  it('excludes the pinned reference turn and caps at 6 with a remainder note', () => {
+    const ref = um('REF', { images: [img('x')] })
+    const many = Array.from({ length: 9 }, (_, i) => um(`ask ${i}`))
+    const note = summarizeEvicted([ref, ...many], ref)
+    expect(note).not.toMatch(/REF/)
+    expect(note).toMatch(/\+3 earlier request/) // 9 asks, 6 shown
+    expect(note).toMatch(/• ask 8/) // keeps the most recent of the evicted
+  })
+  it('truncates a very long prompt', () => {
+    const note = summarizeEvicted([um('x'.repeat(300))])
+    expect(note).toMatch(/…/)
+  })
+})
+
+describe('toApiMessages — compaction', () => {
+  it('prepends a carry-summary of evicted turns on the budget path', () => {
+    const chat = [um('original: a 50mm bracket'), am('v1'), um('make it 80mm wide'), am('v2'), um('add a 2mm chamfer'), am('v3'), um('latest tweak')]
+    const out = toApiMessages(chat, { budgetTokens: 1 }) // tiny budget → only the latest survives
+    expect(out[0].role).toBe('user')
+    expect(out[0].content).toMatch(/Earlier in this conversation/)
+    expect(out[0].content).toMatch(/make it 80mm wide/)
+  })
+  it('adds NO digest when nothing is evicted (generous budget)', () => {
+    const chat = [um('a 50mm bracket'), am('v1'), um('make it 80mm')]
+    const out = toApiMessages(chat, { budgetTokens: 100000 })
+    expect(JSON.stringify(out)).not.toMatch(/Earlier in this conversation/)
+  })
+  it('adds NO digest on the legacy no-budget path (byte-identical)', () => {
+    const chat = Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? um(`u${i}`) : am(`a${i}`)))
+    const out = toApiMessages(chat)
+    expect(JSON.stringify(out)).not.toMatch(/Earlier in this conversation/)
   })
 })
 
