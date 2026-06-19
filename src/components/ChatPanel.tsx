@@ -21,6 +21,9 @@ const SKILL_LABELS: Record<string, string> = {
   'print-in-place-hinge': 'Print-in-place hinge',
   'threaded-fastener-seat': 'Fastener seat',
   'kit-baseplate': 'Kit baseplate',
+  'crown-coronet': 'Crown / coronet',
+  'hollow-crenellation': 'Crenellation',
+  'open-prong-cradle': 'Open prong cradle',
 }
 const skillLabel = (id: string) => SKILL_LABELS[id] ?? id.replace(/-/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 // the addable mechanism skills (mirrors the server/skills.mjs registry keys) for the chip's
@@ -31,6 +34,7 @@ const ALL_SKILL_IDS = [
   'spur-gear', 'rack-pinion', 'ratchet', 'coil-spring', 'threaded-fastener-seat',
   'bearing-608-pocket', 'planetary', 'gt2-pulley', 'herringbone',
   'fit-pair', 'bistable', 'button-return',
+  'crown-coronet', 'hollow-crenellation', 'open-prong-cradle',
 ]
 
 export default function ChatPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
