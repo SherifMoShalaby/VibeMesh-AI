@@ -8,6 +8,7 @@ import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
 import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
+import { buildShareFile, parseShareFile, serializeShareFile, shareFileToProject } from '../lib/shareFile'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
@@ -144,6 +145,10 @@ interface VibeState {
   exportStlSmart: (fileBase: string) => Promise<void>
   /** export one .3mf with every part as a named object (slicer-ready plate) */
   export3mf: (fileBase: string) => Promise<void>
+  /** export a re-editable .vibemesh share file (code + sliders + intent + skills + thumbnail) */
+  exportShareFile: (fileBase: string) => void
+  /** import a .vibemesh share file as a new project and switch to it */
+  importShareFile: (text: string) => void
   claudeModel: string
   setClaudeModel: (id: string) => void
   /** reasoning-effort level for the Claude engines (login + API key): low|medium|high|xhigh|max */
@@ -849,6 +854,75 @@ export const useStore = create<VibeState>((set, get) => {
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
       set({ code: project.code, params, paramValues })
+      if (project.code.trim()) void compile(project.code, buildDefines(params, paramValues))
+    },
+
+    exportShareFile: (fileBase) => {
+      const { code, paramValues, activeId, projects } = get()
+      if (!code.trim()) {
+        alert('Nothing to share yet — generate a model first.')
+        return
+      }
+      // the latest code-bearing assistant turn carries this version's intent + applied skills
+      const last = [...activeChat()].reverse().find((m) => m.role === 'assistant' && m.code)
+      const name = projects.find((p) => p.id === activeId)?.name ?? fileBase
+      // best-effort thumbnail: downscale the (preserveDrawingBuffer) viewport canvas to keep it small
+      let thumbnail: string | undefined
+      try {
+        const canvas = document.querySelector('canvas')
+        if (canvas && canvas.width) {
+          const scale = Math.min(1, 256 / canvas.width)
+          const off = document.createElement('canvas')
+          off.width = Math.round(canvas.width * scale)
+          off.height = Math.round(canvas.height * scale)
+          const ctx = off.getContext('2d')
+          if (ctx) {
+            ctx.drawImage(canvas, 0, 0, off.width, off.height)
+            thumbnail = off.toDataURL('image/png')
+          }
+        }
+      } catch {
+        /* canvas tainted / unavailable — ship without a thumbnail */
+      }
+      const file = buildShareFile(
+        { name, code, paramValues, intent: last?.intent, appliedSkillIds: last?.appliedSkillIds, thumbnail },
+        Date.now(),
+      )
+      downloadBlob(serializeShareFile(file), `${fileBase}.vibemesh`, 'application/json')
+    },
+
+    importShareFile: (text) => {
+      const file = parseShareFile(text)
+      if (!file) {
+        alert("That file isn't a valid .vibemesh share file.")
+        return
+      }
+      const project = shareFileToProject(file, newId(), Date.now())
+      const projects = [project, ...get().projects]
+      clearParamTimer()
+      const params = parseParameters(project.code)
+      const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
+      set({
+        projects,
+        activeId: project.id,
+        code: project.code,
+        params,
+        paramValues,
+        stl: null,
+        meshTransform: null,
+        vpPast: [],
+        vpFuture: [],
+        modelRemoved: false,
+        compileStatus: 'idle',
+        compileError: null,
+        streamText: '',
+        viewMode: 'single',
+        pieces: null,
+        slicing: false,
+      })
+      saveProjects(projects)
+      setChatHash(project.id)
+      saveLastChatId(project.id)
       if (project.code.trim()) void compile(project.code, buildDefines(params, paramValues))
     },
 

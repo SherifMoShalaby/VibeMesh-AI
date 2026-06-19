@@ -52,11 +52,13 @@ Provider availability is auto-detected (`providerStatus`) and exposed via `GET /
 
 One zustand store, `src/state/store.ts`, owns nearly everything: projects + chat, code, params, the compile lifecycle, viewport placement with its own undo/redo snapshot history (`vpPast`/`vpFuture`, cleared on every re-render), and all export paths. Ephemeral UI state (modals, toasts) lives in `src/state/ui.ts`. Two guard patterns recur in `compile()`: a stale-render check (results landing after a project switch are dropped) and `fitVersion` (camera auto-fits only when the viewport was empty, never mid-iteration).
 
-Persistence is localStorage under `vibemesh.*` keys (`vibemesh.projects.v1` etc.); `src/lib/storage.ts` migrates legacy `vibescad.*` keys on startup.
+Persistence: projects/versions live in **IndexedDB** (`vibemesh`/`kv`/`projects` = `{schemaVersion, projects}`, ~GBs — escapes localStorage's quota wedge) behind a SYNCHRONOUS in-memory cache in `src/lib/storage.ts`, so the store's many `saveProjects()` calls stay synchronous. `hydrateStorage()` is `await`ed once at the top of `store.init` (open DB → `migrateRecord` forward-migration → fill cache); first run seeds from the legacy `vibemesh.projects.v1` localStorage snapshot and KEEPS it as a backup. Writes are coalesced (single in-flight + pending); IndexedDB-unavailable (some private modes) falls back to localStorage-only. Small prefs (engine, quality, bed, last-chat) stay in localStorage under `vibemesh.*` keys; legacy `vibescad.*` keys are copied on startup. `SCHEMA_VERSION` (data shape) is orthogonal to `DB_VERSION` (IDB structure).
 
 ### Multi-part convention
 
 An enum parameter literally named `part` with first option `all` marks a multi-part design: `all` is the assembly preview (bed-fit warnings suppressed), other options compile per-piece for the PARTS bar and exports. Exports: `src/lib/threeMF.ts` (one `.3mf`, each part a named object), `src/lib/stl.ts` (binary STL bbox/transform — viewport move/rotate is baked into single-STL export). Partial export failures must be loud (alert + HUD note) — silent skips are a spec violation.
+
+The `.vibemesh` **share file** (`src/lib/shareFile.ts`, exported/imported from the Export menu) is the local-first remix primitive: a self-contained JSON of `{code, paramValues, intent, appliedSkillIds, thumbnail}` (format-tagged + schema-versioned, tolerant parse) — unlike a dead STL, the recipient re-drives the SAME Customizer sliders. Import restores it as a fresh project with one code-bearing assistant version (so the applied-patterns chip + rollback work).
 
 ## Gotchas
 

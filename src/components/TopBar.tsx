@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { applyValuesToCode } from '../lib/params'
@@ -175,6 +175,9 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const exportPlates3mf = useStore((s) => s.exportPlates3mf)
   const exportStlSmart = useStore((s) => s.exportStlSmart)
   const export3mf = useStore((s) => s.export3mf)
+  const exportShareFile = useStore((s) => s.exportShareFile)
+  const importShareFile = useStore((s) => s.importShareFile)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const [open, setOpen] = useState(false)
   const ref = useClickOutside(open, () => setOpen(false))
@@ -262,11 +265,48 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
             <span className="mi-check"><DArrowRight /></span>
           </button>
           <div className="menu-sep" />
+          <div className="menu-label">Share / remix</div>
+          <button
+            className="menu-item"
+            role="menuitem"
+            disabled={!code.trim()}
+            onClick={run(() => exportShareFile(fileBase))}
+          >
+            <span className="mi-icon"><DLayers /></span>
+            <span className="mi-text">
+              <span className="mi-title">Share file <span className="ext">.vibemesh</span></span>
+              <span className="mi-sub">Re-editable — code + sliders + intent, opens with live parameters</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
+          </button>
+          <button className="menu-item" role="menuitem" onClick={() => { setOpen(false); importInputRef.current?.click() }}>
+            <span className="mi-icon"><DBox /></span>
+            <span className="mi-text">
+              <span className="mi-title">Import <span className="ext">.vibemesh</span></span>
+              <span className="mi-sub">Open someone's shared part as a new, editable project</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
+          </button>
+          <div className="menu-sep" />
           <div className="menu-note">
             {belowFine ? `Export can re-render curves at Fine — preview is ${qualityLabel}.` : `Exported at ${qualityLabel} quality.`}
           </div>
         </div>
       )}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".vibemesh,application/json"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = '' // allow re-importing the same file
+          if (!f) return
+          f.text()
+            .then((t) => importShareFile(t))
+            .catch((err) => alert(`Could not read the file: ${err instanceof Error ? err.message : String(err)}`))
+        }}
+      />
     </div>
   )
 }
