@@ -17,6 +17,7 @@ import { interferenceVol, interferenceScore, hasDebugContract } from './interfer
 import { judgeModel, judgeVision, judgeAvailable } from './judge.mjs'
 import { renderViews } from './render.mjs'
 import { SKILLS } from '../server/skills.mjs'
+import { decodePng, encodePng, crop } from './imgcrop.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const API = 'http://localhost:5175/api/generate'
@@ -33,6 +34,24 @@ const TASK_FILTER = process.env.BENCH_TASKS?.split(',').map((s) => s.trim()).fil
 const SAMPLES = Math.max(1, Number(process.env.BENCH_SAMPLES) || 3)
 
 const visionImage = fs.readFileSync(path.join(ROOT, 'vision-sketch.png')).toString('base64')
+
+// Node-side tiling of the vision sketch for the clean-vs-busy lane (T6b): the full sheet as the
+// global + left/right region crops (imgcrop, zlib-only — the browser tiler can't run in node).
+// Falls back to [visionImage] if the PNG isn't 8-bit/non-interlaced (decodePng throws).
+const visionTiles = (() => {
+  try {
+    const img = decodePng(fs.readFileSync(path.join(ROOT, 'vision-sketch.png')))
+    const { width: W, height: H } = img
+    const half = Math.floor(W / 2)
+    return [
+      visionImage,
+      encodePng(crop(img, 0, 0, half, H)).toString('base64'),
+      encodePng(crop(img, half, 0, W - half, H)).toString('base64'),
+    ]
+  } catch {
+    return [visionImage]
+  }
+})()
 
 const BROKEN_CODE = `w = 30;\ncube([w, w, h]);`
 
@@ -79,6 +98,16 @@ const TASKS = [
   {
     id: 'T6-vision',
     kind: 'image',
+    prompt: 'Model the part shown in this engineering sketch as a 3D-printable plate. Use the labeled dimensions exactly.',
+    expect: { bbox: [100, 40, 5], tol: 1.5 },
+  },
+  {
+    // Clean-vs-busy lane (P6): the SAME sketch + prompt as T6, but sent TILED (full sheet +
+    // region crops via imgcrop) instead of full-frame. dimScore vs the same [100,40,5] gold makes
+    // the tiling lift a ratcheted delta (reported as T6b − T6). Geometric metric gated; judge advisory.
+    id: 'T6b-vision-tiled',
+    kind: 'image',
+    tiled: true,
     prompt: 'Model the part shown in this engineering sketch as a 3D-printable plate. Use the labeled dimensions exactly.',
     expect: { bbox: [100, 40, 5], tol: 1.5 },
   },
@@ -656,11 +685,12 @@ async function runEngine(engine) {
         { role: 'user', content: task.prompt },
       ]
     } else if (task.kind === 'image') {
+      const imgs = task.tiled ? visionTiles : [visionImage]
       messages = [
         {
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: visionImage } },
+            ...imgs.map((data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } })),
             { type: 'text', text: task.prompt },
           ],
         },
@@ -680,6 +710,13 @@ async function runEngine(engine) {
       results.push(agg)
       console.log(`[bench] ${label} — aggregated ×${SAMPLES}: compiledRate=${agg.compiledRate}, dim=${agg.dimScore}, IoU=${agg.gold?.iou ?? '—'}, kit=${agg.buildability?.score ?? '—'}`)
     }
+  }
+  // clean-vs-busy lane: report the tiling lift (tiled − full-frame dimScore) when both ran
+  const ff = results.find((r) => r.task === 'T6-vision')
+  const tiled = results.find((r) => r.task === 'T6b-vision-tiled')
+  if (ff && tiled && typeof ff.dimScore === 'number' && typeof tiled.dimScore === 'number') {
+    const lift = round2(tiled.dimScore - ff.dimScore)
+    console.log(`[bench] ${engine} ▸ tiling lift (T6b tiled − T6 full-frame dimScore): ${lift >= 0 ? '+' : ''}${lift}  (full=${ff.dimScore}, tiled=${tiled.dimScore})`)
   }
   return { engine, results }
 }
