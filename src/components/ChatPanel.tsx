@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
@@ -6,6 +6,7 @@ import { captureViews } from '../lib/capture'
 import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
 import { estHistoryTokens, historyBudgetTokens, imageBudgetFor, type ProviderInfo } from '../lib/api'
 import { tileReference } from '../lib/tile'
+import { flaggedSkillIds } from '../lib/skillStats'
 import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
 import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh, DChevLeft, DLayers } from './icons'
@@ -39,6 +40,9 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const streamText = useStore((s) => s.streamText)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const regenerateWithSkills = useStore((s) => s.regenerateWithSkills)
+  const skillStats = useStore((s) => s.skillStats)
+  // skills the user has removed often enough locally to suggest quarantining — a chip hint
+  const flaggedSkills = useMemo(() => flaggedSkillIds(skillStats), [skillStats])
   const abortGeneration = useStore((s) => s.abortGeneration)
   const health = useStore((s) => s.health)
   const healthLoaded = useStore((s) => s.healthLoaded)
@@ -429,7 +433,10 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                       return (
                         <span className="ap-skills">
                           {applied.map((id) => (
-                            <span key={id} className="ap-skill">
+                            <span key={id} className={`ap-skill${flaggedSkills.has(id) ? ' flagged' : ''}`}>
+                              {flaggedSkills.has(id) && (
+                                <span className="ap-flag" title="You've removed this pattern often — it may misfire here. Consider quarantining it.">⚠</span>
+                              )}
                               {skillLabel(id)}
                               {editable && (
                                 <button

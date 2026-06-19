@@ -583,6 +583,8 @@ input[type='checkbox']:focus-visible,
 .applied-patterns .ap-skills { display: flex; flex-wrap: wrap; gap: 4px; }
 .applied-patterns .ap-skill { display: inline-flex; align-items: center; gap: 4px; background: var(--raised); color: var(--text-dim); padding: 1px 8px; border-radius: 999px; }
 .applied-patterns .ap-meta { color: var(--text-faint); }
+.applied-patterns .ap-skill.flagged { border: 1px solid var(--warn-soft); }
+.applied-patterns .ap-flag { color: var(--warn); cursor: help; margin-right: 1px; }
 /* correction controls — remove a pattern (×) / add one (+); full interaction-state contract */
 .applied-patterns .ap-x {
   border: 0; background: transparent; color: var(--text-faint); cursor: pointer;
