@@ -69,6 +69,12 @@ export function structuralReport(code: string, params: ScadParameter[]): { issue
   dupConcept(CLEARANCE_RE, 'clearance')
   dupConcept(WALL_RE, 'wall')
 
+  // composed-kit scatter heuristic (P7): a multi-piece part enum with no `explode` knob tends to
+  // render its pieces flung apart in the all-view instead of mated on a shared datum.
+  if (partParam && (partParam.options?.length ?? 0) >= 3 && !/\bexplode\b/.test(code)) {
+    issues.push('Pieces may render scattered in the all-view — mate them on a shared datum and expose an `explode` knob defaulting to 0 (assembled).')
+  }
+
   return { issues }
 }
 
