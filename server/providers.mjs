@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
-import { SKILLS, selectSkills, selectSkillsDetailed } from './skills.mjs'
+import { SKILLS, selectSkills, selectSkillsDetailed, composePlan } from './skills.mjs'
 import { billOfMaterials } from './hardware.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
@@ -451,9 +451,32 @@ export function compositionDirective(skillIds) {
  *  convention with a CORRECTLY-MATED all-view (coincident joint axes + explode knob), so composed
  *  kits assemble instead of scattering. '' unless >=2 skills AND kit intent (keeps non-kit/single
  *  assembly byte-identical). Principle-only — no named object. */
+/** Phrase one derived mate as a concrete instruction (the model resolves the fit mm from the FIT ladder). */
+function describeMate({ provider, consumer, port, fit }) {
+  switch (port) {
+    case 'shaft':
+      return `${provider}'s shaft/pin seats into ${consumer}'s bore on ONE shared axis — a ${fit} clearance (bore = shaft + clearance) so it turns freely without slop`
+    case 'mesh':
+      return `${provider} meshes with ${consumer} — they MUST share the module and sit at the correct centre distance, with backlash > 0`
+    case 'peg':
+      return `${provider}'s peg/clip engages ${consumer}'s socket/keeper — a ${fit} fit`
+    case 'spring':
+      return `${consumer} houses the ${provider} — size the pocket so the spring compresses freely (pitch > wire)`
+    default:
+      return `${provider} mates with ${consumer} (${fit} fit)`
+  }
+}
+
 export function matingDirective(skillIds, isKit) {
   if (!isKit || !Array.isArray(skillIds) || skillIds.length < 2) return ''
-  return `\n\n# Assemble the kit\n\nThis is a multi-mechanism KIT. Use a single \`part\` enum with \`all\` FIRST, then one option per piece. In the \`all\` view, place every piece on ONE shared datum with their JOINT AXES COINCIDENT (an axle bore on the axle's axis, a snap male in its socket) so the pieces MATE — assembled, never scattered. Expose an \`explode\` parameter (default 0 = fully assembled) that fans the pieces apart along their joint axes for preview.`
+  const generic = `\n\n# Assemble the kit\n\nThis is a multi-mechanism KIT. Use a single \`part\` enum with \`all\` FIRST, then one option per piece. In the \`all\` view, place every piece on ONE shared datum with their JOINT AXES COINCIDENT (an axle bore on the axle's axis, a snap male in its socket) so the pieces MATE — assembled, never scattered. Expose an \`explode\` parameter (default 0 = fully assembled) that fans the pieces apart along their joint axes for preview.`
+  // derive specific mates from the port graph; fall back to the generic directive when none apply
+  const { mates, conflicts } = composePlan(skillIds)
+  if (!mates.length && !conflicts.length) return generic
+  let out = generic + `\n\nMate these specific joints:`
+  for (const m of mates) out += `\n- ${describeMate(m)}.`
+  for (const [a, b] of conflicts) out += `\n- NOTE: ${a} and ${b} are flagged as conflicting — reconcile or drop one.`
+  return out
 }
 
 /** Text of the most recent user turn, for prompt-intent skill retrieval. Handles both

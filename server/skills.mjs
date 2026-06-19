@@ -1149,3 +1149,83 @@ export function selectSkillsDetailed(context) {
 export function selectSkills(context) {
   return selectSkillsDetailed(context).selected
 }
+
+/* ── Composition port graph (P-backlog) ──
+ * Instead of one hand-authored composed exemplar per skill pair (O(n^2)), declare typed PORTS per
+ * skill: a `provides` port mates a matching `consumes` port on another selected skill. composePlan
+ * derives the SPECIFIC mates (and any conflicts) for a selected set, which matingDirective turns
+ * into concrete "seat X into Y on a shared axis with a <fit> clearance" guidance — so any compatible
+ * SET composes without a bespoke exemplar. Start small (5 port types over the 18 skills); the
+ * composed.mjs exemplars stay as gold for the highest-value pairs. Ratcheted by
+ * bench/composition-graph.selftest.mjs. */
+// One port name per JOINT type; the PROVIDER is the male side, the CONSUMER the female side
+// (shaft↔bore, peg↔socket, spring↔pocket). mesh is symmetric (gears both provide + consume it).
+const PORT_TYPES = ['shaft', 'mesh', 'peg', 'spring', 'fastener-seat']
+
+/** Default FIT class per port type (the model resolves the mm value from the FIT ladder). */
+const PORT_FIT = { shaft: 'slide', peg: 'press', mesh: 'mesh', spring: 'free', 'fastener-seat': 'clearance' }
+
+/** The port graph: which skill provides/consumes which port. Central (not per-entry) so the whole
+ *  graph is reviewable in one place; mesh is symmetric (gears both provide + consume it). */
+const SKILL_PORTS = {
+  'wheel-axle': { provides: ['shaft'] },
+  'print-in-place-hinge': { provides: ['shaft'] }, // the captive pin
+  'bearing-608-pocket': { consumes: ['shaft'] }, // its bore takes an axle
+  'spur-gear': { provides: ['mesh'], consumes: ['shaft', 'mesh'] },
+  'rack-pinion': { provides: ['mesh'], consumes: ['shaft', 'mesh'] },
+  planetary: { provides: ['mesh'], consumes: ['shaft', 'mesh'] },
+  herringbone: { provides: ['mesh'], consumes: ['shaft', 'mesh'] },
+  'gt2-pulley': { consumes: ['shaft'] }, // belt-driven — a bore on a shaft, not a gear mesh
+  ratchet: { consumes: ['shaft'] },
+  'snap-fit': { provides: ['peg'], consumes: ['peg'] }, // clip (male) + keeper (female)
+  'fit-pair': { provides: ['peg'], consumes: ['peg'] }, // peg (male) + socket (female)
+  bistable: { provides: ['peg'] },
+  'coil-spring': { provides: ['spring'] },
+  'leaf-spring': { provides: ['spring'] },
+  'button-return': { consumes: ['spring'] },
+  'threaded-fastener-seat': { provides: ['fastener-seat'] },
+}
+
+export { PORT_TYPES, SKILL_PORTS, PORT_FIT }
+
+/**
+ * Derive the mates (and conflicts) for a selected skill set from the port graph. A mate exists when
+ * one selected skill PROVIDES a port another selected skill CONSUMES. Unordered-deduped; ignores
+ * skills without ports and quarantined skills. Returns { mates:[{provider,consumer,port,fit}], conflicts:[[a,b]] }.
+ */
+export function composePlan(skillIds) {
+  const ids = (Array.isArray(skillIds) ? skillIds : []).filter(usable)
+  const provByPort = new Map()
+  const consByPort = new Map()
+  for (const id of ids) {
+    const p = SKILL_PORTS[id]
+    if (!p) continue
+    for (const port of p.provides ?? []) provByPort.set(port, [...(provByPort.get(port) ?? []), id])
+    for (const port of p.consumes ?? []) consByPort.set(port, [...(consByPort.get(port) ?? []), id])
+  }
+  const mates = []
+  const seen = new Set()
+  for (const [port, providers] of provByPort) {
+    for (const provider of providers) {
+      for (const consumer of consByPort.get(port) ?? []) {
+        if (provider === consumer) continue
+        const key = `${port}|${[provider, consumer].sort().join('+')}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        mates.push({ provider, consumer, port, fit: PORT_FIT[port] ?? 'slide' })
+      }
+    }
+  }
+  const conflicts = []
+  const cseen = new Set()
+  for (const id of ids) {
+    for (const other of SKILLS[id]?.conflictsWith ?? []) {
+      if (!ids.includes(other)) continue
+      const key = [id, other].sort().join('+')
+      if (cseen.has(key)) continue
+      cseen.add(key)
+      conflicts.push([id, other].sort())
+    }
+  }
+  return { mates, conflicts }
+}

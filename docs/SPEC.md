@@ -280,7 +280,16 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
 - **Mated assembled view.** When ≥2 skills compose into a kit, a **mating directive** (`matingDirective`)
   mandates the multi-part convention with a correctly-mated `all` view: a single `part` enum (`all`
   first), joint axes COINCIDENT on one shared datum so pieces mate (not scatter), and an `explode`
-  knob (0 = assembled). Principle-only (no named object).
+  knob (0 = assembled).
+- **Port graph → derived mates (backlog).** Instead of a hand-authored composed exemplar per skill
+  pair (O(n²)), a central `SKILL_PORTS` graph declares typed ports per skill (`shaft`, `mesh`, `peg`,
+  `spring`, `fastener-seat`; provider = male side, consumer = female, `mesh` symmetric). `composePlan(ids)`
+  derives the SPECIFIC mates (a provider's port + a consumer's matching port) and any `conflictsWith`
+  for a selected set; `matingDirective` appends concrete lines ("X's shaft seats into Y's bore on one
+  axis — slide fit", "A meshes with B — share the module, backlash > 0") on top of the generic
+  directive, falling back to generic when no typed mate applies. Deterministic, zero-API; the
+  `bench/composition-graph.selftest.mjs` ratchet asserts graph consistency (no dangling ports / dead
+  consumers / unknown ids) + the mate derivations.
 - **Advisory structuralReport checks.** Duplicate shared-concept parameters (≥2 clearance/wall) and a
   ≥2-piece `part` enum lacking an `explode` knob each emit a WARN into `buildManualFixPrompt` —
   never blocking.
