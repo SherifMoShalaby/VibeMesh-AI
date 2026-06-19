@@ -24,6 +24,10 @@ export function buildAutoFixPrompt(compileError: string): string {
 
 const MALE_RE = /(stud|peg|pin|dowel|tenon|tongue|boss|lug|male|shaft|axle)/i
 const FEMALE_RE = /(socket|tube|bore|hole|mortise|groove|slot|female|cavity|sleeve)/i
+// shared-concept families (P7): a composed multi-mechanism program should expose ONE parameter
+// per concept, not one per mechanism. Used to WARN on duplicate clearance/wall params.
+const CLEARANCE_RE = /(clear|fit|tol|gap)/i
+const WALL_RE = /(wall|thick)/i
 
 /**
  * Cheap, no-recompile structural checks for the manual fix path — catches the most
@@ -55,6 +59,15 @@ export function structuralReport(code: string, params: ScadParameter[]): { issue
   if (partParam && (partParam.options?.length ?? 0) < 2) {
     issues.push('The `part` enum has fewer than two pieces — a buildable kit needs separate selectable parts.')
   }
+
+  // composed kits should expose ONE parameter per shared concept (P7) — flag duplicates
+  const keys = Object.keys(nums)
+  const dupConcept = (re: RegExp, label: string) => {
+    const matches = keys.filter((k) => re.test(k))
+    if (matches.length >= 2) issues.push(`Multiple ${label} parameters (${matches.join(', ')}) — merge into one shared parameter so the mechanisms stay consistent.`)
+  }
+  dupConcept(CLEARANCE_RE, 'clearance')
+  dupConcept(WALL_RE, 'wall')
 
   return { issues }
 }

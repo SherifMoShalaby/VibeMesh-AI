@@ -35,6 +35,12 @@ for (const [id, skill] of Object.entries(SKILLS)) {
     caught = skill.validate(broken).length > 0
   }
   if (!caught) { console.error(`  ${id.padEnd(14)} ✗ validator did NOT catch the clearance-broken control`); fail++; continue }
+  // P7: every paramAlias must name a parameter that actually appears in the exemplar's header
+  let aliasBad = ''
+  for (const [concept, param] of Object.entries(skill.paramAliases ?? {})) {
+    if (!new RegExp(`(^|\\n)\\s*${param}\\s*=`).test(skill.exemplar)) aliasBad = `${concept}→${param} (not a parameter in the exemplar)`
+  }
+  if (aliasBad) { console.error(`  ${id.padEnd(14)} ✗ paramAlias ${aliasBad}`); fail++; continue }
   console.log(`  ${id.padEnd(14)} ✓ compiles (${tris} tris) · validates · catches broken control`)
 }
 console.log(fail ? `[skills] SELFTEST FAIL (${fail})` : '[skills] SELFTEST PASS — every exemplar compiles, validates, and its validator catches a broken control.')

@@ -388,7 +388,11 @@ export function contextText(context, engine) {
   }
   // append each selected skill's fragment; the skill decides per-engine budget rules
   // (e.g. the kit skill drops its heavy exemplar on tiny-context local models).
-  for (const id of selectSkills(context)) out += SKILLS[id].fragment(engine)
+  const sel = selectSkills(context)
+  for (const id of sel) out += SKILLS[id].fragment(engine)
+  // composition (P7): when >=2 skills share a concept (clearance, wall, …) via paramAliases,
+  // tell the model to emit ONE Customizer parameter per shared concept, not one per mechanism.
+  out += compositionDirective(sel)
   // source-type-routed vision guidance (P6 ws3): the model-emitted sourceType (carried from
   // the prior turn's intent) takes precedence; on the first image turn the client's coarse
   // sourceHint (derived from attached image roles) routes it. Text-only requests add nothing.
@@ -412,6 +416,19 @@ const VISION_FRAGMENTS = {
 }
 export function visionSourceFragment(sourceType) {
   return (typeof sourceType === 'string' && VISION_FRAGMENTS[sourceType]) || ''
+}
+
+/** Composition merge directive (P7): when >=2 selected skills declare the SAME concept in their
+ *  paramAliases (e.g. both expose a 'clearance'), tell the model to emit ONE Customizer parameter
+ *  per shared concept and reconcile ranges — never one per mechanism. '' for <2 skills / no overlap
+ *  (so single-/zero-skill assembly stays byte-identical). Concept names are resolved, not hardcoded. */
+export function compositionDirective(skillIds) {
+  if (!Array.isArray(skillIds) || skillIds.length < 2) return ''
+  const count = {}
+  for (const id of skillIds) for (const concept of Object.keys(SKILLS[id]?.paramAliases ?? {})) count[concept] = (count[concept] || 0) + 1
+  const shared = Object.keys(count).filter((c) => count[c] >= 2)
+  if (!shared.length) return ''
+  return `\n\n# Merge shared parameters\n\nThese mechanisms share concepts (${shared.join(', ')}). Emit ONE Customizer parameter for each shared concept — not one per mechanism — reconciling the [min:step:max] ranges to the tightest safe band; keep genuinely distinct concepts distinct.`
 }
 
 /** Text of the most recent user turn, for prompt-intent skill retrieval. Handles both
