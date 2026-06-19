@@ -12,6 +12,7 @@
  * "exemplar-poison" defense). This is the engine-free gate for the skills program.
  */
 import { KIT_EXEMPLAR } from './exemplars.mjs'
+import { SCREWS, BEARINGS } from './hardware.mjs'
 
 /* Shared FDM fit ladder — the ONE place clearance values live, so every skill and
  * validator reads the same numbers (radial, on diameter). female = male + fit(class). */
@@ -370,7 +371,7 @@ seat = "all"; // [all, clearance, insert, nut_trap]
 tbl = screw == "M2.5" ? [2.9, 3.5, 5.0, 2.0]
     : screw == "M3"   ? [3.4, 4.0, 5.5, 2.4]
     : screw == "M4"   ? [4.5, 5.6, 7.0, 3.2]
-    :                   [5.5, 6.4, 8.0, 4.0];   // M5
+    :                   [5.5, 6.4, 8.0, 4.7];   // M5 (nut m=4.7 per ISO 4032)
 clear_d = tbl[0]; insert_d = tbl[1]; nut_af = tbl[2]; nut_t = tbl[3];
 
 block = 14;
@@ -849,7 +850,7 @@ export const SKILLS = {
 
   'threaded-fastener-seat': {
     id: 'threaded-fastener-seat',
-    version: 1,
+    version: 2, // v2: dims sourced from the hardware catalog; M5 nut trap 4.0→4.7mm (ISO 4032)
     exemplar: FASTENER_SEAT_EXEMPLAR,
     validate(code) {
       const issues = []
@@ -860,7 +861,7 @@ export const SKILLS = {
     fragment(engine) {
       const isLocal = typeof engine === 'string' && engine.startsWith('local:')
       let s =
-        '\n\n# Threaded-fastener seats\n\nSize fastener features to STANDARD metric hardware, never an arbitrary hole. Three patterns: (1) a clearance hole for the screw shank — close fit ~M3=3.4mm, M4=4.5mm (so the screw passes but does not strip); (2) a heat-set insert pocket sized to the insert OD (~M3=4.0mm, M4=5.6mm) with a lead-in chamfer; (3) a captive hex nut trap (across-flats ~M3=5.5mm, M4=7.0mm) plus a screw clearance through it. Build a hex pocket as a 6-faceted cylinder whose diameter = across_flats / cos(30). Expose the screw size as a parameter and look the dimensions up.'
+        `\n\n# Threaded-fastener seats\n\nSize fastener features to STANDARD metric hardware, never an arbitrary hole. Three patterns: (1) a clearance hole for the screw shank — close fit ~M3=${SCREWS.M3.clearance}mm, M4=${SCREWS.M4.clearance}mm (so the screw passes but does not strip); (2) a heat-set insert pocket sized to the insert OD (~M3=${SCREWS.M3.insertDia}mm, M4=${SCREWS.M4.insertDia}mm) with a lead-in chamfer; (3) a captive hex nut trap (across-flats ~M3=${SCREWS.M3.nutAF}mm, M4=${SCREWS.M4.nutAF}mm) plus a screw clearance through it. Build a hex pocket as a 6-faceted cylinder whose diameter = across_flats / cos(30). Expose the screw size as a parameter and look the dimensions up.`
       if (!isLocal) s += '\n\nReference example (clearance / heat-set insert / nut-trap, standard sizes, flat on z=0):\n\n' + FASTENER_SEAT_EXEMPLAR
       return s
     },
@@ -872,19 +873,20 @@ export const SKILLS = {
     paramAliases: { clearance: 'fit' },
     exemplar: BEARING_POCKET_EXEMPLAR,
     validate(code) {
+      const STD_OD = BEARINGS['608'].od // single source of truth (hardware.mjs)
       const m = code.match(/\bod\s*=\s*([\d.]+)/)
       const od = m ? parseFloat(m[1]) : null
       const issues = []
       if (od === null) issues.push('608 bearing pocket must declare the outer Ø (od)')
-      else if (Math.abs(od - 22) > 0.5) issues.push(`608 bearing pocket outer Ø is ${od}mm — the 608 standard is 22mm`)
+      else if (Math.abs(od - STD_OD) > 0.5) issues.push(`608 bearing pocket outer Ø is ${od}mm — the 608 standard is ${STD_OD}mm`)
       if (!/\bfit\b/.test(code)) issues.push('bearing pocket needs a fit clearance on the pocket Ø (press vs slip), or the bearing will not seat')
       return issues
     },
-    brokenControl: (code) => code.replace(/\bod\s*=\s*22\b/, 'od = 30'),
+    brokenControl: (code) => code.replace(new RegExp(`\\bod\\s*=\\s*${BEARINGS['608'].od}\\b`), 'od = 30'),
     fragment(engine) {
       const isLocal = typeof engine === 'string' && engine.startsWith('local:')
       let s =
-        '\n\n# Bearing pocket (608)\n\nA 608 skate bearing is OD 22mm, ID 8mm, width 7mm (the de-facto standard for spinners, wheels, lazy-susans). Seat it in a pocket sized OD + a fit allowance (press fit ~0, slip fit ~0.2mm). Add a shoulder/lip the outer race rests on at a defined depth, and a relief bore through the centre that is wider than the rotating inner race but narrower than the OD — so the seat grips the outer race only and never rubs the spinning inner race. Expose the fit as a parameter.'
+        `\n\n# Bearing pocket (608)\n\nA 608 skate bearing is OD ${BEARINGS['608'].od}mm, ID ${BEARINGS['608'].id}mm, width ${BEARINGS['608'].w}mm (the de-facto standard for spinners, wheels, lazy-susans). Seat it in a pocket sized OD + a fit allowance (press fit ~0, slip fit ~0.2mm). Add a shoulder/lip the outer race rests on at a defined depth, and a relief bore through the centre that is wider than the rotating inner race but narrower than the OD — so the seat grips the outer race only and never rubs the spinning inner race. Expose the fit as a parameter.`
       if (!isLocal) s += '\n\nReference example (608 pocket with shoulder + inner-race relief, flat on z=0):\n\n' + BEARING_POCKET_EXEMPLAR
       return s
     },

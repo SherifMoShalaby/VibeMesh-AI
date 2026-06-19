@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
 import { SKILLS, selectSkills } from './skills.mjs'
+import { billOfMaterials } from './hardware.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
 
@@ -390,6 +391,9 @@ export function contextText(context, engine) {
   // (e.g. the kit skill drops its heavy exemplar on tiny-context local models).
   const sel = selectSkills(context)
   for (const id of sel) out += SKILLS[id].fragment(engine)
+  // real-hardware dims (catalog) for any token in THIS prompt — independent of skill
+  // selection, so "fits the M3/608 you already own" holds even when no skill fires.
+  out += hardwareDirective(context)
   // composition (P7): when >=2 skills share a concept (clearance, wall, …) via paramAliases,
   // tell the model to emit ONE Customizer parameter per shared concept, not one per mechanism;
   // and (kit intent) mandate a correctly-mated assembled all-view so the pieces don't scatter.
@@ -400,6 +404,16 @@ export function contextText(context, engine) {
   // sourceHint (derived from attached image roles) routes it. Text-only requests add nothing.
   out += visionSourceFragment(context?.intent?.sourceType ?? context?.sourceHint)
   return out
+}
+
+/** Inject the real catalog dimensions for any hardware named in the prompt, regardless of
+ *  which skills fired — so a clearance hole / bearing pocket is correct by construction, not
+ *  by the model's recall. '' when the prompt names no hardware (byte-identical otherwise). */
+export function hardwareDirective(context) {
+  const items = billOfMaterials(context?.prompt ?? '')
+  if (!items.length) return ''
+  const lines = items.map((it) => `- ${it.note}.`).join('\n')
+  return `\n\n# Real hardware dimensions\n\nThe request names real hardware — use these EXACT dimensions (mm), never guess a hole or pocket size:\n${lines}`
 }
 
 /** Source-type-specific build guidance for image-grounded requests. Routed, NOT always-on —
