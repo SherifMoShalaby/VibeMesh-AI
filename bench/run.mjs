@@ -204,6 +204,17 @@ const TASKS = [
     context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['snap-fit'] },
     expect: { bboxMax: [120, 120, 60], intentTag: 'snap' },
   },
+  {
+    // Composition lane (P7): force TWO mechanism skills so the merge + mating directives fire.
+    // The kit must compose into ONE program (one shared clearance) with a MATED all-view —
+    // assembledScore (the all-view span vs the largest piece) is the composition acceptance signal.
+    id: 'T16-composed',
+    kind: 'fresh',
+    kit: true,
+    prompt: 'A rolling toy hub: a wheel that snaps onto an axle pin and still spins on it — give me the printable parts (chassis/pin and the snap-on wheel) as one kit.',
+    context: { bed: { x: 220, y: 220, z: 250, label: 'Ender 3' }, kit: true, skillIds: ['wheel-axle', 'snap-fit'] },
+    expect: { partEnumMin: 2, bboxMax: [220, 220, 80] },
+  },
 ]
 
 /* ── SSE generation via the app's API ── */

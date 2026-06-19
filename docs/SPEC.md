@@ -255,3 +255,24 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   retrieval for that turn (selectSkills skipped — the assembler injects exactly those fragments). It
   shares the generating-guard + abortController; the new version carries the corrected
   `appliedSkillIds`. Advisory — corrected ids only change retrieval, never force a competing block.
+
+## 14. Composition: multi-skill merge + mated all-view (2026-06-19 — Phase 7)
+- **Shared-parameter merge.** Each skill registry entry may carry `paramAliases` mapping a canonical
+  concept (`clearance`, `wall`) to its own parameter name. When ≥2 selected skills share a concept,
+  the assembler appends a **"merge not duplicate"** directive (`compositionDirective`) naming the
+  resolved concepts: emit ONE Customizer parameter per shared concept, reconcile `[min:step:max]` to
+  the tightest safe band. `''` for <2 skills / no overlap (single-/zero-skill assembly byte-identical).
+  The zero-API walker asserts every `paramAlias` names a real parameter in that skill's exemplar.
+- **Mated assembled view.** When ≥2 skills compose into a kit, a **mating directive** (`matingDirective`)
+  mandates the multi-part convention with a correctly-mated `all` view: a single `part` enum (`all`
+  first), joint axes COINCIDENT on one shared datum so pieces mate (not scatter), and an `explode`
+  knob (0 = assembled). Principle-only (no named object).
+- **Advisory structuralReport checks.** Duplicate shared-concept parameters (≥2 clearance/wall) and a
+  ≥2-piece `part` enum lacking an `explode` knob each emit a WARN into `buildManualFixPrompt` —
+  never blocking.
+- **Composed exemplars + probe.** `server/composed.mjs` holds compile-verified composed fixtures
+  (e.g. `axle-snap`: one merged `clearance`, mated `all`-view, `_debug` interference contract). The
+  zero-API composition probe (`bench/composition.selftest.mjs`, in `bench:gate`) asserts each fixture
+  compiles, exposes exactly one parameter per shared concept, and keeps protected-structure ∩
+  cutters ≈ 0 — with broken controls (a duplicated clearance, a pocket sliced into the pin) proving
+  it discriminates. The live loop stays WARN-only; only this deterministic walker may hard-fail.
