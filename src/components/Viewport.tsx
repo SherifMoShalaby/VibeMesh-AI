@@ -907,7 +907,7 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
 }
 
 /**
- * Registers the refine snapshots: three fixed poses (isometric, front, top)
+ * Registers the refine snapshots: four fixed poses (isometric, front, top, right)
  * fitted to the model, so refine passes always compare from the SAME viewpoints
  * regardless of how the user orbited — and the model sees angles a single iso
  * view hides (true proportions, hole/feature counts on each face).
@@ -979,11 +979,13 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
         gl.render(scene, camera)
         return canvasToChatImage(gl.domElement, maxDim, quality)
       }
-      // isometric, front (down -Y), top (down -Z, Y-up to avoid gimbal lock)
+      // isometric, front (down -Y), top (down -Z, Y-up to avoid gimbal lock), right (down -X) —
+      // the right view exposes depth + side asymmetry a front-only set hides on non-axisymmetric parts.
       const views = [
         shoot(new THREE.Vector3(target.x + dist * 0.707, target.y - dist * 0.707, target.z + dist * 0.577), zUp),
         shoot(new THREE.Vector3(target.x, target.y - dist, target.z), zUp),
         shoot(new THREE.Vector3(target.x, target.y, target.z + dist), new THREE.Vector3(0, 1, 0)),
+        shoot(new THREE.Vector3(target.x + dist, target.y, target.z + dist * 0.001), zUp),
       ].filter((v): v is NonNullable<typeof v> => v !== null)
       scene.remove(rim, rim.target)
       scene.environment = prevEnv
