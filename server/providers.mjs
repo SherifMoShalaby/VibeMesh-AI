@@ -391,8 +391,10 @@ export function contextText(context, engine) {
   const sel = selectSkills(context)
   for (const id of sel) out += SKILLS[id].fragment(engine)
   // composition (P7): when >=2 skills share a concept (clearance, wall, …) via paramAliases,
-  // tell the model to emit ONE Customizer parameter per shared concept, not one per mechanism.
+  // tell the model to emit ONE Customizer parameter per shared concept, not one per mechanism;
+  // and (kit intent) mandate a correctly-mated assembled all-view so the pieces don't scatter.
   out += compositionDirective(sel)
+  out += matingDirective(sel, context?.kit)
   // source-type-routed vision guidance (P6 ws3): the model-emitted sourceType (carried from
   // the prior turn's intent) takes precedence; on the first image turn the client's coarse
   // sourceHint (derived from attached image roles) routes it. Text-only requests add nothing.
@@ -429,6 +431,15 @@ export function compositionDirective(skillIds) {
   const shared = Object.keys(count).filter((c) => count[c] >= 2)
   if (!shared.length) return ''
   return `\n\n# Merge shared parameters\n\nThese mechanisms share concepts (${shared.join(', ')}). Emit ONE Customizer parameter for each shared concept — not one per mechanism — reconciling the [min:step:max] ranges to the tightest safe band; keep genuinely distinct concepts distinct.`
+}
+
+/** Composition mating directive (P7): when >=2 skills compose into a kit, mandate the multi-part
+ *  convention with a CORRECTLY-MATED all-view (coincident joint axes + explode knob), so composed
+ *  kits assemble instead of scattering. '' unless >=2 skills AND kit intent (keeps non-kit/single
+ *  assembly byte-identical). Principle-only — no named object. */
+export function matingDirective(skillIds, isKit) {
+  if (!isKit || !Array.isArray(skillIds) || skillIds.length < 2) return ''
+  return `\n\n# Assemble the kit\n\nThis is a multi-mechanism KIT. Use a single \`part\` enum with \`all\` FIRST, then one option per piece. In the \`all\` view, place every piece on ONE shared datum with their JOINT AXES COINCIDENT (an axle bore on the axle's axis, a snap male in its socket) so the pieces MATE — assembled, never scattered. Expose an \`explode\` parameter (default 0 = fully assembled) that fans the pieces apart along their joint axes for preview.`
 }
 
 /** Text of the most recent user turn, for prompt-intent skill retrieval. Handles both
