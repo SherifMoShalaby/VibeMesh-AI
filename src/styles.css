@@ -554,6 +554,20 @@ input[type='checkbox']:focus-visible,
 .skill-note .sn-head { display: block; font-weight: 600; color: var(--warn); margin-bottom: 2px; }
 .skill-note .sn-line { color: var(--text-dim); }
 /* applied-patterns chip — inspectable design intent + skills that fired (advisory metadata) */
+/* honest-expectation banner (organic/photo or low-confidence reference) */
+.expect-banner {
+  display: flex; align-items: flex-start; gap: var(--s2);
+  margin: var(--s2) 0 0 calc(22px + var(--s2));
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-xs);
+  border: 1px solid var(--warn-soft); background: var(--warn-soft);
+  font-size: var(--fs-small); color: var(--text-dim); line-height: 1.4;
+}
+.expect-banner .eb-icon { color: var(--warn); display: grid; place-items: center; flex-shrink: 0; margin-top: 1px; }
+.expect-banner .eb-icon svg { width: 14px; height: 14px; }
+.expect-banner .eb-text { min-width: 0; }
+.expect-banner .eb-conf { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--raised); color: var(--text-faint); font-size: var(--fs-micro); white-space: nowrap; }
+
 .applied-patterns {
   display: flex; align-items: flex-start; gap: var(--s2);
   margin: var(--s2) 0 0 calc(22px + var(--s2));
@@ -1261,6 +1275,12 @@ input[type='checkbox']:focus-visible,
 .empty-thumb-x:hover { color: var(--text); border-color: var(--accent-line); }
 
 .empty-examples { display: flex; flex-wrap: wrap; gap: var(--s2); justify-content: center; max-width: 700px; flex-shrink: 0; }
+
+/* mechanism starter row — one-click prompts that fire a verified skill */
+.empty-starters { display: flex; flex-direction: column; align-items: center; gap: var(--s2); max-width: 760px; flex-shrink: 0; }
+.empty-starters .starters-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.empty-starters .starters-row { display: flex; flex-wrap: wrap; gap: var(--s2); justify-content: center; }
+.ex-chip.starter { font-size: var(--fs-micro); padding: 7px 12px; }
 .ex-chip {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 9px 14px; border-radius: var(--r-pill);

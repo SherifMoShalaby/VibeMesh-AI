@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useStore } from '../state/store'
-import { EXAMPLES, PROMPT_IDEAS } from '../lib/examples'
+import { EXAMPLES, PROMPT_IDEAS, SKILL_STARTERS } from '../lib/examples'
 import ModelMenu from './ModelMenu'
 import type { ChatImage } from '../types'
 import { imageBudgetFor } from '../lib/api'
@@ -127,6 +127,17 @@ export default function EmptyState() {
             </button>
           )
         })}
+      </div>
+
+      <div className="empty-starters">
+        <span className="starters-label">Try a mechanism</span>
+        <div className="starters-row">
+          {SKILL_STARTERS.map((s) => (
+            <button key={s} className="ex-chip starter" onClick={() => setText(s)} title="Prefill this prompt">
+              <DSpark /> {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="empty-steps">

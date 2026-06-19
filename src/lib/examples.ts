@@ -14,6 +14,18 @@ export const PROMPT_IDEAS = [
   'A replacement knob for a 6mm potentiometer shaft',
 ]
 
+/** One-click prompts that each exercise a verified mechanism SKILL (server/skills.mjs) — the
+ *  repo's strongest assets, surfaced so a first session lands a real working mechanism. Each is
+ *  phrased to fire its skill's trigger; keep these anchored to a shipped skill. */
+export const SKILL_STARTERS = [
+  'A phone stand with a living hinge that folds flat',
+  'A two-gear reduction gearbox, each gear with a shaft bore',
+  'A print-in-place hinge for a small box lid',
+  'A fidget spinner with a 608 bearing seat',
+  'A cantilever snap-fit latch and matching keeper',
+  'A bracket with M3 heat-set insert bosses',
+]
+
 export const EXAMPLES: Example[] = [
   {
     id: 'storage-box',
