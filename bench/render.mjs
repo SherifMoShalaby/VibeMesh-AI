@@ -1,6 +1,6 @@
 /**
  * Dependency-light CPU rasterizer: a compiled STL → small PNGs from the same three
- * fixed poses the app's refine capture uses (isometric / front / top, Viewport.tsx
+ * fixed poses the app's refine capture uses (isometric / front / top / right, Viewport.tsx
  * CaptureRig). Feeds the advisory vision-judge (judgeVision) so it can compare the
  * generated geometry against a reference image — turning "is the spinner's stepped
  * arm actually there?" into something a model can check. No GPU, no native deps:
@@ -16,6 +16,7 @@ const POSES = {
   iso: { dir: [1, -1, 0.75], up: [0, 0, 1] },
   front: { dir: [0, -1, 0.0001], up: [0, 0, 1] },
   top: { dir: [0.0001, -0.0001, 1], up: [0, 1, 0] }, // Y-up to avoid gimbal lock looking down -Z
+  right: { dir: [1, 0, 0.001], up: [0, 0, 1] }, // down -X — exposes depth + side asymmetry
 }
 const LIGHT = norm([0.4, -0.5, 0.85]) // soft key light, roughly over the viewer's shoulder
 const SIZE = 256

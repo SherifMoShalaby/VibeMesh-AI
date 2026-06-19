@@ -10,7 +10,7 @@ export function registerViewportCanvas(canvas: HTMLCanvasElement): void {
 
 /**
  * Registered by the Viewport: renders the model from a few canonical FIXED poses
- * (isometric, front, top), fitted to the model, and returns them in that order —
+ * (isometric, front, top, right), fitted to the model, and returns them in that order —
  * so refine passes always compare the same viewpoints regardless of user orbiting,
  * and the model can judge proportions/feature counts it can't see from one angle.
  */
@@ -37,7 +37,7 @@ export function canvasToChatImage(canvas: HTMLCanvasElement, maxDim = 896, quali
 }
 
 /**
- * Snapshots for the refine loop — up to three canonical fixed-pose views.
+ * Snapshots for the refine loop — up to four canonical fixed-pose views.
  * Falls back to whatever is currently on screen if the fixed poses are unavailable.
  */
 export function captureViews(maxDim = 896, quality = 0.85): ChatImage[] {
