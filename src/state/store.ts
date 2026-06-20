@@ -6,6 +6,7 @@ import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
 import { ComputeBudget } from '../lib/openscad/budget'
+import { scoreCandidate, pickBestIndex, BEST_OF_N_COUNT, type CandidateSignals } from '../lib/bestOfN'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
@@ -470,6 +471,58 @@ export const useStore = create<VibeState>((set, get) => {
    *  Off for weak local engines. 2 lets a grounded second attempt land. */
   const MAX_AUTO_FIX = 2
 
+  /** A2 — verifier-guided best-of-N. Fan out N generations, compile + score each on REFERENCE-FREE
+   *  signals (compile-clean dominates, then degenerate, then structural/dim issue counts), and return
+   *  the winner's reply text + skill report. Candidates stream SILENTLY (one status line, not N
+   *  interleaved token streams); each compiles once through the bounded BACKGROUND queue under a
+   *  shared per-request budget, so the N compiles can't blow the single worker's watchdog. */
+  async function runBestOfN(
+    engine: string,
+    messages: ReturnType<typeof toApiMessages>,
+    baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'>,
+    ctx: { bed: { x: number; y: number; z: number }; stated: ReturnType<typeof clampStatedDimensions>['dimensions'] },
+  ): Promise<{ full: string; skillReport: SkillIssue[]; appliedSkillIds: string[]; dropped: string[] }> {
+    const n = BEST_OF_N_COUNT
+    const reports = Array.from({ length: n }, () => ({ skillIds: [] as string[], dropped: [] as string[], report: [] as SkillIssue[] }))
+    let done = 0
+    set({ streamText: `Generating ${n} candidates, keeping the best…` })
+    const fulls = await Promise.all(
+      Array.from({ length: n }, (_, i) =>
+        streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info } })
+          .then((text) => { set({ streamText: `Generated ${++done}/${n} candidates…` }); return text })
+          .catch(() => ''),
+      ),
+    )
+    const budget = new ComputeBudget({ wallMs: 60_000, maxRenders: n + 2 })
+    const signals: CandidateSignals[] = []
+    for (const text of fulls) {
+      const { code, blockCount } = extractScadBlock(text)
+      if (code === null || blockCount > 1) {
+        signals.push({ hasScad: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
+        continue
+      }
+      const params = parseParameters(code)
+      const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
+      let compiled = false
+      let degenerate = false
+      let dimMismatches = 0
+      if (budget.canSpend()) {
+        const r = await openscad.compile(code, [], 30_000, { background: true })
+        budget.spend()
+        if (r.ok && r.stl) {
+          compiled = true
+          const dims = stlBBox(r.stl)
+          degenerate = degenerateReason(dims, ctx.bed, !isMultiPart) !== null
+          dimMismatches = ctx.stated.length ? dimDiscrepancies(dims, ctx.stated).length : 0
+        }
+      }
+      signals.push({ hasScad: true, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
+    }
+    const best = pickBestIndex(signals.map(scoreCandidate))
+    set({ streamText: '' })
+    return { full: fulls[best], skillReport: reports[best].report, appliedSkillIds: reports[best].skillIds, dropped: reports[best].dropped }
+  }
+
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
   async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0, opts: { skillIds?: string[] } = {}) {
     set({ generating: true, streamText: '' })
@@ -504,16 +557,34 @@ export const useStore = create<VibeState>((set, get) => {
       let skillReport: SkillIssue[] = []
       let appliedSkillIds: string[] = []
       let droppedSkillIds: string[] = []
-      const full = await streamGenerate(engine, messages, {
-        onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
+      const isKit = detectKitIntent(nameSource.text)
+      // opts.skillIds (from the applied-patterns chip's correction) OVERRIDES retrieval for this turn
+      // — the server assembler injects exactly those fragments, no selectSkills.
+      const baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'> = {
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
         effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
-        // opts.skillIds (from the applied-patterns chip's correction) OVERRIDES retrieval
-        // for this turn — the server assembler injects exactly those fragments, no selectSkills.
-        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: detectKitIntent(nameSource.text), intent: priorIntent, skillIds: opts.skillIds, sourceHint },
-        onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
-      })
+        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: isKit, intent: priorIntent, skillIds: opts.skillIds, sourceHint },
+      }
+      // A2 — verifier-guided best-of-N: only on the FIRST attempt of a hard request (kit or image),
+      // only when the user opted in (off by default), never on local engines or auto-fix re-entries.
+      // The winner feeds the SAME downstream below; OFF → the single-stream path is unchanged.
+      const useBestOfN = attempt === 0 && useUi.getState().bestOfN && !engine.startsWith('local:') && (isKit || latestImgs.length > 0)
+      let full: string
+      if (useBestOfN) {
+        const stated = clampStatedDimensions(priorIntent?.statedDimensions).dimensions
+        const winner = await runBestOfN(engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated })
+        full = winner.full
+        skillReport = winner.skillReport
+        appliedSkillIds = winner.appliedSkillIds
+        droppedSkillIds = winner.dropped
+      } else {
+        full = await streamGenerate(engine, messages, {
+          ...baseOpts,
+          onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
+          onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
+        })
+      }
       clearTimeout(genTimer)
       genTimer = undefined
       const { code, prose: rawProse, blockCount } = extractScadBlock(full)
