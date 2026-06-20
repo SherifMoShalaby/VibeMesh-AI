@@ -19,6 +19,7 @@ import {
   DLayers,
   DCode,
   DArrowRight,
+  DHelp,
   IconTrash,
 } from './icons'
 
@@ -34,6 +35,7 @@ export default function TopBar() {
   const code = useStore((s) => s.code)
   const stl = useStore((s) => s.stl)
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
   const mobileTab = useUi((s) => s.mobileTab)
 
   const [menuOpen, setMenuOpen] = useState(false)
@@ -148,6 +150,10 @@ export default function TopBar() {
           </button>
         )}
         <ExportMenu fileBase={fileBase} />
+        {/* persistent Help affordance — the shortcuts overlay was '?'-key-only, unreachable on touch */}
+        <button className="icon-btn-sm" aria-label="Keyboard shortcuts & help" title="Shortcuts & help (?)" onClick={() => setHelpOpen(true)}>
+          <DHelp />
+        </button>
       </div>
 
       {confirmDelete && active && (
