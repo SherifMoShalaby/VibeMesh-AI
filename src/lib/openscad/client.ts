@@ -29,7 +29,7 @@ export interface CompileOpts {
  * - BACKGROUND renders (loop work) queue FIFO and always complete, but yield to interactive jobs
  * - watchdog: terminates and respawns the worker if a render hangs
  */
-class OpenScadEngine {
+export class OpenScadEngine {
   private worker: Worker | null = null
   private nextId = 1
   private active: PendingJob | null = null

@@ -30,6 +30,13 @@ jobs:
       - name: Test (zero-API client-seam unit net)
         run: npm run test:run
 
+      - name: Bench ratchets (zero-API generation-quality guards)
+        # The static half of bench:gate — interference / skills / retrieval / recall / intent /
+        # composition / hardware / server / gatelogic. Needs no API key, so a prompt- or
+        # skill-change that regresses generation quality fails CI instead of merging green.
+        # The LIVE gate (node bench/gate.mjs) still runs locally / in a keyed scheduled job.
+        run: npm run bench:selftests
+
       - name: Build
         run: npm run build
 

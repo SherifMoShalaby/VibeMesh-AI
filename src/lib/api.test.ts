@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   toApiMessages,
   summarizeEvicted,
@@ -6,6 +6,7 @@ import {
   estImageTokens,
   imageBudgetFor,
   historyBudgetTokens,
+  streamGenerate,
   type ProviderInfo,
 } from './api'
 import type { ChatImage, ChatMessage } from '../types'
@@ -149,5 +150,53 @@ describe('token estimators', () => {
   it('historyBudgetTokens caps at SANE_CONTEXT_CAP, subtracts system+reservation, applies the discount', () => {
     expect(historyBudgetTokens({ contextWindow: 200000, outputReservation: 8000 } as ProviderInfo, 7000)).toBe(64800)
     expect(historyBudgetTokens(undefined, undefined)).toBe(71200)
+  })
+})
+
+describe('streamGenerate — SSE consumption + terminal-event integrity', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const sse = (...events: string[]): Response => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder()
+        for (const e of events) controller.enqueue(enc.encode(e))
+        controller.close()
+      },
+    })
+    return new Response(stream, { status: 200 })
+  }
+  const stub = (res: Response | Promise<Response>) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res))
+  const msgs = [{ role: 'user' as const, content: 'hi' }]
+
+  it('accumulates deltas and reports the stop reason on done', async () => {
+    stub(sse('data: {"type":"delta","text":"hello "}\n\n', 'data: {"type":"delta","text":"world"}\n\n', 'data: {"type":"done","stopReason":"end_turn"}\n\n'))
+    let stopReason: string | undefined
+    const full = await streamGenerate('anthropic', msgs, { onDelta: () => {}, onDone: (i) => { stopReason = i.stopReason } })
+    expect(full).toBe('hello world')
+    expect(stopReason).toBe('end_turn')
+  })
+
+  it('surfaces an output-length truncation via onDone stopReason=max_tokens', async () => {
+    stub(sse('data: {"type":"delta","text":"module foo() { cu"}\n\n', 'data: {"type":"done","stopReason":"max_tokens"}\n\n'))
+    let stopReason: string | undefined
+    await streamGenerate('kimi', msgs, { onDelta: () => {}, onDone: (i) => { stopReason = i.stopReason } })
+    expect(stopReason).toBe('max_tokens')
+  })
+
+  it('throws when the stream ends WITHOUT a terminal done/error event (truncated transport)', async () => {
+    // deltas then the connection drops — must NOT be returned as a successful (partial) reply
+    stub(sse('data: {"type":"delta","text":"partial program"}\n\n'))
+    await expect(streamGenerate('anthropic', msgs, { onDelta: () => {} })).rejects.toThrow(/ended before the model finished/i)
+  })
+
+  it('throws the server-sent error message on an error event', async () => {
+    stub(sse('data: {"type":"error","message":"engine overloaded"}\n\n'))
+    await expect(streamGenerate('anthropic', msgs, { onDelta: () => {} })).rejects.toThrow('engine overloaded')
+  })
+
+  it('throws a useful message on a non-OK response', async () => {
+    stub(new Response(JSON.stringify({ message: 'no engine configured' }), { status: 400 }))
+    await expect(streamGenerate('anthropic', msgs, { onDelta: () => {} })).rejects.toThrow('no engine configured')
   })
 })

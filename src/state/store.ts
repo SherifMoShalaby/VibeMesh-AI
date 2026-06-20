@@ -289,6 +289,16 @@ export const useStore = create<VibeState>((set, get) => {
     saveProjects(updated)
   }
 
+  /** Project-switch affordances are blocked mid-generation. runGeneration re-reads the active
+   *  project after every await (the stream, adoptCode, persist, the auto-fix recursion), so a
+   *  switch would land the streamed reply + adopted code on the NEWLY-active project, corrupting
+   *  it and losing the original. Returns true (and nudges the user) when a switch must be refused. */
+  function blockSwitchWhileGenerating(): boolean {
+    if (!get().generating) return false
+    useUi.getState().pushToast('Finish or stop the current generation before switching projects.')
+    return true
+  }
+
   function qualityArgsFor(preset: (typeof QUALITY_PRESETS)[number]): string[] {
     return ['-D', '$fn=0', '-D', `$fa=${preset.fa}`, '-D', `$fs=${preset.fs}`]
   }
@@ -481,16 +491,20 @@ export const useStore = create<VibeState>((set, get) => {
     messages: ReturnType<typeof toApiMessages>,
     baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'>,
     ctx: { bed: { x: number; y: number; z: number }; stated: ReturnType<typeof clampStatedDimensions>['dimensions'] },
-  ): Promise<{ full: string; skillReport: SkillIssue[]; appliedSkillIds: string[]; dropped: string[] }> {
+  ): Promise<{ full: string; skillReport: SkillIssue[]; appliedSkillIds: string[]; dropped: string[]; stopReason?: string }> {
     const n = BEST_OF_N_COUNT
     const reports = Array.from({ length: n }, () => ({ skillIds: [] as string[], dropped: [] as string[], report: [] as SkillIssue[] }))
+    const stopReasons: (string | undefined)[] = Array.from({ length: n }, () => undefined)
     let done = 0
     set({ streamText: `Generating ${n} candidates, keeping the best…` })
     const fulls = await Promise.all(
       Array.from({ length: n }, (_, i) =>
-        streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info } })
+        streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info }, onDone: (info) => { stopReasons[i] = info.stopReason } })
           .then((text) => { set({ streamText: `Generated ${++done}/${n} candidates…` }); return text })
-          .catch(() => ''),
+          // A user Stop aborts every candidate's shared signal — let AbortError propagate (rejecting
+          // Promise.all) so runGeneration's catch handles it as a Stop, instead of swallowing it to
+          // '' which reads as a contract violation and silently restarts the whole generation.
+          .catch((e) => { if (e instanceof DOMException && e.name === 'AbortError') throw e; return '' }),
       ),
     )
     const budget = new ComputeBudget({ wallMs: 60_000, maxRenders: n + 2 })
@@ -520,7 +534,9 @@ export const useStore = create<VibeState>((set, get) => {
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
     set({ streamText: '' })
-    return { full: fulls[best], skillReport: reports[best].report, appliedSkillIds: reports[best].skillIds, dropped: reports[best].dropped }
+    // carry the WINNING candidate's stop reason so a truncated winner is caught downstream
+    // (same max_tokens handling as the single-stream path), not fed half a program to the parser
+    return { full: fulls[best], skillReport: reports[best].report, appliedSkillIds: reports[best].skillIds, dropped: reports[best].dropped, stopReason: stopReasons[best] }
   }
 
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
@@ -571,6 +587,7 @@ export const useStore = create<VibeState>((set, get) => {
       // The winner feeds the SAME downstream below; OFF → the single-stream path is unchanged.
       const useBestOfN = attempt === 0 && useUi.getState().bestOfN && !engine.startsWith('local:') && (isKit || latestImgs.length > 0)
       let full: string
+      let stopReason: string | undefined
       if (useBestOfN) {
         const stated = clampStatedDimensions(priorIntent?.statedDimensions).dimensions
         const winner = await runBestOfN(engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated })
@@ -578,19 +595,41 @@ export const useStore = create<VibeState>((set, get) => {
         skillReport = winner.skillReport
         appliedSkillIds = winner.appliedSkillIds
         droppedSkillIds = winner.dropped
+        stopReason = winner.stopReason
       } else {
         full = await streamGenerate(engine, messages, {
           ...baseOpts,
           onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
           onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
+          onDone: (info) => { stopReason = info.stopReason },
         })
       }
       clearTimeout(genTimer)
       genTimer = undefined
+      // A user Stop (or an aborted best-of-N fan-out) must not fall through into the contract
+      // re-ask / adopt path below — that silently spawns a fresh generation. Bail quietly: the
+      // finally clears `generating`, matching a Stop on the single-stream path.
+      if (ctrl.signal.aborted) return
       const { code, prose: rawProse, blockCount } = extractScadBlock(full)
       // parse the advisory INTENT line, then strip it so the user sees clean PLAN prose
       const intent = extractIntent(rawProse)
       const prose = stripIntentLine(rawProse)
+
+      // Output-length truncation: the engine hit its max-tokens ceiling, so the program is almost
+      // certainly cut off mid-block. Surface a recoverable message instead of feeding half a program
+      // into the contract re-ask / auto-fix spiral (most likely on the 4096-token local + Kimi paths).
+      if (stopReason === 'max_tokens') {
+        setChat([
+          ...activeChat(),
+          {
+            id: newId(),
+            role: 'assistant',
+            text: (prose ? prose + '\n\n' : '') + 'The reply was cut off at the output-length limit, so the program is likely incomplete. Ask me to continue, or simplify the request (fewer parts / less detail).',
+            error: true,
+          },
+        ])
+        return
+      }
 
       // Contract enforcement: the reply MUST contain exactly ONE scad block. On 0
       // or >1 blocks, ask once for a single complete program — Opus 4.8 asks more
@@ -904,6 +943,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     newProject: () => {
+      if (blockSwitchWhileGenerating()) return
       clearParamTimer()
       // Reuse an existing pristine empty chat rather than minting a duplicate (the header
       // "New chat" button + the bare-hash handler both call this; init() reuses the same way).
@@ -952,6 +992,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     openProject: (id) => {
+      if (blockSwitchWhileGenerating()) return
       const project = get().projects.find((p) => p.id === id)
       if (!project) return
       clearParamTimer()
@@ -1004,6 +1045,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     importShareFile: (text) => {
+      if (blockSwitchWhileGenerating()) return
       const file = parseShareFile(text)
       if (!file) {
         useUi.getState().pushToast("That file isn't a valid .vibemesh share file.", 'error')
@@ -1039,6 +1081,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     deleteProject: (id) => {
+      if (blockSwitchWhileGenerating()) return
       const projects = get().projects.filter((p) => p.id !== id)
       set({ projects })
       saveProjects(projects)
@@ -1216,6 +1259,7 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     loadExample: (example) => {
+      if (blockSwitchWhileGenerating()) return
       clearParamTimer()
       const state = get()
       const current = state.projects.find((p) => p.id === state.activeId)

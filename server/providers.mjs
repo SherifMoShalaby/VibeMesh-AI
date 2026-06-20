@@ -13,7 +13,11 @@ const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 /** Settings the UI may write at runtime (persisted to .env, applied immediately). */
 const SETTABLE_KEYS = new Set(['KIMI_API_KEY', 'KIMI_MODELS', 'ANTHROPIC_API_KEY', 'LOCAL_LLM_BASE_URL'])
 
-export function applyRuntimeSetting(key, value) {
+/** Pure validation for a runtime setting: throws UserFacingError on a bad key/value,
+ *  returns the trimmed value on success. No I/O — split out from applyRuntimeSetting so the
+ *  security-sensitive guards (key allowlist, control-char/newline injection, SSRF on the
+ *  base URL) are unit-testable without writing the real .env (bench/server.selftest.mjs). */
+export function validateRuntimeSetting(key, value) {
   if (!SETTABLE_KEYS.has(key)) throw new UserFacingError(`Setting "${key}" is not configurable.`)
   const trimmed = String(value ?? '').trim()
   // Reject control chars / newlines so a value can't inject extra KEY=value lines into .env.
@@ -28,6 +32,11 @@ export function applyRuntimeSetting(key, value) {
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new UserFacingError('Base URL must use http or https.')
   }
+  return trimmed
+}
+
+export function applyRuntimeSetting(key, value) {
+  const trimmed = validateRuntimeSetting(key, value)
   if (trimmed) process.env[key] = trimmed
   else delete process.env[key]
 
@@ -559,7 +568,10 @@ async function streamAnthropic({ messages, ctx, onDelta, signal, effort }) {
   )
   stream.on('text', onDelta)
   try {
-    await stream.finalMessage()
+    const final = await stream.finalMessage()
+    // Forward stop_reason so the client can tell a complete reply from one cut off at the
+    // output-token ceiling ('max_tokens') instead of feeding half a program to the parser.
+    return { stopReason: final?.stop_reason ?? undefined }
   } catch (error) {
     throw translateAnthropicError(error, 'Anthropic')
   }
@@ -595,8 +607,8 @@ async function streamKimi({ messages, ctx, onDelta, signal, model }) {
     )
     stream.on('text', onDelta)
     try {
-      await stream.finalMessage()
-      return
+      const final = await stream.finalMessage()
+      return { stopReason: final?.stop_reason ?? undefined }
     } catch (error) {
       if (error instanceof Anthropic.AuthenticationError || error?.status === 403) {
         lastAuthError = error
@@ -805,6 +817,11 @@ async function streamLocal({ model, messages, ctx, onDelta, signal }) {
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  // OpenAI-shaped finish_reason: 'length' means the output hit num_predict/max_tokens and the
+  // program is truncated. Normalize to 'max_tokens' so the client's single truncation check works
+  // across engines (the 4096-token local default is the most likely to trip this).
+  let finishReason
+  const result = () => ({ stopReason: finishReason === 'length' ? 'max_tokens' : undefined })
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
@@ -815,16 +832,18 @@ async function streamLocal({ model, messages, ctx, onDelta, signal }) {
       const trimmed = line.trim()
       if (!trimmed.startsWith('data:')) continue
       const payload = trimmed.slice(5).trim()
-      if (payload === '[DONE]') return
+      if (payload === '[DONE]') return result()
       try {
         const chunk = JSON.parse(payload)
         const delta = chunk.choices?.[0]?.delta?.content
         if (delta) onDelta(delta)
+        if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason
       } catch {
         /* keep-alive or partial line */
       }
     }
   }
+  return result()
 }
 
 function toOpenAiMessage(message) {

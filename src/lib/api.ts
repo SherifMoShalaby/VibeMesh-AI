@@ -318,13 +318,16 @@ export interface StreamCallbacks {
   /** the skills that fired for this request, the ones the cap dropped (matched but cut), and
    *  the fired skills' advisory mechanism-check verdict */
   onSkillReport?: (info: { skillIds: string[]; dropped: string[]; report: SkillIssue[] }) => void
+  /** fired once on the terminal `done` event — carries the engine's stop reason so the caller
+   *  can detect an output-length truncation ('max_tokens') and avoid adopting a cut-off program */
+  onDone?: (info: { stopReason?: string }) => void
 }
 
 /** POST /api/generate and consume the SSE stream. Returns the full reply text. */
 export async function streamGenerate(
   engine: string,
   messages: ApiMessage[],
-  { onDelta, signal, model, effort, context, onSkillReport }: StreamCallbacks,
+  { onDelta, signal, model, effort, context, onSkillReport, onDone }: StreamCallbacks,
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
@@ -348,6 +351,10 @@ export async function streamGenerate(
   const decoder = new TextDecoder()
   let buffer = ''
   let full = ''
+  // The stream must end on a terminal event (done/error). If it closes after some deltas but
+  // before either — server process killed, upstream reset, a proxy dropping the connection — the
+  // accumulated `full` is a partial/truncated reply that must NOT be adopted as a success.
+  let sawTerminal = false
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -366,13 +373,18 @@ export async function streamGenerate(
         full += payload.text
         onDelta(payload.text)
       } else if (payload.type === 'done') {
+        sawTerminal = true
         if (payload.skillIds?.length || payload.droppedSkillIds?.length || payload.skillReport?.length) {
           onSkillReport?.({ skillIds: payload.skillIds ?? [], dropped: payload.droppedSkillIds ?? [], report: payload.skillReport ?? [] })
         }
+        onDone?.({ stopReason: payload.stopReason })
       } else if (payload.type === 'error') {
-        throw new Error(payload.message)
+        throw new Error(payload.message) // an explicit error is terminal too — the throw exits below
       }
     }
   }
+  // A user abort rejects reader.read() with AbortError before we get here, so this only fires on a
+  // genuinely truncated transport — surface a recoverable error rather than returning the partial.
+  if (!sawTerminal) throw new Error('The connection to the server ended before the model finished — please try again.')
   return full
 }

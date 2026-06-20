@@ -79,7 +79,7 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
 
   try {
     let full = ''
-    await streamChat({
+    const outcome = await streamChat({
       engine,
       model: typeof model === 'string' ? model : undefined,
       effort: typeof effort === 'string' ? effort : undefined,
@@ -92,7 +92,9 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
     // blocks). Guarded separately so a validator bug can't turn a good generation into error.
     let review = { skillIds: [], droppedSkillIds: [], report: [] }
     try { review = reviewWithSkills({ context, messages, code: extractScadBlock(full) }) } catch { /* advisory only */ }
-    send({ type: 'done', skillIds: review.skillIds, droppedSkillIds: review.droppedSkillIds, skillReport: review.report })
+    // stopReason lets the client detect an output-length truncation (cut-off program) instead of
+    // adopting half a reply; it's the LAST field so the done event stays back-compatible.
+    send({ type: 'done', skillIds: review.skillIds, droppedSkillIds: review.droppedSkillIds, skillReport: review.report, stopReason: outcome?.stopReason })
   } catch (error) {
     if (abort.signal.aborted || error?.name === 'AbortError') {
       res.end()
