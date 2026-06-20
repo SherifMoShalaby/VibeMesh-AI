@@ -8,6 +8,7 @@ import Viewport from './components/Viewport'
 import RightPanel from './components/RightPanel'
 import EnginesModal from './components/EnginesModal'
 import HelpModal from './components/HelpModal'
+import { Toaster, ConfirmHost } from './components/Dialogs'
 import ErrorBoundary from './components/ErrorBoundary'
 import { DCube, DSliders, DSparkFill, DChevLeft, DChevRight } from './components/icons'
 
@@ -204,6 +205,8 @@ export default function App() {
 
       <EnginesModal />
       <HelpModal />
+      <ConfirmHost />
+      <Toaster />
     </div>
   )
 }
