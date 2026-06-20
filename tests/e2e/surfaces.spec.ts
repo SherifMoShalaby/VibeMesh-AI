@@ -56,11 +56,24 @@ test.describe('mobile layout (phone width)', () => {
     await expect(page.locator('canvas')).toBeVisible()
   })
 
+  test('the Printable verdict stays visible (not scrolled off) on a phone', async ({ page }) => {
+    await loadExample(page)
+    await page.getByRole('button', { name: /^model$/i }).click()
+    const badge = page.locator('.print-badge')
+    await expect(badge).toBeVisible()
+    const box = (await badge.boundingBox())!
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(375 + 1) // within the phone viewport, not off-screen-right
+  })
+
   test('the model menu stays within the viewport at a phone width', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('button', { name: /new chat/i }).click({ timeout: 15_000 }).catch(() => {})
     await expect(page.locator('.empty')).toBeVisible({ timeout: 20_000 })
     const trigger = page.locator('.empty-composer .model-menu button')
+    // the menu only renders once /api/health resolves an engine with models — give it a beat,
+    // then skip cleanly if this environment has no engine configured (keyless CI).
+    await trigger.first().waitFor({ state: 'visible', timeout: 6_000 }).catch(() => {})
     test.skip((await trigger.count()) === 0, 'no engine configured → no model menu')
     await trigger.first().click()
     const pop = page.locator('.model-menu-pop')

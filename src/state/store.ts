@@ -4,6 +4,8 @@ import { PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { buildDefines, extractIntent, extractScadBlock, parseParameters, stripIntentLine } from '../lib/params'
 import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
+import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
+import { ComputeBudget } from '../lib/openscad/budget'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
@@ -623,6 +625,19 @@ export const useStore = create<VibeState>((set, get) => {
           // skillNote already shows them; here they also drive a BOUNDED auto-fix (gated on
           // the autoRepair toggle + the shared MAX_AUTO_FIX budget, so it can't loop).
           const assembly = [...structuralReport(code, params).issues, ...skillReport.flatMap((r) => r.issues)]
+          // C1 — runtime interference proxy: a cutter slicing protected structure (a bore through a
+          // clutch tube, a pocket into a bearing seat) is invisible to compile/dim/IoU but caught here
+          // by rendering the hidden _debug probe (positives vs negatives) and measuring their overlap.
+          // The signal is REFERENCE-FREE, so it drives the SAME bounded auto-fix turn as the structural
+          // checks. Gated on canRepair + the probe contract so the two extra probe renders only run for
+          // a kit that can act on the result; a superseded/failed probe yields null → no false issue.
+          if (canRepair && hasDebugContract(code)) {
+            // shared per-generation ceiling so the probe renders (and future best-of-N) degrade
+            // gracefully instead of compounding latency through the single-flight worker.
+            const budget = new ComputeBudget({ wallMs: 30_000, maxRenders: 4 })
+            const interference = await interferenceIssue(code, budget)
+            if (interference) assembly.push(interference)
+          }
           if (canRepair && (degenerate || assembly.length)) {
             const parts: string[] = []
             if (degenerate) parts.push(`The program rendered but the result is not usable: ${degenerate}. Return a corrected complete program with sensible millimeter dimensions.`)
