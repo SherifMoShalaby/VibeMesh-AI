@@ -22,7 +22,10 @@ import { classifyError } from './gate.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const API = 'http://localhost:5175/api/generate'
-const ENGINES = ['claude-code', 'kimi', 'local:qwen2.5vl:7b']
+// Default to claude-code only: the kimi + anthropic subscriptions have lapsed (kimi 402s
+// "membership inactive"; anthropic has no key), so they are out of the flow for now. Re-add
+// them here (or via BENCH_ENGINES=claude-code,kimi,…) once a shippable key is restored.
+const ENGINES = ['claude-code']
 const GEN_TIMEOUT = 900_000 // 15 min — thinking engines (claude-code/Opus) go silent for minutes on a kit
 const RENDER_TIMEOUT = 90_000
 

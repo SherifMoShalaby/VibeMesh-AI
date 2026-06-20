@@ -11,31 +11,49 @@ interface PendingJob {
   code: string
   defines: string[]
   timeoutMs: number
+  background: boolean
   resolve: (result: CompileResult) => void
+}
+
+export interface CompileOpts {
+  /** Background/loop render (interference probe, best-of-N candidate). Background jobs queue FIFO
+   *  and are NEVER coalesced/superseded — they always run — but yield scheduling priority to the
+   *  user's interactive render. Default false = the interactive, latest-wins coalescing path. */
+  background?: boolean
 }
 
 /**
  * Promise-based facade over the OpenSCAD web worker.
  * - serializes renders (the worker handles one job at a time)
- * - coalesces: if renders are requested while busy, only the latest queued one runs
+ * - coalesces INTERACTIVE renders: while busy, only the latest queued interactive one runs
+ * - BACKGROUND renders (loop work) queue FIFO and always complete, but yield to interactive jobs
  * - watchdog: terminates and respawns the worker if a render hangs
  */
 class OpenScadEngine {
   private worker: Worker | null = null
   private nextId = 1
   private active: PendingJob | null = null
-  private queued: PendingJob | null = null
+  private queued: PendingJob | null = null // at most one INTERACTIVE job (coalesced, latest wins)
+  private bgQueue: PendingJob[] = [] // FIFO of BACKGROUND jobs — never coalesced/superseded
   private timer: ReturnType<typeof setTimeout> | null = null
 
-  compile(code: string, defines: string[] = [], timeoutMs: number = DEFAULT_RENDER_TIMEOUT_MS): Promise<CompileResult> {
+  compile(
+    code: string,
+    defines: string[] = [],
+    timeoutMs: number = DEFAULT_RENDER_TIMEOUT_MS,
+    opts: CompileOpts = {},
+  ): Promise<CompileResult> {
     return new Promise((resolve) => {
-      const job: PendingJob = { id: this.nextId++, code, defines, timeoutMs, resolve }
-      if (this.active) {
-        // replace any previously queued job — only the newest matters
+      const job: PendingJob = { id: this.nextId++, code, defines, timeoutMs, background: !!opts.background, resolve }
+      if (!this.active) {
+        this.run(job)
+      } else if (job.background) {
+        // background/loop renders must not be dropped — queue them FIFO behind the active job
+        this.bgQueue.push(job)
+      } else {
+        // interactive: replace any previously queued interactive job — only the newest matters
         this.queued?.resolve({ ok: false, error: 'superseded' })
         this.queued = job
-      } else {
-        this.run(job)
       }
     })
   }
@@ -79,9 +97,10 @@ class OpenScadEngine {
     const job = this.active
     this.active = null
     job?.resolve(result)
-    if (this.queued) {
-      const next = this.queued
-      this.queued = null
+    // interactive render takes priority for responsiveness; otherwise drain background FIFO
+    const next = this.queued ?? this.bgQueue.shift() ?? null
+    if (next) {
+      if (next === this.queued) this.queued = null
       this.run(next)
     }
   }

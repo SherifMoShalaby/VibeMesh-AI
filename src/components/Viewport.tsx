@@ -704,17 +704,8 @@ export default function Viewport() {
             </div>
           </div>
 
-          {!platesView && tbox && (
-            <div className="hud-seg">
-              <div className={`hud-dims${overBed && !isAssemblyPreview ? ' over' : ''}`}>
-                <span className="dim-label">Bounds</span>
-                <span className="dim-val">
-                  {tbox.size.x.toFixed(1)}<span className="x">×</span>{tbox.size.y.toFixed(1)}<span className="x">×</span>{tbox.size.z.toFixed(1)}
-                </span>
-                <span className="unit">mm</span>
-              </div>
-            </div>
-          )}
+          {/* Printability verdict sits right after status so the "will it print?" signal is
+              always visible — on mobile the HUD scrolls horizontally and this kept it off-screen. */}
           {!platesView && printability && (
             <div className="hud-seg hud-print">
               <div className={`print-badge ${printability.level}`} tabIndex={0}>
@@ -732,6 +723,17 @@ export default function Viewport() {
                   ))}
                   <div className="pp-note">Advisory · assumes the authored print orientation, 0.4mm nozzle.</div>
                 </div>
+              </div>
+            </div>
+          )}
+          {!platesView && tbox && (
+            <div className="hud-seg">
+              <div className={`hud-dims${overBed && !isAssemblyPreview ? ' over' : ''}`}>
+                <span className="dim-label">Bounds</span>
+                <span className="dim-val">
+                  {tbox.size.x.toFixed(1)}<span className="x">×</span>{tbox.size.y.toFixed(1)}<span className="x">×</span>{tbox.size.z.toFixed(1)}
+                </span>
+                <span className="unit">mm</span>
               </div>
             </div>
           )}
