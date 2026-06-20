@@ -21,14 +21,18 @@ table). Keys live in `.env` (git-ignored) — **never commit real keys**; copy
 ## Before you open a PR
 
 ```sh
-npm run build        # tsc -b && vite build — must pass
 npm run lint         # eslint — must be clean
+npm run test:run     # Vitest client-seam unit net — must pass
+npm run bench:selftests   # zero-API generation-quality ratchets — must pass
+npm run build        # tsc -b && vite build — must pass
 ```
 
-Both run in CI on every PR. Please make sure they pass locally first.
+All four run in CI on every PR (`.github/workflows/ci.yml`). Please make sure they pass
+locally first. There is also a browser **e2e suite** (`npm run test:e2e`, Playwright,
+runs in its own CI job) that drives the built-in examples with no AI key.
 
-There is no unit-test suite. The closest thing is the **model benchmark**, which
-exercises the AI generation + render pipeline:
+The deepest layer is the **model benchmark**, which exercises the AI generation + render
+pipeline (needs a live API key, so it runs locally / in a keyed job, not on every PR):
 
 ```sh
 npm run dev:server                                   # the bench needs the API on :5175
