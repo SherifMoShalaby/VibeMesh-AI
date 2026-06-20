@@ -259,7 +259,10 @@ function degenerateReason(dims: StlBBox | null, bed: { x: number; y: number; z: 
   const { x, y, z } = dims
   if (![x, y, z].every((n) => Number.isFinite(n))) return 'the bounding box is not finite (NaN/Infinity)'
   if (Math.min(x, y, z) < 0.5) return `a dimension is implausibly small (${x}×${y}×${z} mm)`
-  if (checkBed && x > bed.x && y > bed.y && z > bed.z) return `every dimension exceeds the ${bed.x}×${bed.y}×${bed.z} mm bed (${x}×${y}×${z} mm)`
+  // ANY dimension over the bed makes a single part unprintable — match printability.ts (`||`) and
+  // the viewport over-bed tint, so the auto-fix loop acts on the same "won't fit" the UI shows
+  // (the old `&&` only fired when all three exceeded, leaving e.g. a 60×60×400 part flagged-but-unfixed).
+  if (checkBed && (x > bed.x || y > bed.y || z > bed.z)) return `a dimension exceeds the ${bed.x}×${bed.y}×${bed.z} mm bed (${x}×${y}×${z} mm)`
   return null
 }
 
@@ -512,16 +515,21 @@ export const useStore = create<VibeState>((set, get) => {
     for (const text of fulls) {
       const { code, blockCount } = extractScadBlock(text)
       if (code === null || blockCount > 1) {
-        signals.push({ hasScad: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
+        signals.push({ hasScad: false, compileAttempted: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
         continue
       }
       const params = parseParameters(code)
       const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
+      let compileAttempted = false
       let compiled = false
       let degenerate = false
       let dimMismatches = 0
       if (budget.canSpend()) {
-        const r = await openscad.compile(code, [], 30_000, { background: true })
+        compileAttempted = true
+        // compile with the SAME root-scope quality defines the real render uses (Draft here — fast
+        // enough that all N normally fit the budget), so a candidate that only fails under the
+        // -D $fn=0 overrides is caught, not scored as if it compiled bare.
+        const r = await openscad.compile(code, qualityArgsFor(QUALITY_PRESETS[0]), 30_000, { background: true })
         budget.spend()
         if (r.ok && r.stl) {
           compiled = true
@@ -530,7 +538,7 @@ export const useStore = create<VibeState>((set, get) => {
           dimMismatches = ctx.stated.length ? dimDiscrepancies(dims, ctx.stated).length : 0
         }
       }
-      signals.push({ hasScad: true, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
+      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
     set({ streamText: '' })

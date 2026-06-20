@@ -39,6 +39,16 @@ test('classifyError: no error → null', () => {
   assert.equal(classifyError(undefined), null)
   assert.equal(classifyError(''), null)
 })
+test('classifyError: render/geometry faults stay generation even when they say "timed out"', () => {
+  for (const e of [
+    'Render timed out after 60s — the model is too heavy to render. Ask the AI to simplify it.',
+    'Top level object is empty',
+    'object is not 2-manifold',
+    'WARNING: Object may not be a valid 2-manifold and may need repair',
+  ]) {
+    assert.equal(classifyError(e), 'generation', `a render fault must be generation, not transport: ${e}`)
+  }
+})
 
 /* ── pass / regression basics ── */
 test('clean run → exit 0', () => {
@@ -62,6 +72,14 @@ test('numeric drop beyond tol → exit 1', () => {
 test('numeric drop within tol → exit 0', () => {
   const v = evaluate([block('kimi', [baseRow('T1', { dimScore: 1 })])], [block('kimi', [curOk('T1', { dimScore: 0.95 })])])
   assert.equal(v.exit, 0)
+})
+test('lost scorability: a core scorer numeric in baseline but null on a COMPILED run → exit 2', () => {
+  // baseline measured IoU; the current run compiled but the gold scorer produced null — broken
+  // scorer/gold, not a quality change. Must be inconclusive (config), never a silent pass.
+  const v = evaluate([block('kimi', [baseRow('T1', { iou: 0.8 })])], [block('kimi', [curOk('T1')])])
+  assert.equal(v.exit, 2, 'a lost gold scorer is inconclusive, not a pass')
+  assert.equal(v.regressions.length, 0)
+  assert.ok(v.configErrors.some((c) => /lost scorability/.test(c)), 'should report lost scorability')
 })
 test('new over-split → exit 1', () => {
   const v = evaluate([block('kimi', [baseRow('T1', { overSplit: false })])], [block('kimi', [curOk('T1', { overSplit: true })])])

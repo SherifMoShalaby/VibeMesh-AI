@@ -42,6 +42,11 @@ export const BEARINGS = {
 /** The screw set the threaded-fastener-seat exemplar tabulates (kept in registry order). */
 export const FASTENER_SET = ['M2.5', 'M3', 'M4', 'M5']
 
+/** Recommended counterbore Ø to RECESS a socket-head cap screw: the catalog head Ø plus a small
+ *  seating clearance, rounded to 0.1mm. Single-sources the prompt's counterbore hint from the
+ *  catalog so it can never claim a Ø below the real head (which would not seat the screw). */
+export const counterboreDia = (key) => Math.round((SCREWS[key].headDia + 0.7) * 10) / 10
+
 /** Normalize a screw token ("m3", "M3 ") to a catalog key, or null. */
 export function screwSpec(token) {
   if (typeof token !== 'string') return null
@@ -60,9 +65,13 @@ export function bearingSpec(token) {
 const SCREW_RE = /\bM(2\.5|[2-6])\b/gi
 const BEARING_RE = /\b(6000|623|624|625|626|688|608)\b/g // 6000 first so it is not shadowed by 600/608
 
-/** True when a text mentions any catalog hardware (drives the contextText directive). */
+/** True when a text mentions any catalog hardware (drives the contextText directive).
+ *  SCREW_RE/BEARING_RE are global (matchAll needs /g), and `.test()` on a /g regex advances
+ *  lastIndex — so repeated calls would alternate true/false. Reset before testing for idempotency. */
 export function hasHardwareToken(text) {
   if (typeof text !== 'string') return false
+  SCREW_RE.lastIndex = 0
+  BEARING_RE.lastIndex = 0
   return SCREW_RE.test(text) || BEARING_RE.test(text)
 }
 

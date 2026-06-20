@@ -670,14 +670,14 @@ base_d = 20;      // [10:1:50]
 
 ring_r = orb_d/2 + gap + prong_w/2;   // prongs sit a gap away from the orb surface
 module prong(a) rotate([0, 0, a]) hull() {
-  translate([base_d/3, 0, 0]) cylinder(d = prong_w, h = 0.1, $fn = 20);
-  translate([ring_r, 0, prong_h]) cylinder(d = prong_w, h = 0.1, $fn = 20);
+  translate([base_d/3, 0, 0]) cylinder(d = prong_w, h = 0.1);
+  translate([ring_r, 0, prong_h]) cylinder(d = prong_w, h = 0.1);
 }
 
 union() {
-  cylinder(d = base_d, h = 4, $fn = 48);                       // base
+  cylinder(d = base_d, h = 4);                                 // base — smooth body, let the quality preset drive $fn
   for (i = [0:prongs-1]) prong(360/prongs*i);                  // open prongs — separated by gap, never meet
-  translate([0, 0, prong_h]) sphere(d = orb_d, $fn = 40);      // the cradled orb (its own body)
+  translate([0, 0, prong_h]) sphere(d = orb_d);               // the cradled orb (its own body) — preset-smoothed
 }
 `
 

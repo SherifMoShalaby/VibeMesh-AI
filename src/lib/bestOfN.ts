@@ -19,7 +19,11 @@
 export interface CandidateSignals {
   /** exactly one ```scad block was extracted */
   hasScad: boolean
-  /** compiled to non-empty geometry */
+  /** a compile was actually run for this candidate. False when the shared compute budget was
+   *  exhausted before reaching it — an ENVIRONMENTAL miss, not a fault, so it must not be scored
+   *  as a non-compile (that would bias selection toward whichever candidates compiled first). */
+  compileAttempted: boolean
+  /** compiled to non-empty geometry (only meaningful when compileAttempted) */
   compiled: boolean
   /** degenerateReason fired (tiny / NaN / over-bed) — only meaningful when compiled */
   degenerate: boolean
@@ -35,9 +39,19 @@ export const BEST_OF_N_COUNT = 3
 /** Reference-free candidate score. Higher is better. Compile + degenerate dominate the issue counts. */
 export function scoreCandidate(s: CandidateSignals): number {
   if (!s.hasScad) return -1_000_000 // no program at all — always last
-  let score = 0
-  score += s.compiled ? 1_000_000 : 0 // compiling dominates every softer signal
-  score += s.compiled && s.degenerate ? -500_000 : 0 // a compiling-but-degenerate part is far worse than a clean one
+  // Budget ran out before this candidate could be compiled: UNKNOWN, not a failure. Give it the
+  // benefit of the doubt — above a confirmed non-compile / degenerate, below a confirmed clean
+  // compile — and score only the softer signals we did compute. Without this, a budget-starved
+  // (but possibly compilable) later candidate would be demoted below whoever compiled first.
+  if (s.compileAttempted && !s.compiled) {
+    // confirmed non-compile (a real fault) — scored on the softer signals from a 0 base
+    return 0 - s.structuralIssues * 1_000 - s.dimMismatches * 100
+  }
+  if (!s.compileAttempted) {
+    return 750_000 - s.structuralIssues * 1_000 - s.dimMismatches * 100
+  }
+  let score = 1_000_000 // compiled — dominates every softer signal
+  score += s.degenerate ? -500_000 : 0 // a compiling-but-degenerate part is far worse than a clean one
   score -= s.structuralIssues * 1_000 // then: fewer assembly/structural faults
   score -= s.dimMismatches * 100 // then: closer to the stated dimensions
   return score
