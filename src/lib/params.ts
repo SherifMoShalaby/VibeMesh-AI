@@ -1,6 +1,9 @@
 import type { DesignIntent, ParamValue, ParamValues, ScadParameter } from '../types'
 
-const ASSIGN_RE = /^\s*([A-Za-z_$][\w$]*)\s*=\s*([^;]+);\s*(?:\/\/\s*(.*))?$/
+// the value matches quoted strings (with escapes) OR non-semicolon/non-quote runs, so a `;` INSIDE
+// a string default (e.g. `label = "a;b";`) no longer ends the value early — which used to fail the
+// match and silently drop that param AND every param after it.
+const ASSIGN_RE = /^\s*([A-Za-z_$][\w$]*)\s*=\s*((?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^;"'])+);\s*(?:\/\/\s*(.*))?$/
 const GROUP_RE = /^\s*\/\*\s*\[([^\]]+)\]\s*\*\/\s*$/
 const COMMENT_RE = /^\s*\/\/\s?(.*)$/
 
@@ -146,7 +149,9 @@ export function buildDefines(params: ScadParameter[], values: ParamValues): stri
 function scadLiteral(value: ParamValue): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'number') return String(value)
-  return `"${String(value).replace(/"/g, '\\"')}"`
+  // escape backslashes BEFORE quotes — otherwise a value ending in `\` would escape the closing
+  // quote and produce a broken (uncompilable) SCAD string.
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 /** Rewrite parameter assignment lines so exported .scad reflects current values. */
@@ -155,7 +160,8 @@ export function applyValuesToCode(code: string, params: ScadParameter[], values:
   for (const p of params) {
     const value = values[p.name]
     if (value === undefined || value === p.defaultValue) continue
-    const re = new RegExp(`^(\\s*${escapeRe(p.name)}\\s*=\\s*)[^;]+(;)`, 'm')
+    // same string-aware value match as ASSIGN_RE so a string default containing `;` is replaced whole
+    const re = new RegExp(`^(\\s*${escapeRe(p.name)}\\s*=\\s*)(?:"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^;"'])+(;)`, 'm')
     out = out.replace(re, `$1${scadLiteral(value)}$2`)
   }
   return out
