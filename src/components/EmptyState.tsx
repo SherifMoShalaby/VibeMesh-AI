@@ -18,6 +18,7 @@ export default function EmptyState() {
   const health = useStore((s) => s.health)
   const [text, setText] = useState('')
   const [images, setImages] = useState<ChatImage[]>([])
+  const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // mirror ChatPanel's vision guard: the active engine may not accept images (e.g. a local model)
@@ -52,7 +53,30 @@ export default function EmptyState() {
   }
 
   return (
-    <div className="empty">
+    <div
+      className="empty"
+      onDragOver={(e) => {
+        // mirror ChatPanel: arm the drop overlay only when an image is being dragged
+        if (canAttach && Array.from(e.dataTransfer.items).some((it) => IMAGE_TYPES.test(it.type))) {
+          e.preventDefault()
+          setDragging(true)
+        }
+      }}
+    >
+      {dragging && (
+        <div
+          className="drop-overlay"
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragging(false)
+            void attachFiles(e.dataTransfer.files)
+          }}
+        >
+          <span><DImage /> Drop a photo or sketch</span>
+        </div>
+      )}
       <div className="empty-badge"><span className="spark"><DSpark /></span> Text &amp; image → CAD</div>
       <h1>
         Describe a part.

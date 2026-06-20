@@ -30,3 +30,7 @@ bench/results/
 
 # user-supplied bench reference image (may be copyrighted / large — not committed)
 bench/_ref.png
+
+# Playwright e2e artifacts
+test-results/
+playwright-report/
