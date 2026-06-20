@@ -10,7 +10,8 @@ import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../typ
 import { parseStl, type ModelGeometry } from '../lib/stl'
 import { analyzePrintability, type PrintabilityReport } from '../lib/printability'
 import { packPlates, type Placement } from '../lib/packPlates'
-import { canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
+import { CAPTURE_VIEW_NAMES, canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
+import type { CaptureViewName } from '../lib/capture'
 import EmptyState from './EmptyState'
 import { CustomBedDialog } from './Dialogs'
 import {
@@ -1006,14 +1007,20 @@ function CaptureRig({ tbox, hasModel }: { tbox: TBox; hasModel: boolean }) {
         gl.render(scene, camera)
         return canvasToChatImage(gl.domElement, maxDim, quality)
       }
-      // isometric, front (down -Y), top (down -Z, Y-up to avoid gimbal lock), right (down -X) —
-      // the right view exposes depth + side asymmetry a front-only set hides on non-axisymmetric parts.
-      const views = [
-        shoot(new THREE.Vector3(target.x + dist * 0.707, target.y - dist * 0.707, target.z + dist * 0.577), zUp),
-        shoot(new THREE.Vector3(target.x, target.y - dist, target.z), zUp),
-        shoot(new THREE.Vector3(target.x, target.y, target.z + dist), new THREE.Vector3(0, 1, 0)),
-        shoot(new THREE.Vector3(target.x + dist, target.y, target.z + dist * 0.001), zUp),
-      ].filter((v): v is NonNullable<typeof v> => v !== null)
+      // Pose math, keyed by name: isometric, front (down -Y), top (down -Z, Y-up to avoid
+      // gimbal lock), right (down -X). The right view exposes depth + side asymmetry a
+      // front-only set hides on non-axisymmetric parts. We iterate CAPTURE_VIEW_NAMES so the
+      // SHOOT ORDER is literally the same list ChatPanel names in the refine prompt — they
+      // cannot drift, so the model never mis-attributes an attached image.
+      const poses: Record<CaptureViewName, { pos: THREE.Vector3; up: THREE.Vector3 }> = {
+        isometric: { pos: new THREE.Vector3(target.x + dist * 0.707, target.y - dist * 0.707, target.z + dist * 0.577), up: zUp },
+        front: { pos: new THREE.Vector3(target.x, target.y - dist, target.z), up: zUp },
+        top: { pos: new THREE.Vector3(target.x, target.y, target.z + dist), up: new THREE.Vector3(0, 1, 0) },
+        right: { pos: new THREE.Vector3(target.x + dist, target.y, target.z + dist * 0.001), up: zUp },
+      }
+      const views = CAPTURE_VIEW_NAMES.map((name) => shoot(poses[name].pos, poses[name].up)).filter(
+        (v): v is NonNullable<typeof v> => v !== null,
+      )
       scene.remove(rim, rim.target)
       scene.environment = prevEnv
       camera.up.copy(prevUp)

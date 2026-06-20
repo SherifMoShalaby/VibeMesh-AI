@@ -1,34 +1,34 @@
 {
   "anthropic|kit=false": {
-    "len": 35852,
-    "sha": "875f5771b6d91405"
+    "len": 36389,
+    "sha": "759b44292dcdeb8c"
   },
   "anthropic|kit=true": {
-    "len": 41109,
-    "sha": "bc6732dbb98d01bf"
+    "len": 41646,
+    "sha": "77be542bac9e4267"
   },
   "kimi|kit=false": {
-    "len": 35852,
-    "sha": "875f5771b6d91405"
+    "len": 36389,
+    "sha": "759b44292dcdeb8c"
   },
   "kimi|kit=true": {
-    "len": 41109,
-    "sha": "bc6732dbb98d01bf"
+    "len": 41646,
+    "sha": "77be542bac9e4267"
   },
   "claude-code|kit=false": {
-    "len": 35852,
-    "sha": "875f5771b6d91405"
+    "len": 36389,
+    "sha": "759b44292dcdeb8c"
   },
   "claude-code|kit=true": {
-    "len": 41109,
-    "sha": "bc6732dbb98d01bf"
+    "len": 41646,
+    "sha": "77be542bac9e4267"
   },
   "local:qwen2.5vl:7b|kit=false": {
-    "len": 35852,
-    "sha": "875f5771b6d91405"
+    "len": 36389,
+    "sha": "759b44292dcdeb8c"
   },
   "local:qwen2.5vl:7b|kit=true": {
-    "len": 36436,
-    "sha": "df4f82674761eb94"
+    "len": 36973,
+    "sha": "9fb9249cef6da433"
   }
 }
