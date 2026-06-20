@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
-import { captureViews } from '../lib/capture'
+import { CAPTURE_VIEW_NAMES, captureViews } from '../lib/capture'
 import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
 import { estHistoryTokens, historyBudgetTokens, imageBudgetFor, type ProviderInfo } from '../lib/api'
 import { tileReference } from '../lib/tile'
@@ -106,9 +106,13 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     const anchor = modelDims
       ? ` These are the CURRENT render's measured dimensions: ${modelDims.x} × ${modelDims.y} × ${modelDims.z} mm (X width × Y depth × Z height) — they may be WRONG; correct them toward my reference's labeled dimensions, not toward these.`
       : ''
+    // Name the viewpoints from the SAME source/order CaptureRig shoots (CAPTURE_VIEW_NAMES),
+    // sliced to however many views actually came back — so the count and the names always
+    // agree and the model can correctly attribute each attached image.
+    const viewNames = CAPTURE_VIEW_NAMES.slice(0, views.length).join(', ')
     const shot =
       views.length > 1
-        ? `Attached are ${views.length} renders of the CURRENT model from fixed viewpoints (isometric, front, top — in that order).`
+        ? `Attached are ${views.length} renders of the CURRENT model from fixed viewpoints (${viewNames} — in that order).`
         : 'Attached is a render of the CURRENT model, captured from a fixed isometric viewpoint.'
     // remind the model of the plan / feature inventory it committed to, so every named
     // feature is checked off across passes (a collapsed feature outranks proportions)

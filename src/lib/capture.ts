@@ -1,5 +1,14 @@
 import type { ChatImage } from '../types'
 
+/**
+ * Canonical fixed-pose order the Viewport's CaptureRig shoots — and the SINGLE SOURCE
+ * OF TRUTH for naming those renders in the refine prompt. CaptureRig iterates this list
+ * to drive its shoots, and ChatPanel slices it (to the actual view count) to tell the
+ * model which attached image is which, so the two can never drift out of sync.
+ */
+export const CAPTURE_VIEW_NAMES = ['isometric', 'front', 'top', 'right'] as const
+export type CaptureViewName = (typeof CAPTURE_VIEW_NAMES)[number]
+
 let viewportCanvas: HTMLCanvasElement | null = null
 let multiCapture: ((maxDim?: number, quality?: number) => ChatImage[]) | null = null
 
