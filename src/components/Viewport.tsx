@@ -1283,6 +1283,9 @@ function GridLines({ points, color }: { points: Float32Array; color: string }) {
     g.setAttribute('position', new THREE.BufferAttribute(points, 3))
     return g
   }, [points])
+  // this BufferGeometry is created by hand (not r3f-managed), so dispose the GPU buffer when the
+  // points change or the bed unmounts — otherwise every bed-size change leaks a geometry.
+  useEffect(() => () => geometry.dispose(), [geometry])
   return (
     <lineSegments geometry={geometry}>
       <lineBasicMaterial color={color} />

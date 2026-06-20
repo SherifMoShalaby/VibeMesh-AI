@@ -165,8 +165,8 @@ export default function App() {
 
   return (
     <div className={`app${isMobile ? ' is-mobile' : ''}${isHome ? ' is-home' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full" data-busy={busy || undefined}>
-      <TopBar />
       <ErrorBoundary>
+        <TopBar />
         <div
           className="app-body"
           style={workspace ? { gridTemplateColumns: gridTemplate } : undefined}
@@ -187,7 +187,6 @@ export default function App() {
             </button>
           )}
         </div>
-      </ErrorBoundary>
 
       {isMobile && (
         <nav className="mobile-tabbar">
@@ -207,6 +206,7 @@ export default function App() {
       <HelpModal />
       <ConfirmHost />
       <Toaster />
+      </ErrorBoundary>
     </div>
   )
 }
