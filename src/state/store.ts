@@ -15,6 +15,7 @@ import { parseShareFile, shareFileToProject } from '../lib/shareFile'
 import { loadSkillStats, saveSkillStats, recordUses, recordRemovals, type SkillStats } from '../lib/skillStats'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 import { createExportActions } from './exportActions'
+import { createPlacementActions } from './placementActions'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
  *  chat while a brand-new window/tab (empty sessionStorage) starts fresh. */
@@ -26,7 +27,7 @@ import type { Example } from '../lib/examples'
 export type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error'
 
 /** snapshot of everything a viewport placement action (move/rotate/delete) can change */
-interface VpSnapshot {
+export interface VpSnapshot {
   stl: ArrayBuffer | null
   modelDims: StlBBox | null
   meshTransform: { position: [number, number, number]; rotation: [number, number, number] } | null
@@ -188,24 +189,6 @@ function loadCustomBed(): BedSize | null {
   return null
 }
 
-const vpSnapshotOf = (s: VibeState): VpSnapshot => ({
-  stl: s.stl,
-  modelDims: s.modelDims,
-  meshTransform: s.meshTransform,
-  compileStatus: s.compileStatus,
-  compileError: s.compileError,
-  compileNote: s.compileNote,
-  compileMs: s.compileMs,
-  modelRemoved: s.modelRemoved,
-})
-
-function sameTransform(a: VibeState['meshTransform'], b: VibeState['meshTransform']): boolean {
-  if (a === b) return true
-  if (!a || !b) return false
-  return a.position.every((v, i) => v === b.position[i]) && a.rotation.every((v, i) => v === b.rotation[i])
-}
-
-const VP_HISTORY_LIMIT = 30
 
 // Render watchdogs (ms). Primary interactive renders use the client default; the
 // Draft fallback gets a tight budget so a heavy model fails fast (primary+draft,
@@ -1273,45 +1256,8 @@ export const useStore = create<VibeState>((set, get) => {
       localStorage.setItem(CUSTOM_BED_KEY, JSON.stringify(bed))
     },
 
-    setMeshTransform: (meshTransform) => {
-      const s = get()
-      if (sameTransform(s.meshTransform, meshTransform)) return
-      set({
-        vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)],
-        vpFuture: [],
-        meshTransform,
-      })
-    },
-
-    clearModel: () => {
-      clearParamTimer() // don't let a pending slider render resurrect the model after Remove
-      const s = get()
-      set({
-        vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)],
-        vpFuture: [],
-        stl: null,
-        modelDims: null,
-        meshTransform: null,
-        compileStatus: 'idle',
-        compileError: null,
-        compileNote: null,
-        modelRemoved: true,
-      })
-    },
-
-    vpUndo: () => {
-      const s = get()
-      const prev = s.vpPast[s.vpPast.length - 1]
-      if (!prev) return
-      set({ vpPast: s.vpPast.slice(0, -1), vpFuture: [...s.vpFuture, vpSnapshotOf(s)], ...prev })
-    },
-
-    vpRedo: () => {
-      const s = get()
-      const next = s.vpFuture[s.vpFuture.length - 1]
-      if (!next) return
-      set({ vpFuture: s.vpFuture.slice(0, -1), vpPast: [...s.vpPast, vpSnapshotOf(s)], ...next })
-    },
+    // viewport-placement slice (move/rotate/delete + undo/redo) lives in ./placementActions
+    ...createPlacementActions(set, get, { clearParamTimer }),
 
     setQuality: (id) => {
       set({ quality: id })
