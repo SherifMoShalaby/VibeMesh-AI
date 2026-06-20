@@ -901,7 +901,7 @@ export const useStore = create<VibeState>((set, get) => {
     exportShareFile: (fileBase) => {
       const { code, paramValues, activeId, projects } = get()
       if (!code.trim()) {
-        alert('Nothing to share yet — generate a model first.')
+        useUi.getState().pushToast('Nothing to share yet — generate a model first.')
         return
       }
       // the latest code-bearing assistant turn carries this version's intent + applied skills
@@ -935,7 +935,7 @@ export const useStore = create<VibeState>((set, get) => {
     importShareFile: (text) => {
       const file = parseShareFile(text)
       if (!file) {
-        alert("That file isn't a valid .vibemesh share file.")
+        useUi.getState().pushToast("That file isn't a valid .vibemesh share file.", 'error')
         return
       }
       const project = shareFileToProject(file, newId(), Date.now())
@@ -1300,7 +1300,7 @@ export const useStore = create<VibeState>((set, get) => {
       // never let a partial export look successful
       if (failed.length > 0) {
         set({ compileNote: `EXPORT INCOMPLETE — failed: ${failed.join(', ')} (${pieces.length - failed.length}/${pieces.length} downloaded)` })
-        alert(`Export incomplete!\n\nFailed parts: ${failed.join(', ')}\nDownloaded: ${pieces.length - failed.length} of ${pieces.length}.\n\nSelect the failed part in the viewport to see its error, or use Ask AI to Fix.`)
+        useUi.getState().pushToast(`Export incomplete! Failed parts: ${failed.join(', ')} — downloaded ${pieces.length - failed.length} of ${pieces.length}. Select a failed part in the viewport to see its error, or use Ask AI to Fix.`, 'error')
       } else if (degraded.length > 0) {
         set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
       }
@@ -1365,7 +1365,7 @@ export const useStore = create<VibeState>((set, get) => {
       if (problems.length) {
         const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written).${degradedNote}`
         set({ compileNote: note })
-        alert(`${note}\n\nFix the named parts (select them in the viewport, or Ask AI to split), then export again.`)
+        useUi.getState().pushToast(`${note} Fix the named parts (select them in the viewport, or Ask AI to split), then export again.`, 'error')
       } else if (written === 0) {
         set({ compileNote: 'Nothing to export — no parts rendered.' })
       } else {
@@ -1387,14 +1387,16 @@ export const useStore = create<VibeState>((set, get) => {
         let source = stl
         const belowFine = quality !== 'fine' && quality !== 'ultra'
         if (belowFine) {
-          const upgrade = confirm(
-            'Re-render at Fine quality for export?\n\nThe preview caps curve smoothness; Fine prints noticeably smoother curves.\n\nOK: re-render at Fine (may take a while)\nCancel: export the preview as-is',
-          )
+          const upgrade = await useUi.getState().requestConfirm({
+            title: 'Re-render at Fine quality for export?',
+            body: 'The preview caps curve smoothness; Fine prints noticeably smoother curves. Re-rendering may take a while.',
+            confirmLabel: 'Re-render at Fine',
+          })
           if (upgrade) {
             const defines = buildDefines(params, paramValues)
             const result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
             if (result.ok && result.stl) source = result.stl
-            else alert('Fine-quality render failed (model too heavy) — exporting the preview as-is.')
+            else useUi.getState().pushToast('Fine-quality render failed (model too heavy) — exporting the preview as-is.', 'error')
           }
         }
         const buffer = meshTransform ? transformStl(source, composeMatrix(meshTransform.position, meshTransform.rotation)) : source
@@ -1425,7 +1427,7 @@ export const useStore = create<VibeState>((set, get) => {
       }
       if (failed.length > 0) {
         set({ compileNote: `3MF INCOMPLETE — failed: ${failed.join(', ')}` })
-        alert(`3MF export incomplete!\n\nFailed parts: ${failed.join(', ')}\nIncluded: ${collected.map((c) => c.name).join(', ') || 'none'}.\n\nSelect the failed part in the viewport to see its error.`)
+        useUi.getState().pushToast(`3MF export incomplete! Failed parts: ${failed.join(', ')} — included: ${collected.map((c) => c.name).join(', ') || 'none'}. Select a failed part in the viewport to see its error.`, 'error')
         if (collected.length === 0) return
       } else if (degraded.length > 0) {
         set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
@@ -1449,11 +1451,13 @@ export const useStore = create<VibeState>((set, get) => {
       const belowFine = quality !== 'fine' && quality !== 'ultra'
       if (belowFine && fine) {
         const wasDraft = quality === 'draft' || degradedToDraft
-        const upgrade = confirm(
-          wasDraft
-            ? 'The preview was rendered at Draft quality — curves will look faceted when printed.\n\nOK: re-render at Fine quality for export (may take a while)\nCancel: export the preview STL as-is'
-            : 'Re-render at Fine quality for export?\n\nThe Standard preview caps curve smoothness; Fine prints noticeably smoother curves.\n\nOK: re-render at Fine for export (may take a while)\nCancel: export the Standard preview STL as-is',
-        )
+        const upgrade = await useUi.getState().requestConfirm({
+          title: 'Re-render at Fine quality for export?',
+          body: wasDraft
+            ? 'The preview was rendered at Draft — curves will look faceted when printed. Re-rendering at Fine may take a while.'
+            : 'The Standard preview caps curve smoothness; Fine prints noticeably smoother curves. Re-rendering may take a while.',
+          confirmLabel: 'Re-render at Fine',
+        })
         if (upgrade) {
           const defines = buildDefines(params, paramValues)
           const result = await openscad.compile(code, [...defines, ...qualityArgsFor(fine)], RENDER_TIMEOUT_EXPORT)
@@ -1461,7 +1465,7 @@ export const useStore = create<VibeState>((set, get) => {
             downloadBlob(bake(result.stl), `${fileBase}.stl`, 'model/stl')
             return
           }
-          alert('Fine-quality render failed (model too heavy) — exporting the preview STL instead.')
+          useUi.getState().pushToast('Fine-quality render failed (model too heavy) — exporting the preview STL instead.', 'error')
         }
       }
       downloadBlob(bake(stl), `${fileBase}.stl`, 'model/stl')

@@ -44,6 +44,26 @@ test.describe('in-chat composer + chrome', () => {
     await expect(hint).toBeHidden()
   })
 
+  test('export uses the branded confirm, never a native dialog (UX-AUDIT F12)', async ({ page }) => {
+    await loadExample(page)
+    // a native window.confirm/alert would surface here as a Playwright dialog event; if one
+    // fires, the test fails — proving the export path is fully on the styled primitives.
+    let nativeDialog = false
+    page.on('dialog', (d) => {
+      nativeDialog = true
+      void d.dismiss()
+    })
+    await page.locator('#topbar-export').click()
+    // Standard preview (default, below Fine) → STL export offers a Fine re-render via the modal
+    await page.locator('.menu-item', { hasText: 'STL' }).click()
+    const modal = page.locator('.scrim .modal')
+    await expect(modal).toBeVisible()
+    await expect(modal).toContainText(/Re-render at Fine/i)
+    await modal.getByRole('button', { name: /cancel/i }).click()
+    await expect(modal).toBeHidden()
+    expect(nativeDialog).toBe(false)
+  })
+
   test('the shading toggle cycles modes and keeps rendering', async ({ page }) => {
     await loadExample(page)
     const shade = page.locator('.tool-btn[aria-label="Cycle shading mode"]')

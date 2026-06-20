@@ -178,6 +178,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const export3mf = useStore((s) => s.export3mf)
   const exportShareFile = useStore((s) => s.exportShareFile)
   const importShareFile = useStore((s) => s.importShareFile)
+  const pushToast = useUi((s) => s.pushToast)
   const importInputRef = useRef<HTMLInputElement>(null)
 
   // bill of materials — the real hardware this design needs (catalog fetched once; detected
@@ -200,7 +201,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
     setOpen(false)
     const fail = (e: unknown) => {
       console.error('[vibemesh-ai] export failed:', e)
-      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`)
+      pushToast(`Export failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
     }
     try {
       const r = fn()
@@ -339,7 +340,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
           if (!f) return
           f.text()
             .then((t) => importShareFile(t))
-            .catch((err) => alert(`Could not read the file: ${err instanceof Error ? err.message : String(err)}`))
+            .catch((err) => pushToast(`Could not read the file: ${err instanceof Error ? err.message : String(err)}`, 'error'))
         }}
       />
     </div>

@@ -1418,6 +1418,34 @@ input[type='checkbox']:focus-visible,
 .modal-foot.dialog-foot { justify-content: flex-end; }
 .modal-hint { flex: 1; font-size: var(--fs-micro); color: var(--text-ghost); }
 
+/* toasts — the branded replacement for window.alert (UX-AUDIT F12) */
+.toaster {
+  position: fixed; right: var(--s4); bottom: var(--s4); z-index: 200;
+  display: flex; flex-direction: column; gap: var(--s2);
+  max-width: min(420px, calc(100vw - 2 * var(--s4))); pointer-events: none;
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: var(--s2);
+  padding: var(--s3); border-radius: var(--r-sm);
+  background: var(--panel-hi); border: 1px solid var(--line-strong); box-shadow: var(--sh-float);
+  font-size: var(--fs-small); color: var(--text-dim); line-height: 1.4;
+  animation: toast-in var(--t-fast) var(--ease-out);
+}
+.toast.error { border-color: color-mix(in srgb, var(--err) 55%, var(--line-strong)); }
+.toast.error .toast-msg { color: var(--text); }
+.toast-msg { min-width: 0; flex: 1; }
+.toast-x {
+  flex-shrink: 0; border: 0; background: transparent; color: var(--text-faint); cursor: pointer;
+  display: grid; place-items: center; padding: 1px; border-radius: var(--r-xs);
+  transition: color var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+}
+.toast-x svg { width: 14px; height: 14px; }
+.toast-x:hover { color: var(--text); }
+.toast-x:focus-visible { outline: var(--ring); }
+.toast-x:active:not(:disabled) { transform: scale(0.92); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
 /* engine rows */
 .engine-row { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--r-md); background: var(--raised); border: 1px solid var(--line); transition: all var(--t-fast) var(--ease); }
 .engine-row.on { border-color: var(--accent-line); }

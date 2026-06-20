@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { BedSize } from '../types'
+import { useUi } from '../state/ui'
 import { IconX } from './icons'
 
 /** Esc closes — capture phase so the viewport's Esc-to-deselect never sees it. */
@@ -57,6 +58,45 @@ export function ConfirmDialog({
         </div>
       </div>
     </div>
+  )
+}
+
+/** Transient notices — the branded replacement for window.alert (UX-AUDIT F12). Errors stay
+ *  loud (per SPEC §4 export-failure rule); both levels are manually dismissible. */
+export function Toaster() {
+  const toasts = useUi((s) => s.toasts)
+  const dismiss = useUi((s) => s.dismissToast)
+  if (!toasts.length) return null
+  return (
+    <div className="toaster" role="status" aria-live="polite">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.level}`}>
+          <span className="toast-msg">{t.message}</span>
+          <button className="toast-x" aria-label="Dismiss" onClick={() => dismiss(t.id)}>
+            <IconX />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Renders the branded confirm when the store's promise-based requestConfirm is pending. */
+export function ConfirmHost() {
+  const req = useUi((s) => s.confirmRequest)
+  if (!req) return null
+  const close = (ok: boolean) => {
+    req.resolve(ok)
+    useUi.setState({ confirmRequest: null })
+  }
+  return (
+    <ConfirmDialog
+      title={req.title}
+      body={req.body}
+      confirmLabel={req.confirmLabel}
+      onConfirm={() => close(true)}
+      onCancel={() => close(false)}
+    />
   )
 }
 
