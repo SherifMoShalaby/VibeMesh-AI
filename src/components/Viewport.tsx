@@ -9,6 +9,7 @@ import { useUi } from '../state/ui'
 import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
 import { analyzePrintability, type PrintabilityReport } from '../lib/printability'
+import { meshTint } from '../lib/viewportTint'
 import { packPlates, type Placement } from '../lib/packPlates'
 import { CAPTURE_VIEW_NAMES, canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
 import type { CaptureViewName } from '../lib/capture'
@@ -192,6 +193,12 @@ export default function Viewport() {
   const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
   const currentPart = partParam ? String(paramValues.part ?? partParam.defaultValue) : null
   const isAssemblyPreview = partParam !== undefined && currentPart === 'all'
+
+  // Slicer convention (Bambu/Prusa/Cura): a part that overruns the build volume is tinted RED so
+  // the "this won't fit" read is instant, before the user even checks the verdict chip. The color
+  // contract (incl. the assembly-preview exemption) lives in the pure `meshTint` so the unit net
+  // can lock it without WebGL.
+  const { color: meshColor, emissive: meshEmissive } = meshTint({ overBed, isAssemblyPreview, selected, hovered, measureMode })
 
   // ── slicer (multi-plate) view: pack each compiled piece onto bed-sized plates ──
   const platesView = viewMode === 'plates' && partParam !== undefined
@@ -410,12 +417,12 @@ export default function Viewport() {
             >
               <meshStandardMaterial
                 ref={materialRef}
-                color="#b9bdc6"
+                color={meshColor}
                 roughness={0.55}
                 metalness={0.12}
                 flatShading={shading === 'flat'}
                 wireframe={shading === 'wireframe'}
-                emissive={selected ? '#8a4012' : hovered && !measureMode ? '#3a2a18' : '#000000'}
+                emissive={meshEmissive}
                 side={THREE.DoubleSide}
               />
             </mesh>
