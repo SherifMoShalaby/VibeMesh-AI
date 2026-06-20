@@ -63,6 +63,8 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const setLeftCollapsed = useUi((s) => s.setLeftCollapsed)
   const autoRepair = useUi((s) => s.autoRepair)
   const setAutoRepair = useUi((s) => s.setAutoRepair)
+  const bestOfN = useUi((s) => s.bestOfN)
+  const setBestOfN = useUi((s) => s.setBestOfN)
 
   const [input, setInput] = useState('')
   const [images, setImages] = useState<ChatImage[]>([])
@@ -597,6 +599,15 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               onClick={() => setAutoRepair(!autoRepair)}
             >
               <span className={autoRepair ? 'dot-ok' : 'dot-off'} /> Auto-fix
+            </button>
+            <button
+              className="chip-btn"
+              type="button"
+              aria-pressed={bestOfN}
+              title={bestOfN ? 'Best-of-3 is ON — for kit / image prompts I generate 3 candidates and keep the one that scores best (uses 3× the generations)' : 'Best-of-3 is OFF — turn on to trade 3× generations for higher reliability on kit / image prompts'}
+              onClick={() => setBestOfN(!bestOfN)}
+            >
+              <span className={bestOfN ? 'dot-ok' : 'dot-off'} /> Best-of-3
             </button>
             <ModelMenu />
             <span className="spacer" />
