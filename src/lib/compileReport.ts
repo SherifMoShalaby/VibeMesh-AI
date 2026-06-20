@@ -75,6 +75,29 @@ export function structuralReport(code: string, params: ScadParameter[]): { issue
     issues.push('Pieces may render scattered in the all-view — mate them on a shared datum and expose an `explode` knob defaulting to 0 (assembled).')
   }
 
+  // No global $fn: the quality presets (Draft/Standard/Fine/Ultra) own curve resolution via
+  // root-scope `-D '$fn=0' -D $fa=… -D $fs=…` overrides. A top-level `$fn = <n>;` in the generated
+  // code freezes the facet count and defeats those presets. A per-call $fn (hex socket) and a
+  // module-scoped $fn live inside parens/braces, so only a DEPTH-0 statement is flagged; `$fn = 0;`
+  // is the preset's own auto value and is harmless, so only a positive resolution trips this.
+  let depth = 0
+  for (const raw of code.split('\n')) {
+    const line = raw.replace(/\/\/.*$/, '').trim()
+    if (depth === 0) {
+      const g = /^\$fn\s*=\s*(\d+(?:\.\d+)?)\s*;/.exec(line)
+      if (g && Number(g[1]) > 0) {
+        issues.push(
+          `Sets a global \`$fn = ${g[1]}\` at the top level — this freezes the facet count and defeats the quality presets (which drive curve resolution via $fa/$fs). Remove the global $fn; keep per-call $fn only on discrete-count geometry (e.g. a hex socket) or a deliberate low-poly accent.`,
+        )
+        break
+      }
+    }
+    for (const ch of line) {
+      if (ch === '{') depth++
+      else if (ch === '}') depth = Math.max(0, depth - 1)
+    }
+  }
+
   return { issues }
 }
 
