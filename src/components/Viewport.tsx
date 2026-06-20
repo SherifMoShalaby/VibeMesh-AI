@@ -23,6 +23,7 @@ import {
   DZoom,
   DRuler,
   DShading,
+  DXray,
   DGrid,
   DCube,
   DReset,
@@ -85,6 +86,8 @@ export default function Viewport() {
   const setMobileTab = useUi((s) => s.setMobileTab)
   const shading = useUi((s) => s.shading)
   const setShading = useUi((s) => s.setShading)
+  const xray = useUi((s) => s.xray)
+  const setXray = useUi((s) => s.setXray)
   const bedVisible = useUi((s) => s.bedVisible)
   const setBedVisible = useUi((s) => s.setBedVisible)
   const ortho = useUi((s) => s.ortho)
@@ -432,7 +435,7 @@ export default function Viewport() {
         )}
 
         <CameraFit tbox={activeTbox} version={fitVersion} reduce={Boolean(reduce)} />
-        <SpawnRig groupRef={groupRef} matRef={materialRef} version={stlVersion} reduce={Boolean(reduce)} />
+        <SpawnRig groupRef={groupRef} matRef={materialRef} version={stlVersion} reduce={Boolean(reduce)} xray={xray} />
         <CaptureRig tbox={tbox} hasModel={Boolean(model)} />
         <ViewRig tbox={activeTbox} apiRef={viewApi} fileBase="viewport" />
         <OrbitControlsZUp />
@@ -490,6 +493,15 @@ export default function Viewport() {
             }}
           >
             <DShading />
+          </button>
+          <button
+            className={`tool-btn${xray ? ' active' : ''}`}
+            data-tip={xray ? 'X-ray: on (see inside)' : 'X-ray (see inside)'}
+            aria-label="Toggle X-ray transparency"
+            aria-pressed={xray}
+            onClick={() => setXray(!xray)}
+          >
+            <DXray />
           </button>
           <button
             className={`tool-btn${bedVisible ? ' active' : ''}`}
@@ -1073,28 +1085,47 @@ function CameraFit({ tbox, version, reduce }: { tbox: TBox; version: number; red
 /** Mesh-spawn: on a new STL (stlVersion) the model group scales 0.92→1 and its material fades 0→1
  *  over ~320ms so geometry never "pops" in. Mutates the group transform + material via refs ONLY —
  *  never the disposed geometry prop, never the JSX-controlled emissive/flatShading/wireframe/side. */
-function SpawnRig({ groupRef, matRef, version, reduce }: {
+function SpawnRig({ groupRef, matRef, version, reduce, xray }: {
   groupRef: React.RefObject<THREE.Group | null>
   matRef: React.RefObject<THREE.MeshStandardMaterial | null>
   version: number
   reduce: boolean
+  xray: boolean
 }) {
   const invalidate = useThree((s) => s.invalidate)
   const appear = useRef(1)
+
+  // Settle the material to its RESTING look — opaque, or X-ray (semi-transparent + no depth-write
+  // so internal cavities/bores show through). The spawn fade overrides opacity transiently; this is
+  // the final state it lands on, and the toggle effect below applies it live while idle.
+  const settle = (m: THREE.MeshStandardMaterial | null) => {
+    if (!m) return
+    m.opacity = xray ? 0.4 : 1
+    m.transparent = xray
+    m.depthWrite = !xray
+    m.needsUpdate = true
+  }
 
   useEffect(() => {
     const m = matRef.current
     if (reduce) {
       appear.current = 1
       groupRef.current?.scale.setScalar(1)
-      if (m) { m.opacity = 1; m.transparent = false; m.needsUpdate = true }
+      settle(m)
       return
     }
     appear.current = 0
     groupRef.current?.scale.setScalar(0.92)
     if (m) { m.transparent = true; m.opacity = 0; m.needsUpdate = true }
     invalidate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, reduce, groupRef, matRef, invalidate])
+
+  // toggling X-ray while idle applies the resting look immediately (no re-spawn)
+  useEffect(() => {
+    if (appear.current >= 1) { settle(matRef.current); invalidate() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xray])
 
   useFrame((_, dt) => {
     if (appear.current >= 1) return
@@ -1102,10 +1133,10 @@ function SpawnRig({ groupRef, matRef, version, reduce }: {
     const e = easeInOutCubic(appear.current)
     groupRef.current?.scale.setScalar(0.92 + 0.08 * e)
     const m = matRef.current
-    if (m) m.opacity = e
+    if (m) m.opacity = e * (xray ? 0.4 : 1)
     if (appear.current >= 1) {
       groupRef.current?.scale.setScalar(1)
-      if (m) { m.opacity = 1; m.transparent = false; m.needsUpdate = true } // restore depthWrite for the DoubleSide part
+      settle(m) // land on opaque OR X-ray resting state
     }
     invalidate() // MANDATORY each animating tick under frameloop='demand'
   })

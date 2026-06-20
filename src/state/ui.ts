@@ -37,6 +37,9 @@ interface UiState {
   /* ── viewport display preferences ── */
   shading: Shading
   setShading: (s: Shading) => void
+  /** X-ray: render the model semi-transparent to reveal internal features (bores, cavities) */
+  xray: boolean
+  setXray: (v: boolean) => void
   bedVisible: boolean
   setBedVisible: (v: boolean) => void
   ortho: boolean
@@ -90,6 +93,8 @@ export const useUi = create<UiState>((set) => ({
 
   shading: 'solid',
   setShading: (shading) => set({ shading }),
+  xray: false,
+  setXray: (xray) => set({ xray }),
   bedVisible: true,
   setBedVisible: (bedVisible) => set({ bedVisible }),
   ortho: false,

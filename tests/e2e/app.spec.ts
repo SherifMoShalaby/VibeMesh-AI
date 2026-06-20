@@ -84,4 +84,16 @@ test.describe('geometry pipeline (built-in example, no AI)', () => {
     await page.locator('#topbar-export').click()
     await expect(page.locator('[role="menu"], .menu').first()).toBeVisible()
   })
+
+  test('the X-ray toggle flips the model transparent and back', async ({ page }) => {
+    await page.locator('.example-card', { hasText: 'Storage box' }).click()
+    await expect(page.locator('canvas')).toBeVisible({ timeout: 30_000 })
+    const xray = page.locator('.tool-btn[aria-label="Toggle X-ray transparency"]')
+    await expect(xray).toHaveAttribute('aria-pressed', 'false')
+    await xray.click()
+    await expect(xray).toHaveAttribute('aria-pressed', 'true')
+    await expect(xray).toHaveClass(/active/)
+    await xray.click()
+    await expect(xray).toHaveAttribute('aria-pressed', 'false')
+  })
 })
