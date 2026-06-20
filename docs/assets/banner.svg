@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="vibemesh-ai — AI parametric CAD for 3D printing">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0c0f"/>
+      <stop offset="0.55" stop-color="#101319"/>
+      <stop offset="1" stop-color="#14161b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.16" cy="0.5" r="0.6">
+      <stop offset="0" stop-color="#3d6ff5" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#3d6ff5" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#3d6ff5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b86ff"/>
+      <stop offset="1" stop-color="#2f5fe0"/>
+    </linearGradient>
+    <linearGradient id="meshAccent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8fb4ff"/>
+      <stop offset="1" stop-color="#3d6ff5"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#3d6ff5" stroke-width="1" stroke-opacity="0.06"/>
+    </pattern>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <!-- backdrop -->
+  <rect width="1280" height="360" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#grid)"/>
+  <rect width="1280" height="360" rx="20" fill="url(#glow)"/>
+  <rect x="0.5" y="0.5" width="1279" height="359" rx="20" fill="none" stroke="#2a2e35" stroke-opacity="0.9"/>
+
+  <!-- logo mark: hexagonal mesh, scaled from the app favicon -->
+  <g transform="translate(92,98) scale(5.3)">
+    <g filter="url(#soft)" opacity="0.55">
+      <path d="M16 4.6 L26.6 10.4 L26.6 21.6 L16 27.4 L5.4 21.6 L5.4 10.4 Z" fill="none" stroke="#3d6ff5" stroke-width="2.4" stroke-linejoin="round"/>
+    </g>
+    <path d="M16 4.6 L26.6 10.4 L26.6 21.6 L16 27.4 L5.4 21.6 L5.4 10.4 Z" fill="none" stroke="url(#mark)" stroke-width="2.1" stroke-linejoin="round"/>
+    <path d="M19 11.6 L16 4.6 M19 11.6 L26.6 10.4 M22.9 20.4 L26.6 21.6 M15.6 20.4 L16 27.4" stroke="#8fb4ff" stroke-width="1" opacity="0.4"/>
+    <path d="M5.4 16 C7.3 11.6 10.1 11.6 12 16 L15.6 20.4 L19 11.6 L22.9 20.4 L26.6 16" fill="none" stroke="url(#meshAccent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="19" cy="11.6" r="1.5" fill="#8fb4ff"/>
+    <circle cx="22.9" cy="20.4" r="1.5" fill="#8fb4ff"/>
+  </g>
+
+  <!-- wordmark + copy -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="318" y="118" font-size="16" font-weight="600" letter-spacing="4.5" fill="#8fb4ff">AI · PARAMETRIC CAD FOR 3D PRINTING</text>
+
+    <text x="316" y="205" font-size="84" font-weight="800" letter-spacing="-2">
+      <tspan fill="#eef1f5">vibe</tspan><tspan fill="#5b86ff">mesh</tspan><tspan fill="#7e858f">-ai</tspan>
+    </text>
+
+    <text x="320" y="252" font-size="27" font-weight="600" fill="#cdd3dc">Describe a part. Get a print-ready part.</text>
+
+    <text x="320" y="298" font-size="17" font-weight="500" letter-spacing="0.3" fill="#a8aeb8" font-family="'SF Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace">describe<tspan fill="#565c66">  →  </tspan>render in-browser<tspan fill="#565c66">  →  </tspan>tweak sliders<tspan fill="#565c66">  →  </tspan>export .3mf / .stl</text>
+  </g>
+</svg>

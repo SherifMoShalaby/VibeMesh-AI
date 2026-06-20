@@ -33,6 +33,10 @@ interface UiState {
   /** auto-repair: silently re-prompt once when a generated model fails to render (kill switch) */
   autoRepair: boolean
   setAutoRepair: (v: boolean) => void
+  /** best-of-N: for ambiguous/kit/image requests, generate N candidates and adopt the one that
+   *  scores best on reference-free signals. OFF by default — it costs N× generations + compiles. */
+  bestOfN: boolean
+  setBestOfN: (v: boolean) => void
 
   /* ── viewport display preferences ── */
   shading: Shading
@@ -97,6 +101,11 @@ export const useUi = create<UiState>((set) => ({
   setAutoRepair: (autoRepair) => {
     localStorage.setItem('vibemesh.autoRepair.v1', autoRepair ? '1' : '0')
     set({ autoRepair })
+  },
+  bestOfN: localStorage.getItem('vibemesh.bestOfN.v1') === '1',
+  setBestOfN: (bestOfN) => {
+    localStorage.setItem('vibemesh.bestOfN.v1', bestOfN ? '1' : '0')
+    set({ bestOfN })
   },
 
   shading: 'solid',
