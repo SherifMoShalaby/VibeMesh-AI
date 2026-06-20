@@ -130,6 +130,8 @@ export const DGrid = () =>(<D><rect x="3" y="3" width="7" height="7" rx="1" /><r
 export const DCube = () => (<D><path d="M12 2.5 21 7v10l-9 4.5L3 17V7l9-4.5Z" /><path d="M3 7l9 4.5L21 7M12 11.5V22" /></D>)
 export const DArrowRight = () => (<D><path d="M5 12h14M13 6l6 6-6 6" /></D>)
 export const DBox = () => (<D><path d="M3 8l9-5 9 5v8l-9 5-9-5V8Z" /><path d="M3 8l9 5 9-5M12 13v8" /></D>)
+// X-ray / transparency: a faded box with a dashed interior feature showing through
+export const DXray = () => (<D><path d="M4 7.5l8-4 8 4v8l-8 4-8-4v-8Z" opacity="0.45" /><circle cx="12" cy="11.5" r="2.6" strokeDasharray="2.2 2" /></D>)
 export const DCamera = () => (<D><rect x="3" y="6" width="18" height="14" rx="2" /><circle cx="12" cy="13" r="3.5" /><path d="M8 6l1.5-2h5L16 6" /></D>)
 export const DCylinder = () => (<D><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v12a7 3 0 0 0 14 0V6" /></D>)
 export const DLayers = () => (<D><path d="M12 3 3 8l9 5 9-5-9-5Z" /><path d="M3 13l9 5 9-5M3 16.5l9 5 9-5" opacity=".55" /></D>)
