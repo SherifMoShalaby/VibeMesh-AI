@@ -279,6 +279,13 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     const d = new Date()
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
+  // a message's SEND time (stamped at creation), stable across re-renders. '' for messages
+  // persisted before createdAt existed — the UI then renders no time rather than a wrong one.
+  const fmtTime = (ts?: number) => {
+    if (!ts) return ''
+    const d = new Date(ts)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
 
   return (
     <section
@@ -353,7 +360,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                 <div className="msg-head">
                   <span className="msg-avatar user"><DUser /></span>
                   <span className="msg-who">You</span>
-                  <span className="msg-time">{now()}</span>
+                  <span className="msg-time">{fmtTime(msg.createdAt)}</span>
                 </div>
                 {msg.images?.map((img, j) => (
                   <img key={j} className="msg-img" src={`data:${img.mediaType};base64,${img.data}`} alt="reference" />
@@ -378,7 +385,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               <div className="msg-head">
                 <span className="msg-avatar ai"><DSparkFill /></span>
                 <span className="msg-who">Vibemesh-AI</span>
-                <span className="msg-time">{now()}</span>
+                <span className="msg-time">{fmtTime(msg.createdAt)}</span>
               </div>
               {msg.images?.map((img, j) => (
                 <img key={j} className="msg-img" src={`data:${img.mediaType};base64,${img.data}`} alt="reference" />

@@ -590,6 +590,7 @@ export const useStore = create<VibeState>((set, get) => {
           ...activeChat(),
           {
             id: newId(),
+            createdAt: Date.now(),
             role: 'assistant',
             text: (prose ? prose + '\n\n' : '') + 'The reply was cut off at the output-length limit, so the program is likely incomplete. Ask me to continue, or simplify the request (fewer parts / less detail).',
             error: true,
@@ -605,12 +606,12 @@ export const useStore = create<VibeState>((set, get) => {
       // local engines (which can't reliably honor the format anyway).
       const contractViolated = code === null || blockCount > 1
       if (contractViolated && attempt < MAX_AUTO_FIX && engine && !engine.startsWith('local:')) {
-        setChat([...activeChat(), { id: newId(), role: 'assistant', text: prose || 'Returning the program again.' }])
+        setChat([...activeChat(), { id: newId(), createdAt: Date.now(), role: 'assistant', text: prose || 'Returning the program again.' }])
         const nudge =
           code === null
             ? 'Your last reply contained no OpenSCAD code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program, per the response format.'
             : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
-        setChat([...activeChat(), { id: newId(), role: 'user', text: nudge, action: 'Fix format' }])
+        setChat([...activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text: nudge, action: 'Fix format' }])
         await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1, opts)
         return
       }
@@ -624,6 +625,7 @@ export const useStore = create<VibeState>((set, get) => {
           ...activeChat(),
           {
             id: newId(),
+            createdAt: Date.now(),
             role: 'assistant',
             text: (prose ? prose + '\n\n' : '') + `I couldn't produce a single OpenSCAD code block${tries}. Try rephrasing or simplifying the request, or switch engines.`,
             error: true,
@@ -641,6 +643,7 @@ export const useStore = create<VibeState>((set, get) => {
         : undefined
       const assistantMsg: ChatMessage = {
         id: newId(),
+        createdAt: Date.now(),
         role: 'assistant',
         text: prose || 'Here is the model.',
         code: code ?? undefined,
@@ -662,6 +665,7 @@ export const useStore = create<VibeState>((set, get) => {
           ...activeChat(),
           {
             id: newId(),
+            createdAt: Date.now(),
             role: 'assistant',
             text: 'Tip: fine-tune it with the sliders on the right, ask me for changes here, or use Export when it looks good.',
           },
@@ -689,7 +693,7 @@ export const useStore = create<VibeState>((set, get) => {
         const canRepair = attempt < MAX_AUTO_FIX && useUi.getState().autoRepair && !!eng && !eng.startsWith('local:')
         if (canRepair && !compileResult.ok && compileResult.error && compileResult.error !== 'superseded' && compileResult.error !== 'empty') {
           const fixText = buildAutoFixPrompt(compileResult.error)
-          setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
+          setChat([...activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
           await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
         } else if (compileResult.ok) {
           const params = get().params
@@ -730,7 +734,7 @@ export const useStore = create<VibeState>((set, get) => {
             if (assembly.length)
               parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly/mechanism problems, then return the corrected complete program:\n${assembly.map((i) => `- ${i}`).join('\n')}`)
             const fixText = parts.join('\n\n')
-            setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
+            setChat([...activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
             await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
           } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
             // off-bed single part → deterministic drop-to-bed (no AI turn). The export
@@ -788,6 +792,7 @@ export const useStore = create<VibeState>((set, get) => {
             ...activeChat(),
             {
               id: newId(),
+              createdAt: Date.now(),
               role: 'assistant',
               text: `Generation timed out after ${Math.round(GEN_TIMEOUT / 60000)} min — the engine may be overloaded or unreachable. Try again, or switch to a faster engine / lower effort.`,
               error: true,
@@ -796,7 +801,7 @@ export const useStore = create<VibeState>((set, get) => {
         }
       } else {
         const message = err instanceof Error ? err.message : String(err)
-        setChat([...activeChat(), { id: newId(), role: 'assistant', text: message, error: true }])
+        setChat([...activeChat(), { id: newId(), createdAt: Date.now(), role: 'assistant', text: message, error: true }])
       }
     } finally {
       if (genTimer) clearTimeout(genTimer)
@@ -1041,7 +1046,7 @@ export const useStore = create<VibeState>((set, get) => {
       if (!state.activeId) {
         get().newProject()
       }
-      const userMsg: ChatMessage = { id: newId(), role: 'user', text, images, action }
+      const userMsg: ChatMessage = { id: newId(), createdAt: Date.now(), role: 'user', text, images, action }
       // a new prompt commits to the current (possibly rolled-back) version: the stashed
       // tail is now a genuinely abandoned branch, so clear the redo stack as we append.
       setChatAndFuture([...activeChat(), userMsg], [])
@@ -1077,7 +1082,7 @@ export const useStore = create<VibeState>((set, get) => {
       // a marker user turn (chip shows an 'Adjust patterns' tag), then generate with the
       // corrected skillIds OVERRIDING retrieval for this turn. Shares the generating guard +
       // abortController via runGeneration; the new version carries the corrected appliedSkillIds.
-      setChatAndFuture([...activeChat(), { id: newId(), role: 'user', text, action: 'Adjust patterns' }], [])
+      setChatAndFuture([...activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Adjust patterns' }], [])
       await runGeneration({ text, action: 'Adjust patterns' }, 0, { skillIds })
     },
 
@@ -1204,6 +1209,7 @@ export const useStore = create<VibeState>((set, get) => {
       const chat = [
         {
           id: newId(),
+          createdAt: Date.now(),
           role: 'assistant' as const,
           text: `Loaded the built-in “${example.name}” example. Tweak it with the sliders, or describe a change and I'll rework the code.`,
           code: example.code,
