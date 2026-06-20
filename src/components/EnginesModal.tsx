@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { connectEngine, testEngine, type ProviderInfo } from '../lib/api'
+import { useFocusTrap } from '../lib/useFocusTrap'
 import { IconX, IconRefresh, DChip } from './icons'
 
 type Row = ProviderInfo & { useId?: string }
@@ -19,6 +20,8 @@ export default function EnginesModal() {
   const health = useStore((s) => s.health)
   const refreshHealth = useStore((s) => s.refreshHealth)
   const [scanning, setScanning] = useState(false)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, enginesOpen)
 
   useEffect(() => {
     if (!enginesOpen) return
@@ -70,7 +73,7 @@ export default function EnginesModal() {
 
   return (
     <div className="scrim" onClick={() => setEnginesOpen(false)}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label="AI engines" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} className="modal" role="dialog" aria-modal="true" aria-label="AI engines" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="mh-icon"><DChip /></span>
           <div className="mh-text">

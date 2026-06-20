@@ -28,8 +28,8 @@
   /* ── text ramp ────────────────────────────────────────────── */
   --text:        #eef1f5;
   --text-dim:    #a8aeb8;
-  --text-faint:  #7e858f;
-  --text-ghost:  #565c66;
+  --text-faint:  #8d949e;
+  --text-ghost:  #7a818c; /* ≥4.5:1 on the dark panels — carries param ranges + export caveats (a11y) */
 
   /* ── ACCENT · electric cobalt ─────────────────────────────── */
   --accent:       #3d6ff5;

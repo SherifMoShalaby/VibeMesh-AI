@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useUi } from '../state/ui'
+import { useFocusTrap } from '../lib/useFocusTrap'
 import { IconX } from './icons'
 
 const GROUPS: Array<{ title: string; rows: Array<[string, string]> }> = [
@@ -44,6 +45,8 @@ const GROUPS: Array<{ title: string; rows: Array<[string, string]> }> = [
 export default function HelpModal() {
   const helpOpen = useUi((s) => s.helpOpen)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef, helpOpen)
 
   // global `?` opener — ignored while typing in a field
   useEffect(() => {
@@ -73,7 +76,7 @@ export default function HelpModal() {
 
   return (
     <div className="scrim" onClick={() => setHelpOpen(false)}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} className="modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div className="mh-text">
             <h2>Shortcuts</h2>

@@ -464,6 +464,7 @@ export default function Viewport() {
             className={`tool-btn${!measureMode && !selected ? ' active' : ''}`}
             data-tip="Orbit"
             aria-label="Orbit"
+            aria-pressed={!measureMode && !selected}
             onClick={() => {
               setMeasureMode(false)
               setMeasurePts([])
@@ -476,6 +477,7 @@ export default function Viewport() {
             className={`tool-btn${selected ? ' active' : ''}`}
             data-tip="Move / rotate part"
             aria-label="Move or rotate part"
+            aria-pressed={selected}
             disabled={!model || platesView}
             onClick={() => setSelected(true)}
           >
@@ -489,6 +491,7 @@ export default function Viewport() {
             className={`tool-btn${measureMode ? ' active' : ''}`}
             data-tip="Measure"
             aria-label="Measure"
+            aria-pressed={measureMode}
             disabled={platesView}
             onClick={() => {
               setMeasureMode(!measureMode)
@@ -501,6 +504,7 @@ export default function Viewport() {
             className={`tool-btn${shading !== 'solid' ? ' active' : ''}`}
             data-tip={`Shading: ${({ solid: 'Smooth', flat: 'Faceted', edges: 'Edges', wireframe: 'Wireframe' } as const)[shading]}`}
             aria-label="Cycle shading mode"
+            aria-pressed={shading !== 'solid'}
             onClick={() => {
               const order = ['solid', 'flat', 'edges', 'wireframe'] as const
               setShading(order[(order.indexOf(shading) + 1) % order.length])
@@ -521,6 +525,7 @@ export default function Viewport() {
             className={`tool-btn${bedVisible ? ' active' : ''}`}
             data-tip="Toggle bed grid"
             aria-label="Toggle bed grid"
+            aria-pressed={bedVisible}
             onClick={() => setBedVisible(!bedVisible)}
           >
             <DGrid />
@@ -532,7 +537,8 @@ export default function Viewport() {
           <button
             className={`tool-btn${ortho ? ' active' : ''}`}
             data-tip={ortho ? 'Orthographic' : 'Perspective'}
-            aria-label="Toggle projection"
+            aria-label="Toggle projection (orthographic)"
+            aria-pressed={ortho}
             onClick={() => setOrtho(!ortho)}
           >
             <DReset />
@@ -638,10 +644,10 @@ export default function Viewport() {
       {/* ── selection toolbar (floats above HUD bar) ── */}
       {selected && model && (
         <div className="sel-bar">
-          <button className={`plate-chip${gizmoMode === 'translate' ? ' active' : ''}`} onClick={() => setGizmoMode('translate')} title="Move gizmo">
+          <button className={`plate-chip${gizmoMode === 'translate' ? ' active' : ''}`} aria-pressed={gizmoMode === 'translate'} onClick={() => setGizmoMode('translate')} title="Move gizmo">
             <DMove /> Move
           </button>
-          <button className={`plate-chip${gizmoMode === 'rotate' ? ' active' : ''}`} onClick={() => setGizmoMode('rotate')} title="Rotate gizmo">
+          <button className={`plate-chip${gizmoMode === 'rotate' ? ' active' : ''}`} aria-pressed={gizmoMode === 'rotate'} onClick={() => setGizmoMode('rotate')} title="Rotate gizmo">
             <DRotate /> Rotate
           </button>
           <button className="plate-chip" onClick={centerOnBed} title="Center on the bed (XY)">
@@ -760,21 +766,23 @@ export default function Viewport() {
           {partParam && (
             <div className="hud-seg hud-parts">
               <span className="dim-label">View</span>
-              <div className="part-tog">
-                <button className={!platesView ? 'active' : ''} onClick={() => void setViewMode('single')}>Single</button>
-                <button className={platesView ? 'active' : ''} disabled={slicing} onClick={() => void setViewMode('plates')}>
+              <div className="part-tog" role="radiogroup" aria-label="Viewport view">
+                <button role="radio" aria-checked={!platesView} className={!platesView ? 'active' : ''} onClick={() => void setViewMode('single')}>Single</button>
+                <button role="radio" aria-checked={platesView} className={platesView ? 'active' : ''} disabled={slicing} onClick={() => void setViewMode('plates')}>
                   Slicer
                   {slicing && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
                 </button>
               </div>
               {!platesView && (
-                <div className="part-tog">
+                <div className="part-tog" role="radiogroup" aria-label="Active part">
                   {(partParam.options ?? []).map((opt) => {
                     const value = String(opt)
                     const busy = currentPart === value && compileStatus === 'compiling'
                     return (
                       <button
                         key={value}
+                        role="radio"
+                        aria-checked={currentPart === value}
                         className={`${currentPart === value ? 'active' : ''}${busy ? ' busy' : ''}`}
                         disabled={busy}
                         onClick={() => void selectPart(value)}

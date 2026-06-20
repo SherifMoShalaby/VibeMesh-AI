@@ -102,6 +102,9 @@ interface VibeState {
 
   generating: boolean
   streamText: string
+  /** true once the streaming reply has emitted its first ```fence — a flip-once flag the
+   *  parameter panel subscribes to (instead of raw streamText) so it doesn't re-render per token */
+  streamHasCode: boolean
   /** project id awaiting its one auto-refine pass (set when the first image-grounded
    *  model renders) → ChatPanel fires only when it matches the active project, so a
    *  lingering flag can never misfire on a different project */
@@ -549,7 +552,7 @@ export const useStore = create<VibeState>((set, get) => {
 
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
   async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0, opts: { skillIds?: string[] } = {}) {
-    set({ generating: true, streamText: '' })
+    set({ generating: true, streamText: '', streamHasCode: false })
     abortController = new AbortController()
     const ctrl = abortController
     let genTimedOut = false
@@ -607,7 +610,12 @@ export const useStore = create<VibeState>((set, get) => {
       } else {
         full = await streamGenerate(engine, messages, {
           ...baseOpts,
-          onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
+          onDelta: (delta) =>
+            set((s) => ({
+              streamText: s.streamText + delta,
+              // flip-once: stop scanning the moment the first fence appears (|| short-circuits)
+              streamHasCode: s.streamHasCode || (s.streamText + delta).includes('```'),
+            })),
           onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
           onDone: (info) => { stopReason = info.stopReason },
         })
@@ -842,7 +850,7 @@ export const useStore = create<VibeState>((set, get) => {
     } finally {
       if (genTimer) clearTimeout(genTimer)
       abortController = null
-      set({ generating: false, streamText: '' })
+      set({ generating: false, streamText: '', streamHasCode: false })
     }
   }
 
@@ -877,6 +885,7 @@ export const useStore = create<VibeState>((set, get) => {
     slicerFailed: [],
     generating: false,
     streamText: '',
+    streamHasCode: false,
     pendingAutoRefineFor: null,
     bedId: localStorage.getItem(BED_KEY) ?? PRINTER_BEDS[0].id,
     customBed: loadCustomBed(),

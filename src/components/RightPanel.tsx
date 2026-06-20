@@ -25,13 +25,13 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
   const setRightTab = useUi((s) => s.setRightTab)
   const setRightCollapsed = useUi((s) => s.setRightCollapsed)
   const compileStatus = useStore((s) => s.compileStatus)
-  const generating = useStore((s) => s.generating)
-  const streamText = useStore((s) => s.streamText)
   const params = useStore((s) => s.params)
   const activeId = useStore((s) => s.activeId)
 
-  // teach the causality: the chat is writing the code right now
-  const aiWritingCode = generating && streamText.includes('```')
+  // teach the causality: the chat is writing the code right now. Subscribe to the derived
+  // boolean (flips once when the first fence streams) — NOT raw streamText, which would re-render
+  // this whole panel (and every slider) on every token during generation.
+  const aiWritingCode = useStore((s) => s.generating && s.streamHasCode)
 
   // one-time explainer teaching the slider↔code↔chat relationship (UX-AUDIT F2)
   const [tweakHintDone, setTweakHintDone] = useState(() => {
@@ -217,10 +217,12 @@ function ParamControl({
             {name}
           </span>
         </div>
-        <div className="seg" role="group" aria-label={name}>
+        <div className="seg" role="radiogroup" aria-label={name}>
           {param.options?.map((o) => (
             <button
               key={String(o)}
+              role="radio"
+              aria-checked={String(o) === String(v)}
               className={String(o) === String(v) ? 'active' : ''}
               onClick={() => onChange(o)}
               title={String(o)}
