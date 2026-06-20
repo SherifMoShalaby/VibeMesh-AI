@@ -105,7 +105,7 @@ export default function EnginesModal() {
 
         <div className="modal-foot">
           <span className="modal-hint">Keys are saved on this computer only — they never leave it.</span>
-          <button className="btn btn-ghost" onClick={rescan} disabled={scanning}>
+          <button className="btn btn-ghost" onClick={() => void rescan()} disabled={scanning}>
             {scanning ? 'Looking…' : <><IconRefresh /> Look again</>}
           </button>
         </div>
@@ -230,7 +230,7 @@ function EngineRow({ provider }: { provider: Row }) {
           )}
           <button
             className="btn btn-ghost sm"
-            onClick={runTest}
+            onClick={() => void runTest()}
             // nothing to test on an API-key engine with no key yet; local re-probes
             // its server and the CLI engine reports a clear "not found", so allow those
             disabled={busy || (!provider.available && !isLocal && !!provider.connect)}
@@ -239,7 +239,7 @@ function EngineRow({ provider }: { provider: Row }) {
             Test
           </button>
           {provider.available && provider.connect && !isLocal && (
-            <button className="btn btn-ghost sm" onClick={disconnect} disabled={busy} title={`Clear ${provider.connect.envKey}`}>
+            <button className="btn btn-ghost sm" onClick={() => void disconnect()} disabled={busy} title={`Clear ${provider.connect.envKey}`}>
               Disconnect
             </button>
           )}
@@ -294,7 +294,7 @@ function EngineRow({ provider }: { provider: Row }) {
               if (e.key === 'Enter') void applyUrl()
             }}
           />
-          <button className="btn btn-primary sm" onClick={applyUrl} disabled={busy || !urlValue.trim()}>
+          <button className="btn btn-primary sm" onClick={() => void applyUrl()} disabled={busy || !urlValue.trim()}>
             {busy ? '…' : 'Apply'}
           </button>
           <a className="engine-link" href={provider.connect.url} target="_blank" rel="noreferrer">
@@ -322,7 +322,7 @@ function EngineRow({ provider }: { provider: Row }) {
               if (e.key === 'Enter') void save()
             }}
           />
-          <button className="btn btn-primary sm" onClick={save} disabled={busy || !value.trim()}>
+          <button className="btn btn-primary sm" onClick={() => void save()} disabled={busy || !value.trim()}>
             {busy ? '…' : 'Connect'}
           </button>
           <a className="engine-link" href={provider.connect.url} target="_blank" rel="noreferrer">

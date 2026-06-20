@@ -118,7 +118,7 @@ export default function EmptyState() {
             accept="image/png,image/jpeg,image/webp,image/gif"
             multiple
             hidden
-            onChange={(e) => { attachFiles(e.target.files ?? []); e.currentTarget.value = '' }}
+            onChange={(e) => { void attachFiles(e.target.files ?? []); e.currentTarget.value = '' }}
           />
           <button
             className="chip-btn icon-only"

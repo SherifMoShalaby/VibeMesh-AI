@@ -1186,7 +1186,7 @@ export const useStore = create<VibeState>((set, get) => {
       const tail = chat.slice(idx + 1)
       if (tail.length === 0) return // already the tip — nothing to roll back
       setChatAndFuture(chat.slice(0, idx + 1), [...tail, ...activeFuture()])
-      adoptCode(target.code)
+      void adoptCode(target.code)
       persist()
     },
 
@@ -1197,7 +1197,7 @@ export const useStore = create<VibeState>((set, get) => {
       // roll back to any intermediate version again via its chip
       const newest = [...future].reverse().find((m) => m.code !== undefined)
       setChatAndFuture([...activeChat(), ...future], [])
-      if (newest?.code !== undefined) adoptCode(newest.code)
+      if (newest?.code !== undefined) void adoptCode(newest.code)
       persist()
     },
 
@@ -1249,7 +1249,7 @@ export const useStore = create<VibeState>((set, get) => {
         setChatHash(project.id)
         saveLastChatId(project.id)
       }
-      adoptCode(example.code)
+      void adoptCode(example.code)
     },
 
     setBed: (id) => {

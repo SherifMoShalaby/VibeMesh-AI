@@ -260,7 +260,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
       .filter((f): f is File => f !== null)
     if (files.length > 0) {
       e.preventDefault()
-      attachFiles(files)
+      void attachFiles(files)
     }
   }
 
@@ -306,7 +306,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
           onDrop={(e) => {
             e.preventDefault()
             setDragging(false)
-            attachFiles(e.dataTransfer.files)
+            void attachFiles(e.dataTransfer.files)
           }}
         >
           <span><DImage /> Drop a photo or sketch</span>
@@ -593,7 +593,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               accept="image/png,image/jpeg,image/webp,image/gif"
               multiple
               hidden
-              onChange={(e) => { attachFiles(e.target.files ?? []); e.target.value = '' }}
+              onChange={(e) => { void attachFiles(e.target.files ?? []); e.target.value = '' }}
             />
             <button className="chip-btn icon-only" aria-label="Attach a photo or sketch" title="Attach a photo or sketch — or paste (⌘V) / drag & drop" onClick={() => fileRef.current?.click()}>
               <DImage />
