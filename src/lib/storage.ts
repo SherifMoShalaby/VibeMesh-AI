@@ -85,6 +85,25 @@ export function migrateRecord(record: { schemaVersion?: number; projects?: unkno
   return { schemaVersion: SCHEMA_VERSION, projects }
 }
 
+/** Newest `updatedAt` across a project set (0 when empty / unstamped). */
+function maxUpdatedAt(projects: Project[]): number {
+  let max = 0
+  for (const p of projects) if (typeof p.updatedAt === 'number' && p.updatedAt > max) max = p.updatedAt
+  return max
+}
+
+/**
+ * Choose the durable source at boot. Normally the IndexedDB record wins, but the localStorage
+ * backup is refreshed on every tab-hide (`flushStorageOnHide`); if it captured STRICTLY newer
+ * edits than IDB, a final write was lost to the async-write window (tab closed/crashed before the
+ * coalesced IDB transaction landed) — prefer the backup so those last edits survive. Pure +
+ * deterministic for unit tests. (Caveat: a quota-slimmed backup has dropped chat images; recovering
+ * code+params+chat-text is still far better than losing the last session's work.)
+ */
+export function reconcileRecord(idb: Project[], backup: Project[]): Project[] {
+  return backup.length && maxUpdatedAt(backup) > maxUpdatedAt(idb) ? backup : idb
+}
+
 /* ── localStorage primitives (seed + fallback) ── */
 
 function readLocal(): Project[] {
@@ -161,7 +180,11 @@ export async function hydrateStorage(): Promise<void> {
     db = await openDb()
     const rec = await idbRead(db)
     if (rec) {
-      cache = migrateRecord(rec).projects
+      const idbProjects = migrateRecord(rec).projects
+      // recover a final write the async IDB transaction may have missed (captured by the
+      // tab-hide flush to the localStorage backup) when it is strictly newer than IDB.
+      cache = reconcileRecord(idbProjects, migrateRecord({ projects: readLocal() }).projects)
+      if (cache !== idbProjects) await idbWrite(db, { schemaVersion: SCHEMA_VERSION, projects: cache })
     } else {
       // first run on IndexedDB: seed from the legacy localStorage snapshot, persist, and
       // KEEP localStorage untouched as a backup (board: back up old keys before deletion).
@@ -208,6 +231,27 @@ export function saveProjects(projects: Project[]): void {
   cache = projects
   if (db) void flushToDb()
   else writeLocal(projects)
+}
+
+/**
+ * Tab-hide safety net: the coalescing IDB writer can have an in-flight/pending write when the tab
+ * is hidden or closed, losing the final edits. Synchronously mirror the latest cache to the
+ * localStorage backup (durable, no async window) and kick the async IDB write. On the next boot,
+ * `reconcileRecord` prefers the backup if it ended up strictly newer than IDB.
+ */
+export function flushStorageOnHide(): void {
+  if (!hydrated) return
+  writeLocal(cache)
+  if (db) void flushToDb()
+}
+
+// pagehide is the most reliable "tab is going away" signal (bfcache + real unload); visibilitychange
+// →hidden covers tab-switch / app-background on mobile. Guarded so the node test env (no DOM) is a no-op.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushStorageOnHide()
+  })
+  window.addEventListener('pagehide', flushStorageOnHide)
 }
 
 const LAST_CHAT_KEY = 'vibemesh.lastChat.v1'

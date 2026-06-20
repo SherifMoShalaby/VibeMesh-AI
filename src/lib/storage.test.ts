@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { migrateRecord, slimProjects, SCHEMA_VERSION } from './storage'
+import { migrateRecord, slimProjects, reconcileRecord, SCHEMA_VERSION } from './storage'
 import type { Project } from '../types'
 
 const proj = (over: Partial<Project> = {}): Project => ({
@@ -53,5 +53,24 @@ describe('slimProjects', () => {
     const [slim] = slimProjects([proj()])
     expect(slim.chatFuture).toBeUndefined()
     expect(slim.chat).toEqual([])
+  })
+})
+
+describe('reconcileRecord (boot recovery of a lost async write)', () => {
+  it('keeps IndexedDB when it is at least as fresh as the backup', () => {
+    const idb = [proj({ id: 'a', updatedAt: 100 })]
+    const backup = [proj({ id: 'a', updatedAt: 100 })]
+    expect(reconcileRecord(idb, backup)).toBe(idb)
+  })
+
+  it('prefers the backup when it captured strictly newer edits than IDB', () => {
+    const idb = [proj({ id: 'a', updatedAt: 100 })]
+    const backup = [proj({ id: 'a', updatedAt: 250 }), proj({ id: 'b', updatedAt: 250 })]
+    expect(reconcileRecord(idb, backup)).toBe(backup)
+  })
+
+  it('never prefers an empty backup over a populated IDB', () => {
+    const idb = [proj({ id: 'a', updatedAt: 100 })]
+    expect(reconcileRecord(idb, [])).toBe(idb)
   })
 })

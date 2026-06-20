@@ -19,6 +19,7 @@ import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
  *  chat while a brand-new window/tab (empty sessionStorage) starts fresh. */
 const SESSION_KEY = 'vibemesh.session.v1'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
+import { detectKitIntent, degenerateReason } from '../lib/storeDecisions'
 import { buildThreeMF } from '../lib/threeMF'
 import { packPlates } from '../lib/packPlates'
 import type { Example } from '../lib/examples'
@@ -235,38 +236,6 @@ function composeMatrix(p: [number, number, number], r: [number, number, number])
   const m21 = sx * cy
   const m22 = cx * cy
   return [m00, m10, m20, 0, m01, m11, m21, 0, m02, m12, m22, 0, p[0], p[1], p[2], 1]
-}
-
-/** Does the prompt ask for a buildable KIT (→ reinforce multi-part + connector rules)?
- *  Strong phrases only; deliberately ignores bare "part"/"lego" so singular requests
- *  ("a replacement part", "a spare gear") are NOT over-split into kits. */
-function detectKitIntent(text: string): boolean {
-  const t = text.toLowerCase()
-  return (
-    // "modular" alone is too weak — "modular fidget spinner" is ONE solid, not a kit;
-    // require a kit noun nearby (allowing an adjective between, e.g. "modular building blocks").
-    /\bkit\b|\bbuildable\b|\binterlock/.test(t) ||
-    /\bmodular\b[^.?!]{0,20}?\b(kit|set|system|parts|pieces|blocks?|bricks?)\b/.test(t) ||
-    /\b(snaps?|clips?)[\s-]?together\b/.test(t) ||
-    /\b(set|kit)\s+of\s+(parts|pieces)\b/.test(t) ||
-    /\bparts?\s+(that|which|to|so)\b/.test(t) ||
-    /\b(assemble|build)\b[^.?!]*\b(it|them|together)\b/.test(t)
-  )
-}
-
-/** A clean compile can still be unusable. Return a reason the render is degenerate,
- *  or null. checkBed is false for multi-part assembly previews (allowed to exceed
- *  the bed); empty/NaN/tiny checks always apply. */
-function degenerateReason(dims: StlBBox | null, bed: { x: number; y: number; z: number }, checkBed: boolean): string | null {
-  if (!dims) return 'the render produced no measurable geometry'
-  const { x, y, z } = dims
-  if (![x, y, z].every((n) => Number.isFinite(n))) return 'the bounding box is not finite (NaN/Infinity)'
-  if (Math.min(x, y, z) < 0.5) return `a dimension is implausibly small (${x}×${y}×${z} mm)`
-  // ANY dimension over the bed makes a single part unprintable — match printability.ts (`||`) and
-  // the viewport over-bed tint, so the auto-fix loop acts on the same "won't fit" the UI shows
-  // (the old `&&` only fired when all three exceeded, leaving e.g. a 60×60×400 part flagged-but-unfixed).
-  if (checkBed && (x > bed.x || y > bed.y || z > bed.z)) return `a dimension exceeds the ${bed.x}×${bed.y}×${bed.z} mm bed (${x}×${y}×${z} mm)`
-  return null
 }
 
 let abortController: AbortController | null = null
