@@ -11,6 +11,8 @@ import type { ParamValue, ScadParameter } from '../types'
 const CodeEditor = lazy(() => import('./CodeEditor'))
 import { DSliders, DCode, DChevDown, DChevRight, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning } from './icons'
 
+const TWEAK_HINT_KEY = 'vibemesh.hint.tweak.v1'
+
 /** clamp slider/number values to the param's step grid — keeps float noise out of state (UX-AUDIT F13) */
 function roundToStep(n: number, step: number | undefined): number {
   if (!step || !Number.isFinite(step) || step <= 0) return n
@@ -30,6 +32,15 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
 
   // teach the causality: the chat is writing the code right now
   const aiWritingCode = generating && streamText.includes('```')
+
+  // one-time explainer teaching the slider↔code↔chat relationship (UX-AUDIT F2)
+  const [tweakHintDone, setTweakHintDone] = useState(() => {
+    try { return localStorage.getItem(TWEAK_HINT_KEY) === '1' } catch { return false }
+  })
+  const dismissTweakHint = () => {
+    try { localStorage.setItem(TWEAK_HINT_KEY, '1') } catch { /* storage unavailable */ }
+    setTweakHintDone(true)
+  }
 
   // Param-group collapse state lives HERE (not in ParamsPanel) so it SURVIVES a Code↔Params
   // tab swap, which unmounts ParamsPanel. Groups seed COLLAPSED the first time each name is
@@ -76,7 +87,7 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
           className={`panel-tab${rightTab === 'params' ? ' active' : ''}`}
           onClick={() => setRightTab('params')}
         >
-          <DSliders /> Parameters
+          <DSliders /> Tweak
           {params.length > 0 && <span className="count">{params.length}</span>}
         </button>
         <button
@@ -90,6 +101,13 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
           <DCode /> Code{compileStatus === 'error' && <IconWarning />}
         </button>
       </div>
+
+      {rightTab === 'params' && params.length > 0 && !tweakHintDone && (
+        <div className="tweak-hint" role="note">
+          <span className="th-text">These sliders tweak the model's recipe — ask in chat to rewrite it.</span>
+          <button className="th-x" aria-label="Dismiss tip" onClick={dismissTweakHint}>×</button>
+        </div>
+      )}
 
       {rightTab === 'code' ? <CodePanel /> : <ParamsPanel collapsed={collapsed} onToggle={toggle} />}
     </section>

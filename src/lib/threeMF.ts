@@ -1,5 +1,21 @@
 import { zipSync, strToU8 } from 'fflate'
 
+/** Deterministic, print-friendly, visually-distinct per-part palette (sRGB #RRGGBBAA, opaque).
+ *  Keyed by part-enum order so a .vibemesh re-import reproduces identical swatches and each part
+ *  shows in its own color in Bambu/Prusa/Orca. (basematerials is core 3MF and carries the per-part
+ *  DISPLAY color; auto-assigning a distinct FILAMENT slot per part in Bambu needs the production/
+ *  color extension, not core displaycolor — a later add.) Cycles past 8 pieces. */
+const PART_PALETTE = [
+  '#4F8FBAFF', // blue
+  '#E8A33DFF', // amber
+  '#3DAE8BFF', // teal
+  '#D45D5DFF', // red
+  '#7E6BC4FF', // purple
+  '#9CB04AFF', // olive
+  '#D98AB5FF', // pink
+  '#6B7280FF', // slate
+]
+
 /**
  * Build a spec-conformant 3MF package (the format Bambu Studio / PrusaSlicer /
  * Orca open natively) from one or more binary STLs. Each part becomes a named
@@ -14,13 +30,19 @@ export function buildThreeMF(
 ): Uint8Array<ArrayBuffer> {
   const objects: string[] = []
   const items: string[] = []
+  const bases: string[] = []
+  const materialId = parts.length + 1 // basematerials group id — sits after every object id (1..N)
   let cursorX = 0
 
   parts.forEach((part, index) => {
     const { vertices, triangles, bbox } = indexMesh(part.stl)
     const id = index + 1
+    // per-part display color, deterministic by part-enum order — so a .vibemesh re-import reproduces
+    // the same swatches and each part shows in its own color in Bambu/Prusa/Orca. basematerials is
+    // core 3MF, so this needs no extension namespace (a distinct filament slot per part is a later add).
+    bases.push(`<base name="${escapeXml(part.name)}" displaycolor="${PART_PALETTE[index % PART_PALETTE.length]}"/>`)
     objects.push(
-      `<object id="${id}" name="${escapeXml(part.name)}" type="model"><mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh></object>`,
+      `<object id="${id}" name="${escapeXml(part.name)}" type="model" pid="${materialId}" pindex="${index}"><mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh></object>`,
     )
     if (part.place) {
       // explicit packed placement (per-plate slicer export): drop the piece's min corner onto the
@@ -55,7 +77,7 @@ export function buildThreeMF(
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">` +
     `<metadata name="Application">Vibemesh-AI</metadata>` +
-    `<resources>${objects.join('')}</resources>` +
+    `<resources>${bases.length ? `<basematerials id="${materialId}">${bases.join('')}</basematerials>` : ''}${objects.join('')}</resources>` +
     `<build>${items.join('')}</build>` +
     `</model>`
 

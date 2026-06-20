@@ -34,6 +34,16 @@ test.describe('in-chat composer + chrome', () => {
     await expect(modal).toBeHidden()
   })
 
+  test('the right panel teaches the slider↔code relationship (Tweak tab + one-time explainer)', async ({ page }) => {
+    await loadExample(page)
+    await expect(page.locator('.panel-tab', { hasText: 'Tweak' })).toBeVisible() // task-language label
+    const hint = page.locator('.tweak-hint') // one-time explainer (fresh context → shown)
+    await expect(hint).toBeVisible()
+    await expect(hint).toContainText(/recipe/i)
+    await hint.locator('.th-x').click()
+    await expect(hint).toBeHidden()
+  })
+
   test('the shading toggle cycles modes and keeps rendering', async ({ page }) => {
     await loadExample(page)
     const shade = page.locator('.tool-btn[aria-label="Cycle shading mode"]')
