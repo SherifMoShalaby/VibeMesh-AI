@@ -97,9 +97,10 @@ class OpenScadEngine {
     const job = this.active
     this.active = null
     job?.resolve(result)
-    // interactive render takes priority for responsiveness; otherwise drain background FIFO
+    // interactive render takes priority for responsiveness; otherwise drain the background FIFO
     const next = this.queued ?? this.bgQueue.shift() ?? null
     if (next) {
+      // clear the interactive slot only when that's what we picked (a bg job leaves queued untouched)
       if (next === this.queued) this.queued = null
       this.run(next)
     }

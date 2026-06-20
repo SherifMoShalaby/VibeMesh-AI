@@ -617,6 +617,15 @@ export const useStore = create<VibeState>((set, get) => {
         } else if (compileResult.ok) {
           const params = get().params
           const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
+          // is the currently-rendered view the ASSEMBLED all-view of a kit (not a per-piece view, and
+          // not deliberately exploded)? Then, like a single part, it should rest flat on the bed.
+          const pv = get().paramValues
+          const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
+          const explodeParam = params.find((p) => p.name === 'explode')
+          const isAssembledAllView =
+            isMultiPart &&
+            (pv['part'] ?? partParam?.defaultValue) === 'all' &&
+            !Number(explodeParam ? (pv['explode'] ?? explodeParam.defaultValue) : 0)
           const bed = resolveBed(get().bedId, get().customBed)
           const dims = get().modelDims
           const degenerate = degenerateReason(dims, bed, !isMultiPart)
@@ -653,6 +662,12 @@ export const useStore = create<VibeState>((set, get) => {
             // issues still unfixed — the part still gets dropped onto the bed.
             get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
             set({ compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
+          } else if (isAssembledAllView && dims && Math.abs(dims.minZ) > 0.5) {
+            // assembled kit preview sunk below / floating above the bed → drop onto z=0 so the all-view
+            // reads as sitting on the plate and a single-STL export of it prints flat. A per-piece view
+            // recompiles (meshTransform resets to null), and a deliberate explode (>0) is never fought.
+            get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
+            set({ compileNote: `Assembly rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for preview/export.` })
           }
         }
 
