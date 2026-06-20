@@ -77,6 +77,9 @@ const MIGRATIONS: Record<number, (projects: Project[]) => Project[]> = {}
 export function migrateRecord(record: { schemaVersion?: number; projects?: unknown } | null | undefined): ProjectsRecord {
   let version = typeof record?.schemaVersion === 'number' ? record.schemaVersion : 0
   let projects: Project[] = Array.isArray(record?.projects) ? (record!.projects as Project[]) : []
+  // A record written by a NEWER build (version > ours): do NOT down-stamp or drop fields we don't
+  // understand — preserve it verbatim. hydrate opens such a record read-only so we never clobber it.
+  if (version > SCHEMA_VERSION) return { schemaVersion: version, projects }
   while (version < SCHEMA_VERSION) {
     const step = MIGRATIONS[version]
     if (step) projects = step(projects)
@@ -171,6 +174,7 @@ function idbWrite(db: IDBDatabase, record: ProjectsRecord): Promise<void> {
 let cache: Project[] = []
 let hydrated = false
 let db: IDBDatabase | null = null // null → localStorage-only fallback mode
+let readOnly = false // true when the stored data is from a NEWER build — refuse to persist over it
 
 /** Open the DB, migrate, and fill the synchronous cache. Idempotent; awaited once at boot. */
 export async function hydrateStorage(): Promise<void> {
@@ -179,7 +183,13 @@ export async function hydrateStorage(): Promise<void> {
     if (typeof indexedDB === 'undefined') throw new Error('no indexedDB')
     db = await openDb()
     const rec = await idbRead(db)
-    if (rec) {
+    if (rec && typeof rec.schemaVersion === 'number' && rec.schemaVersion > SCHEMA_VERSION) {
+      // newer build wrote this profile — open it read-only so we never down-stamp / clobber data
+      // shapes this build doesn't understand (e.g. after a rollback).
+      readOnly = true
+      cache = Array.isArray(rec.projects) ? (rec.projects as Project[]) : []
+      console.warn(`[storage] data was written by a newer build (schema ${rec.schemaVersion} > ${SCHEMA_VERSION}); opening read-only to avoid clobbering it.`)
+    } else if (rec) {
       const idbProjects = migrateRecord(rec).projects
       // recover a final write the async IDB transaction may have missed (captured by the
       // tab-hide flush to the localStorage backup) when it is strictly newer than IDB.
@@ -216,8 +226,10 @@ async function flushToDb(): Promise<void> {
   try {
     await idbWrite(db, { schemaVersion: SCHEMA_VERSION, projects: cache })
   } catch (err) {
-    // durable fallback if a write fails mid-session — surface it so a silent degrade is visible
-    console.warn('[storage] IndexedDB write failed; falling back to localStorage', err)
+    // durable fallback if a write fails mid-session — surface it so a silent degrade is visible,
+    // and switch to localStorage-only for the rest of the session rather than thrashing a broken DB.
+    console.warn('[storage] IndexedDB write failed; switching to localStorage for this session', err)
+    db = null
     writeLocal(cache)
   }
   writing = false
@@ -229,6 +241,7 @@ async function flushToDb(): Promise<void> {
 
 export function saveProjects(projects: Project[]): void {
   cache = projects
+  if (readOnly) return // newer-build data — keep the session usable but never persist over it
   if (db) void flushToDb()
   else writeLocal(projects)
 }
@@ -240,7 +253,7 @@ export function saveProjects(projects: Project[]): void {
  * `reconcileRecord` prefers the backup if it ended up strictly newer than IDB.
  */
 export function flushStorageOnHide(): void {
-  if (!hydrated) return
+  if (!hydrated || readOnly) return
   writeLocal(cache)
   if (db) void flushToDb()
 }

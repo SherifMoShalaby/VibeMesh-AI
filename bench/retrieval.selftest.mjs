@@ -27,6 +27,10 @@ const POSITIVE = [
   ['a peg and socket press-fit joint', 'fit-pair'],
   ['a bistable snap-through clicker', 'bistable'],
   ['a push button with a spring return', 'button-return'],
+  // stylized FORM skills fire on the decorative form
+  ['a decorative crown for a trophy topper', 'crown-coronet'],
+  ['a chess rook with a crenellated battlement rim', 'hollow-crenellation'],
+  ['a holder with open prongs cradling a marble', 'open-prong-cradle'],
 ]
 
 const NEGATIVE = [
@@ -34,6 +38,13 @@ const NEGATIVE = [
   'a hexagonal coaster',
   'a simple desk nameplate',
   'a spring water bottle holder', // bare "spring" must NOT fire coil/leaf
+  'a turret enclosure for a raspberry pi', // bare "turret" must NOT fire battlement styling
+]
+
+// functional homographs: the styling skill must NOT fire, but the real mechanism still must
+const EXCLUDE = [
+  ['a crown gear for a hand drill', 'crown-coronet', 'spur-gear'],
+  ['a castle nut for an M6 bolt', 'hollow-crenellation', 'threaded-fastener-seat'],
 ]
 
 let fail = 0
@@ -50,6 +61,12 @@ for (const prompt of NEGATIVE) {
   const ok = got.length === 0
   if (!ok) fail++
   console.log(`  ${mark(ok)} (neg) "${prompt.slice(0, 44)}" → [${got.join(', ') || '—'}]  (want none)`)
+}
+for (const [prompt, banned, want] of EXCLUDE) {
+  const got = selectSkills({ prompt })
+  const ok = !got.includes(banned) && got.includes(want)
+  if (!ok) fail++
+  console.log(`  ${mark(ok)} (homograph) "${prompt.slice(0, 40)}" → [${got.join(', ') || '—'}]  (no ${banned}, has ${want})`)
 }
 
 // cap: a prompt that name-drops many mechanisms must not balloon the prompt

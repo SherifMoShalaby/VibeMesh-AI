@@ -1199,9 +1199,13 @@ const TRIGGERS = [
   ['button-return', /\bbutton|\bpush[\s-]?button|\bplunger|\bkeycap|\breturn[\s-]?spring/i],
   ['bistable', /\bbistable|\bsnap[\s-]?through|\bclicker\b|\bmono?stable/i],
   ['fit-pair', /\bfit[\s-]?pair|\bpeg\b|\bsockets?\b|\bdowel/i],
-  // stylized hard-surface FORM recipes (general, not chess-specific)
-  ['crown-coronet', /\bcrown|\bcoronet|\btiara|\bdiadem/i],
-  ['hollow-crenellation', /\bcrenell?at|\bbattlement|\bmerlon|\bturret|\bparapet|\brook\b|\bcastle\b/i],
+  // stylized hard-surface FORM recipes (general, not chess-specific). Negative lookaheads keep
+  // functional homographs out: "crown GEAR" (a real face gear) and "castle NUT" (a castellated
+  // fastener) must route to their mechanism skills, not the decorative form. Bare "turret" is
+  // dropped — it usually means a rotating mount / enclosure; "castle"/"battlement" still cover the
+  // battlement crown intent.
+  ['crown-coronet', /\bcrown(?!\s+gear)|\bcoronet|\btiara|\bdiadem/i],
+  ['hollow-crenellation', /\bcrenell?at|\bbattlement|\bmerlon|\bparapet|\brook\b|\bcastle\b(?!\s+nut)/i],
   ['open-prong-cradle', /\bprong|\bforked?\b|\bclaw\b|\bmitre|\bmiter|\bcradl/i],
 ]
 

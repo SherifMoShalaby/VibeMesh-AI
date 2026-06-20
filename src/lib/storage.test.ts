@@ -32,6 +32,13 @@ describe('migrateRecord', () => {
     expect(migrateRecord(undefined)).toEqual({ schemaVersion: SCHEMA_VERSION, projects: [] })
     expect(migrateRecord({ projects: 'not-an-array' as unknown as Project[] })).toEqual({ schemaVersion: SCHEMA_VERSION, projects: [] })
   })
+
+  it('does NOT down-stamp a record from a newer build (preserves its higher version, never drops data)', () => {
+    const future = { schemaVersion: SCHEMA_VERSION + 5, projects: [proj({ id: 'x' })] }
+    const out = migrateRecord(future)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION + 5) // preserved, not down-stamped to ours
+    expect(out.projects.map((p) => p.id)).toEqual(['x'])
+  })
 })
 
 describe('slimProjects', () => {
