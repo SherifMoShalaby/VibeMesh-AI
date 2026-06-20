@@ -35,7 +35,7 @@ import {
   DWrench,
 } from './icons'
 
-type ViewName = 'iso' | 'top' | 'front' | 'right'
+type ViewName = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right'
 
 interface ViewApi {
   setView: (v: ViewName) => void
@@ -318,6 +318,12 @@ export default function Viewport() {
         viewApi.current?.fit()
         markFittedRef.current()
       }
+      // BambuStudio/Orca standard-view hotkeys: 0=iso, 1=top, 2=bottom, 3=front, 4=back, 5=left, 6=right
+      const VIEW_KEYS: Record<string, ViewName> = { '0': 'iso', '1': 'top', '2': 'bottom', '3': 'front', '4': 'back', '5': 'left', '6': 'right' }
+      if (VIEW_KEYS[e.key]) {
+        viewApi.current?.setView(VIEW_KEYS[e.key])
+        markFittedRef.current()
+      }
       if (e.key === 'Escape') {
         setSelected(false)
         setMeasureMode(false)
@@ -589,7 +595,7 @@ export default function Viewport() {
                 {isAssemblyPreview ? 'Assembly preview' : currentPart ? `Part · ${currentPart}` : 'Model'}
               </span>
               <span className="ac-hint">
-                Drag orbit · <kbd>middle</kbd> pan · <kbd>scroll</kbd> zoom · <kbd>F</kbd> frame
+                Drag orbit · <kbd>right</kbd>/<kbd>middle</kbd> pan · <kbd>scroll</kbd> zoom · <kbd>F</kbd> fit · <kbd>0</kbd>–<kbd>6</kbd> views
               </span>
               {isAssemblyPreview && <span className="ac-hint">check each part below for bed fit</span>}
               {meshTransform && <span className="ac-hint">moved — placement is saved into exports</span>}
@@ -845,8 +851,9 @@ function matrixOf(t: { position: [number, number, number]; rotation: [number, nu
 type TBox = { box: THREE.Box3; size: THREE.Vector3; center: THREE.Vector3; minZ: number } | null
 
 function OrbitControlsZUp() {
-  // left-drag orbits, middle/right-drag pans (left/right/up/down), wheel zooms gently
-  // (three's default zoomSpeed=1 dollies a huge step per notch).
+  // BambuStudio/Orca-style: LEFT-drag rotates, MIDDLE/RIGHT-drag pans, wheel zooms TOWARD THE
+  // CURSOR (zoomToCursor — the slicer feel, vs three's zoom-to-centre default). zoomSpeed tamed
+  // (three's default=1 dollies a huge step per notch).
   return (
     <OrbitControls
       makeDefault
@@ -855,6 +862,7 @@ function OrbitControlsZUp() {
       minDistance={20}
       maxDistance={2000}
       zoomSpeed={0.5}
+      zoomToCursor
       mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN }}
     />
   )
@@ -890,10 +898,17 @@ function ViewRig({ tbox, apiRef }: { tbox: TBox; apiRef: React.MutableRefObject<
     }
     apiRef.current = {
       setView: (v) => {
-        if (v === 'iso') frame(new THREE.Vector3(1, -1, 0.75))
-        if (v === 'top') frame(new THREE.Vector3(0.001, -0.001, 1))
-        if (v === 'front') frame(new THREE.Vector3(0, -1, 0.0001))
-        if (v === 'right') frame(new THREE.Vector3(1, 0, 0.0001))
+        // the six standard orthographic views + iso (Z-up; dir = target→camera)
+        const dirs: Record<ViewName, THREE.Vector3> = {
+          iso: new THREE.Vector3(1, -1, 0.75),
+          top: new THREE.Vector3(0.001, -0.001, 1),
+          bottom: new THREE.Vector3(0.001, 0.001, -1),
+          front: new THREE.Vector3(0, -1, 0.0001),
+          back: new THREE.Vector3(0, 1, 0.0001),
+          left: new THREE.Vector3(-1, 0, 0.0001),
+          right: new THREE.Vector3(1, 0, 0.0001),
+        }
+        frame(dirs[v])
       },
       fit: () => {
         const dir = camera.position

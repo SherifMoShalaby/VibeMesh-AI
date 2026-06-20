@@ -85,6 +85,19 @@ test.describe('geometry pipeline (built-in example, no AI)', () => {
     await expect(page.locator('[role="menu"], .menu').first()).toBeVisible()
   })
 
+  test('BambuStudio-style view hotkeys (0–6) set standard views without error', async ({ page }) => {
+    await page.locator('.example-card', { hasText: 'Storage box' }).click()
+    await expect(page.locator('canvas')).toBeVisible({ timeout: 30_000 })
+    // the control hint advertises the scheme
+    await expect(page.locator('.ac-hint', { hasText: '0' })).toContainText('views')
+    // each standard-view hotkey applies cleanly and the canvas stays alive
+    for (const k of ['1', '2', '3', '4', '5', '6', '0']) {
+      await page.keyboard.press(k)
+      await page.waitForTimeout(80)
+    }
+    await expect(page.locator('canvas')).toBeVisible()
+  })
+
   test('the X-ray toggle flips the model transparent and back', async ({ page }) => {
     await page.locator('.example-card', { hasText: 'Storage box' }).click()
     await expect(page.locator('canvas')).toBeVisible({ timeout: 30_000 })
