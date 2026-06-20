@@ -6,7 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
-import { CUSTOM_BED_ID, PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
+import { resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
 import { analyzePrintability, type PrintabilityReport } from '../lib/printability'
 import { meshTint } from '../lib/viewportTint'
@@ -15,7 +15,7 @@ import { CAPTURE_VIEW_NAMES, canvasToChatImage, registerMultiCapture, registerVi
 import type { CaptureViewName } from '../lib/capture'
 import EmptyState from './EmptyState'
 import ViewportToolRail from './ViewportToolRail'
-import { CustomBedDialog } from './Dialogs'
+import ViewportHud from './ViewportHud'
 import {
   IconCenter,
   IconDrop,
@@ -23,9 +23,6 @@ import {
   IconWarning,
   DRotate,
   DMove,
-  DGauge,
-  DPrinter,
-  DChevDown,
   DUndo,
   DWrench,
 } from './icons'
@@ -47,35 +44,23 @@ export default function Viewport() {
   const stlVersion = useStore((s) => s.stlVersion)
   const fitVersion = useStore((s) => s.fitVersion)
   const compileStatus = useStore((s) => s.compileStatus)
-  const compileNote = useStore((s) => s.compileNote)
-  const compileMs = useStore((s) => s.compileMs)
   const generating = useStore((s) => s.generating)
   const bedId = useStore((s) => s.bedId)
-  const setBed = useStore((s) => s.setBed)
-  const quality = useStore((s) => s.quality)
-  const setQuality = useStore((s) => s.setQuality)
   const code = useStore((s) => s.code)
   const params = useStore((s) => s.params)
   const paramValues = useStore((s) => s.paramValues)
-  const selectPart = useStore((s) => s.selectPart)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const engine = useStore((s) => s.engine)
   const meshTransform = useStore((s) => s.meshTransform)
   const setMeshTransform = useStore((s) => s.setMeshTransform)
   const clearModel = useStore((s) => s.clearModel)
   const customBed = useStore((s) => s.customBed)
-  const setCustomBed = useStore((s) => s.setCustomBed)
-  const modelRemoved = useStore((s) => s.modelRemoved)
-  const vpUndo = useStore((s) => s.vpUndo)
   const viewMode = useStore((s) => s.viewMode)
   const pieces = useStore((s) => s.pieces)
   const slicing = useStore((s) => s.slicing)
   const slicerFailed = useStore((s) => s.slicerFailed)
-  const setViewMode = useStore((s) => s.setViewMode)
   const compilePieces = useStore((s) => s.compilePieces)
 
-  const setRightTab = useUi((s) => s.setRightTab)
-  const setMobileTab = useUi((s) => s.setMobileTab)
   const shading = useUi((s) => s.shading)
   const xray = useUi((s) => s.xray)
   const bedVisible = useUi((s) => s.bedVisible)
@@ -91,11 +76,9 @@ export default function Viewport() {
   const groupRef = useRef<THREE.Group>(null)
   const materialRef = useRef<THREE.MeshStandardMaterial>(null)
   const viewApi = useRef<ViewApi | null>(null)
-  const bedSelectRef = useRef<HTMLSelectElement>(null)
   const reduce = usePrefersReducedMotion()
 
   const bed = resolveBed(bedId, customBed)
-  const [bedDialog, setBedDialog] = useState(false)
 
   /* selection discoverability: hover highlight + one-time hint (UX-AUDIT F8) */
   const [hovered, setHovered] = useState(false)
@@ -569,182 +552,19 @@ export default function Viewport() {
 
       {/* ── UNIFIED HUD BAR ── */}
       {!showEmpty && (
-        <div className="hud-bar">
-          <div className="hud-seg">
-            <div className="hud-status">
-              {(() => {
-                if (compileStatus === 'error')
-                  return (
-                    <>
-                      <span className="status-dot err" />
-                      <span>Render failed</span>
-                      {/* the Code tab is force-shown on error (RightPanel codeVisible); jump straight to it */}
-                      <span className="time">· <button className="banner-link" onClick={() => { setRightTab('code'); setMobileTab('params') }}>open Code</button> to fix</span>
-                    </>
-                  )
-                if (compileStatus === 'compiling')
-                  return (<><span className="status-dot busy" /><span>Rendering…</span></>)
-                if (generating)
-                  return (<><span className="status-dot busy" /><span>AI is designing…</span></>)
-                if (modelRemoved && !model && compileStatus === 'idle')
-                  return (
-                    <>
-                      <span className="status-dot warn" />
-                      <span>Removed from view</span>
-                      <span className="time">· <button className="banner-link" onClick={vpUndo}>undo</button></span>
-                    </>
-                  )
-                if (compileStatus === 'ok' && compileNote)
-                  return (<><span className="status-dot warn" /><span>{compileNote}</span></>)
-                if (outOfView && model)
-                  return (
-                    <>
-                      <span className="status-dot warn" />
-                      <span>Grew out of view</span>
-                      <span className="time">· <button className="banner-link" onClick={doFit}>fit</button></span>
-                    </>
-                  )
-                if (model && compileStatus === 'ok')
-                  return (
-                    <>
-                      <span className="status-dot" />
-                      <span>Model ready</span>
-                      {compileMs !== null && <span className="time">· {fmtMs(compileMs)}</span>}
-                    </>
-                  )
-                return (<><span className="status-dot" /><span>Ready</span></>)
-              })()}
-            </div>
-          </div>
-
-          {/* Printability verdict sits right after status so the "will it print?" signal is
-              always visible — on mobile the HUD scrolls horizontally and this kept it off-screen. */}
-          {!platesView && printability && (
-            <div className="hud-seg hud-print">
-              <div className={`print-badge ${printability.level}`} tabIndex={0}>
-                <span className={`status-dot${printability.level === 'fail' ? ' err' : printability.level === 'warn' ? ' warn' : ''}`} />
-                <span className="pb-label">
-                  {printability.level === 'fail' ? "Won't print" : printability.level === 'warn' ? 'Print: caution' : 'Printable'}
-                </span>
-                <div className="print-pop" role="tooltip">
-                  <div className="pp-title">Printability — {isAssemblyPreview ? 'assembly preview' : 'this part'}</div>
-                  {printability.checks.map((c) => (
-                    <div key={c.id} className={`pp-row ${c.level}`}>
-                      <span className={`status-dot${c.level === 'fail' ? ' err' : c.level === 'warn' ? ' warn' : ''}`} />
-                      <span className="pp-text"><b>{c.label}</b> — {c.detail}</span>
-                    </div>
-                  ))}
-                  <div className="pp-note">Advisory · assumes the authored print orientation, 0.4mm nozzle.</div>
-                </div>
-              </div>
-            </div>
-          )}
-          {!platesView && tbox && (
-            <div className="hud-seg">
-              <div className={`hud-dims${overBed && !isAssemblyPreview ? ' over' : ''}`}>
-                <span className="dim-label">Bounds</span>
-                <span className="dim-val">
-                  {tbox.size.x.toFixed(1)}<span className="x">×</span>{tbox.size.y.toFixed(1)}<span className="x">×</span>{tbox.size.z.toFixed(1)}
-                </span>
-                <span className="unit">mm</span>
-              </div>
-            </div>
-          )}
-          {platesView && platePlan && (
-            <div className="hud-seg">
-              <div className={`hud-dims${platePlan.oversize.length ? ' over' : ''}`}>
-                <span className="dim-label">Plates</span>
-                <span className="dim-val">{platePlan.plates.length}</span>
-                <span className="unit">
-                  on {bed.x}×{bed.y}
-                  {platePlan.oversize.length > 0 && ` · ${platePlan.oversize.length} oversize`}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {partParam && (
-            <div className="hud-seg hud-parts">
-              <span className="dim-label">View</span>
-              <div className="part-tog" role="radiogroup" aria-label="Viewport view">
-                <button role="radio" aria-checked={!platesView} className={!platesView ? 'active' : ''} onClick={() => void setViewMode('single')}>Single</button>
-                <button role="radio" aria-checked={platesView} className={platesView ? 'active' : ''} disabled={slicing} onClick={() => void setViewMode('plates')}>
-                  Slicer
-                  {slicing && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
-                </button>
-              </div>
-              {!platesView && (
-                <div className="part-tog" role="radiogroup" aria-label="Active part">
-                  {(partParam.options ?? []).map((opt) => {
-                    const value = String(opt)
-                    const busy = currentPart === value && compileStatus === 'compiling'
-                    return (
-                      <button
-                        key={value}
-                        role="radio"
-                        aria-checked={currentPart === value}
-                        className={`${currentPart === value ? 'active' : ''}${busy ? ' busy' : ''}`}
-                        disabled={busy}
-                        onClick={() => void selectPart(value)}
-                      >
-                        {value === 'all' ? 'All' : value}
-                        {value === 'all' && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
-                        {busy && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="hud-seg hud-quality">
-            <label className="hud-select">
-              <span className="hs-label">Quality</span>
-              <span className="hs-val"><DGauge /><span>{QUALITY_PRESETS.find((q) => q.id === quality)?.label ?? 'Standard'}</span></span>
-              <span className="chev"><DChevDown /></span>
-              <select value={quality} onChange={(e) => setQuality(e.target.value)} title="Surface quality" aria-label="Quality">
-                {QUALITY_PRESETS.map((q) => (
-                  <option key={q.id} value={q.id}>{q.label}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="hud-seg hud-printer">
-            <label className="hud-select">
-              <span className="hs-label">Printer</span>
-              <span className="hs-val"><DPrinter /><span>{bed.label.split(' — ')[0].replace('Bambu Lab ', '').replace('Creality ', '')}</span></span>
-              <span className="chev"><DChevDown /></span>
-              <select
-                ref={bedSelectRef}
-                value={bed.id}
-                onChange={(e) => {
-                  if (e.target.value === CUSTOM_BED_ID) setBedDialog(true)
-                  else setBed(e.target.value)
-                }}
-                title="Print bed"
-                aria-label="Print bed"
-              >
-                {PRINTER_BEDS.map((b) => (
-                  <option key={b.id} value={b.id}>{b.label}</option>
-                ))}
-                <option value={CUSTOM_BED_ID}>{customBed ? `Custom — ${customBed.x}×${customBed.y}×${customBed.z}` : 'Custom…'}</option>
-              </select>
-            </label>
-          </div>
-        </div>
-      )}
-
-      {bedDialog && (
-        <CustomBedDialog
-          initial={customBed ?? { x: 220, y: 220, z: 250 }}
-          onSave={(b) => {
-            setCustomBed(b)
-            setBed(CUSTOM_BED_ID)
-            setBedDialog(false)
-          }}
-          onCancel={() => setBedDialog(false)}
+        <ViewportHud
+          hasModel={!!model}
+          tbox={tbox}
+          overBed={overBed}
+          bed={bed}
+          printability={printability}
+          platePlan={platePlan}
+          platesView={platesView}
+          partParam={partParam}
+          currentPart={currentPart}
+          isAssemblyPreview={isAssemblyPreview}
+          outOfView={outOfView}
+          doFit={doFit}
         />
       )}
 
@@ -752,10 +572,6 @@ export default function Viewport() {
     </main>
     </section>
   )
-}
-
-function fmtMs(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
 function matrixOf(t: { position: [number, number, number]; rotation: [number, number, number] }): THREE.Matrix4 {
