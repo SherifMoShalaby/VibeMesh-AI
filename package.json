@@ -37,6 +37,7 @@
     "lint": "eslint .",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e": "playwright test",
     "start": "NODE_ENV=production node server/index.mjs",
     "preview": "vite preview",
     "bench": "node bench/run.mjs",
@@ -74,6 +75,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.0",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.14",
