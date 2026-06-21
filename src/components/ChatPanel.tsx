@@ -11,8 +11,11 @@ import ModelMenu from './ModelMenu'
 import type { ChatImage, ChatMessage } from '../types'
 import { IconWarning, DImage, DSend, DPlus, DUser, DSparkFill, DCode, DRestore, DRefresh, DChevLeft, DLayers } from './icons'
 
-const MAX_IMAGES = 3
+const MAX_IMAGES = 10
 const IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/
+
+/** data URL for a chat image (base64 payload carries no `data:` prefix). */
+const imgSrc = (img: ChatImage) => `data:${img.mediaType};base64,${img.data}`
 
 // human labels for the applied-patterns chip; fall back to Title-cased id for any skill
 const SKILL_LABELS: Record<string, string> = {
@@ -42,6 +45,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const activeId = useStore((s) => s.activeId)
   const generating = useStore((s) => s.generating)
   const streamText = useStore((s) => s.streamText)
+  const genTimeoutMs = useStore((s) => s.health?.genTimeoutMs)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const regenerateWithSkills = useStore((s) => s.regenerateWithSkills)
   const skillStats = useStore((s) => s.skillStats)
@@ -68,6 +72,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
 
   const [input, setInput] = useState('')
   const [images, setImages] = useState<ChatImage[]>([])
+  const [lightbox, setLightbox] = useState<string | null>(null) // data URL of the image opened full-size
   const [dragging, setDragging] = useState(false)
   const [histIdx, setHistIdx] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
@@ -187,6 +192,14 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     return () => clearInterval(timer)
   }, [generating])
 
+  // Esc closes the full-size image preview
+  useEffect(() => {
+    if (!lightbox) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightbox(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightbox])
+
   const promptHistory = chat.filter((m) => m.role === 'user' && !m.action && m.text.trim()).map((m) => m.text)
 
   const onInputKeyDown = (e: React.KeyboardEvent) => {
@@ -267,6 +280,13 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   // hide the code block from the live stream — the code lands in the code panel
   const streamProse = streamText.split('```')[0].trim()
   const streamingCode = streamText.includes('```')
+  // in-chat timeout bar: how much of the configured generation timeout has elapsed (reassures the
+  // user a long Opus/high-effort run is still going, not frozen). `elapsed` ticks every second above.
+  const genCapSec = Math.max(1, Math.round((genTimeoutMs ?? 60 * 60 * 1000) / 1000))
+  const genPct = Math.min(100, (elapsed / genCapSec) * 100)
+  const genRemainSec = Math.max(0, genCapSec - elapsed)
+  const genRemainLabel = genRemainSec >= 60 ? `~${Math.ceil(genRemainSec / 60)} min left` : `${genRemainSec}s left`
+  const genElapsedClock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
 
   // number restorable versions so history reads as history (UX-AUDIT F17)
   const versionOf = new Map<string, number>()
@@ -310,6 +330,13 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
           }}
         >
           <span><DImage /> Drop a photo or sketch</span>
+        </div>
+      )}
+
+      {lightbox && (
+        <div className="img-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="reference, full size" onClick={(e) => e.stopPropagation()} />
+          <button className="img-lightbox-x" aria-label="Close image preview" title="Close (Esc)" onClick={() => setLightbox(null)}>×</button>
         </div>
       )}
 
@@ -363,7 +390,17 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                   <span className="msg-time">{fmtTime(msg.createdAt)}</span>
                 </div>
                 {msg.images?.map((img, j) => (
-                  <img key={j} className="msg-img" src={`data:${img.mediaType};base64,${img.data}`} alt="reference" />
+                  <img
+                    key={j}
+                    className="msg-img"
+                    src={imgSrc(img)}
+                    alt="reference"
+                    role="button"
+                    tabIndex={0}
+                    title="Click to view full size"
+                    onClick={() => setLightbox(imgSrc(img))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightbox(imgSrc(img)) } }}
+                  />
                 ))}
                 {msg.action ? (
                   <div className="tag" title={msg.text}><DCode /> {msg.action}</div>
@@ -388,7 +425,17 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                 <span className="msg-time">{fmtTime(msg.createdAt)}</span>
               </div>
               {msg.images?.map((img, j) => (
-                <img key={j} className="msg-img" src={`data:${img.mediaType};base64,${img.data}`} alt="reference" />
+                <img
+                  key={j}
+                  className="msg-img"
+                  src={imgSrc(img)}
+                  alt="reference"
+                  role="button"
+                  tabIndex={0}
+                  title="Click to view full size"
+                  onClick={() => setLightbox(imgSrc(img))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightbox(imgSrc(img)) } }}
+                />
               ))}
               <div className="msg-body">{msg.text}</div>
               {msg.skillNote && (
@@ -553,7 +600,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
         <div className="attach-row">
           {images.map((img, i) => (
             <span key={i} className="attach-thumb">
-              <img src={`data:${img.mediaType};base64,${img.data}`} alt={`attachment ${i + 1}`} />
+              <img src={imgSrc(img)} alt={`attachment ${i + 1}`} title="Click to view full size" onClick={() => setLightbox(imgSrc(img))} />
               <button aria-label="Remove attached image" title="Remove attached image" onClick={() => setImages(images.filter((_, j) => j !== i))}>×</button>
             </span>
           ))}
@@ -571,6 +618,23 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
         <button className="refine-bar" onClick={refine} title="Snapshot the model from a fixed angle and ask the AI to compare it against your reference photo, then fix the differences">
           Compare with my photo &amp; fix
         </button>
+      )}
+
+      {generating && (
+        <div
+          className={`gen-progress${genRemainSec <= 120 ? ' low' : ''}`}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(genPct)}
+          aria-label="Time elapsed before the generation timeout"
+        >
+          <div className="gen-progress-track"><div className="gen-progress-fill" style={{ width: `${genPct}%` }} /></div>
+          <div className="gen-progress-label">
+            <span className="streaming">Working… {genElapsedClock}</span>
+            <span className="gen-progress-remaining">{genRemainLabel} before timeout</span>
+          </div>
+        </div>
       )}
 
       <div className="composer">
@@ -619,7 +683,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
             <ModelMenu />
             <span className="spacer" />
             {generating ? (
-              <button className="send-btn stop" onClick={abortGeneration}>Stop</button>
+              <button className="send-btn stop" onClick={() => abortGeneration()}>Stop</button>
             ) : (
               <button
                 className="send-btn"
