@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { BedSize } from '../types'
 import { useUi } from '../state/ui'
+import { useFocusTrap } from '../lib/useFocusTrap'
 import { IconX } from './icons'
 
 /** Esc closes — capture phase so the viewport's Esc-to-deselect never sees it. */
@@ -34,9 +35,11 @@ export function ConfirmDialog({
   onCancel: () => void
 }) {
   useEscape(onCancel)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef)
   return (
     <div className="scrim" onClick={onCancel}>
-      <div className="modal modal-sm" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} className="modal modal-sm" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div className="mh-text">
             <h2>{title}</h2>
@@ -111,6 +114,8 @@ export function CustomBedDialog({
   onCancel: () => void
 }) {
   useEscape(onCancel)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dialogRef)
   const [x, setX] = useState(String(initial.x))
   const [y, setY] = useState(String(initial.y))
   const [z, setZ] = useState(String(initial.z))
@@ -124,7 +129,7 @@ export function CustomBedDialog({
 
   return (
     <div className="scrim" onClick={onCancel}>
-      <div className="modal modal-sm" role="dialog" aria-modal="true" aria-label="Custom bed size" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} className="modal modal-sm" role="dialog" aria-modal="true" aria-label="Custom bed size" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div className="mh-text">
             <h2>Custom bed size</h2>

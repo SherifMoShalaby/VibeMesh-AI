@@ -20,6 +20,19 @@ export default defineConfig([
     },
   },
   {
+    // Type-aware lint for the app source — just the two high-value promise bug-catchers (an
+    // unawaited/unhandled promise on this async-heavy app is a real fault), not the full
+    // recommendedTypeChecked strict set. Scoped to src/ so bench/test .ts stay on the base config.
+    files: ['src/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+    },
+  },
+  {
     // plain-JS ESM backend + bench scripts (Node, run directly) — baseline coverage
     files: ['**/*.mjs'],
     extends: [js.configs.recommended],

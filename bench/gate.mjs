@@ -46,10 +46,21 @@ const round2 = (n) => Math.round(n * 100) / 100
 export const TRANSPORT_RE =
   /rate.?limit|429|too many requests|overloaded|\b529\b|http 5\d\d|timeout|timed out|econnreset|socket hang up|network|fetch failed|aborted|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN/i
 
+/**
+ * Render/geometry faults are the MODEL's fault (too-heavy → render timeout, non-manifold, empty
+ * geometry), never the network's — even though "timed out"/"aborted" also appear in transport
+ * errors. They MUST stay 'generation' so a heavy/broken model can't be excused as environmental.
+ * Checked BEFORE TRANSPORT_RE so it wins the overlap.
+ */
+export const RENDER_FAULT_RE =
+  /render timed out|too heavy to render|too heavy for|not 2-manifold|2-manifold|top level object is empty|csg normaliz|object may not be|empty geometry|produced no geometry|unable to convert/i
+
 /** Classify an error string. Returns 'transport' | 'generation' | null (no error). */
 export function classifyError(err) {
   if (!err) return null
-  return TRANSPORT_RE.test(String(err)) ? 'transport' : 'generation'
+  const s = String(err)
+  if (RENDER_FAULT_RE.test(s)) return 'generation' // a render fault is never transport, even if it says "timed out"
+  return TRANSPORT_RE.test(s) ? 'transport' : 'generation'
 }
 
 /** Placement score fallback for older baselines/results that predate the field. */
@@ -130,6 +141,13 @@ export const NUMERIC = [
   { key: 'interferenceScore', label: 'intf', tol: 0.1 }, // cutter-vs-structure overlap on generated parts (advisory until baselined)
   { key: 'skillScore', label: 'skill', tol: 0.5 }, // per-skill validator on live output; binary + noisy → wide tol until repeat-sampling
 ]
+
+/** Deterministic geometry scorers that MUST be present on any compiled run of the task they apply to.
+ *  If one was numeric in the baseline but null on a compiled current run, the gold/scorer broke — that
+ *  is INCONCLUSIVE (exit 2), not a silent pass. Excludes the conditional fidelity metrics
+ *  (asymmetry/modules/assembled/interference/skill), which legitimately vanish when the model omits a
+ *  tagged feature or the _debug probe, so they'd false-positive. */
+const LOST_SCORABILITY_KEYS = new Set(['dimScore', 'iou', 'placementScore', 'buildabilityScore'])
 
 /**
  * Pure comparison: baseline (already-normalized metric rows) vs current (raw
@@ -225,6 +243,12 @@ export function evaluate(baseline, current, opts = {}) {
       for (const { key, label, tol } of NUMERIC) {
         const b = bm[key]
         const c = cm[key]
+        // lost scorability: a core scorer the baseline measured is null on a SUCCESSFUL (compiled)
+        // current run — the gold/scorer broke, not a quality change. Inconclusive, never a silent pass.
+        if (LOST_SCORABILITY_KEYS.has(key) && typeof b === 'number' && c == null && cm.compiled === true) {
+          cfg.push(`${id}: ${label} lost scorability (baseline ${b} → null on a compiled run — gold/scorer broke); re-run or fix`)
+          continue
+        }
         if (typeof b !== 'number' || typeof c !== 'number') continue
         const delta = round2(c - b)
         if (delta < -tol) reg.push(`${id}: ${label} ${b}→${c} (${delta}, tol ${tol})`)

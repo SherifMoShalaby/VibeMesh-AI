@@ -670,14 +670,14 @@ base_d = 20;      // [10:1:50]
 
 ring_r = orb_d/2 + gap + prong_w/2;   // prongs sit a gap away from the orb surface
 module prong(a) rotate([0, 0, a]) hull() {
-  translate([base_d/3, 0, 0]) cylinder(d = prong_w, h = 0.1, $fn = 20);
-  translate([ring_r, 0, prong_h]) cylinder(d = prong_w, h = 0.1, $fn = 20);
+  translate([base_d/3, 0, 0]) cylinder(d = prong_w, h = 0.1);
+  translate([ring_r, 0, prong_h]) cylinder(d = prong_w, h = 0.1);
 }
 
 union() {
-  cylinder(d = base_d, h = 4, $fn = 48);                       // base
+  cylinder(d = base_d, h = 4);                                 // base — smooth body, let the quality preset drive $fn
   for (i = [0:prongs-1]) prong(360/prongs*i);                  // open prongs — separated by gap, never meet
-  translate([0, 0, prong_h]) sphere(d = orb_d, $fn = 40);      // the cradled orb (its own body)
+  translate([0, 0, prong_h]) sphere(d = orb_d);               // the cradled orb (its own body) — preset-smoothed
 }
 `
 
@@ -1199,9 +1199,13 @@ const TRIGGERS = [
   ['button-return', /\bbutton|\bpush[\s-]?button|\bplunger|\bkeycap|\breturn[\s-]?spring/i],
   ['bistable', /\bbistable|\bsnap[\s-]?through|\bclicker\b|\bmono?stable/i],
   ['fit-pair', /\bfit[\s-]?pair|\bpeg\b|\bsockets?\b|\bdowel/i],
-  // stylized hard-surface FORM recipes (general, not chess-specific)
-  ['crown-coronet', /\bcrown|\bcoronet|\btiara|\bdiadem/i],
-  ['hollow-crenellation', /\bcrenell?at|\bbattlement|\bmerlon|\bturret|\bparapet|\brook\b|\bcastle\b/i],
+  // stylized hard-surface FORM recipes (general, not chess-specific). Negative lookaheads keep
+  // functional homographs out: "crown GEAR" (a real face gear) and "castle NUT" (a castellated
+  // fastener) must route to their mechanism skills, not the decorative form. Bare "turret" is
+  // dropped — it usually means a rotating mount / enclosure; "castle"/"battlement" still cover the
+  // battlement crown intent.
+  ['crown-coronet', /\bcrown(?!\s+gear)|\bcoronet|\btiara|\bdiadem/i],
+  ['hollow-crenellation', /\bcrenell?at|\bbattlement|\bmerlon|\bparapet|\brook\b|\bcastle\b(?!\s+nut)/i],
   ['open-prong-cradle', /\bprong|\bforked?\b|\bclaw\b|\bmitre|\bmiter|\bcradl/i],
 ]
 

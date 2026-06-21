@@ -10,6 +10,14 @@ const loader = new STLLoader()
  *  while keeping box corners and chamfers hard. */
 const CREASE_ANGLE_DEG = 35
 
+/** Above this triangle count, the synchronous vertex-weld + creased-normal pass (run in a
+ *  React useMemo on the main thread, on every successful compile AND every param tweak) janks
+ *  the frame for hundreds of ms right when the model appears. Heavy boolean assemblies are
+ *  exactly the case that overruns it, and at this density facets are already sub-pixel — so we
+ *  fall back to cheap flat normals on the raw geometry rather than freeze the tab. Smaller
+ *  models (the common case) keep the high-quality smoothed path. */
+const WELD_TRIANGLE_LIMIT = 250_000
+
 export interface ModelGeometry {
   geometry: THREE.BufferGeometry
   /** size in mm along x/y/z */
@@ -26,11 +34,22 @@ export function parseStl(buffer: ArrayBuffer): ModelGeometry {
   // per-FACE normals, so computeVertexNormals alone just reproduces those facets. Drop the
   // face normals (they'd otherwise block position-based welding), weld coincident vertices,
   // then derive angle-thresholded smooth normals so curves read smooth but hard edges stay.
+  // (Above WELD_TRIANGLE_LIMIT the weld+crease is too slow for the main thread — see below.)
   raw.deleteAttribute('normal')
-  const welded = mergeVertices(raw)
-  const geometry = toCreasedNormals(welded, THREE.MathUtils.degToRad(CREASE_ANGLE_DEG))
-  raw.dispose()
-  welded.dispose()
+  const rawTris = raw.getAttribute('position').count / 3
+  let geometry: THREE.BufferGeometry
+  if (rawTris > WELD_TRIANGLE_LIMIT) {
+    // too heavy to weld+crease on the main thread without a visible stall — keep the raw
+    // (non-indexed) geometry and give it cheap per-face normals. Facets are sub-pixel at
+    // this density, so the visual cost is negligible next to the avoided freeze.
+    raw.computeVertexNormals()
+    geometry = raw
+  } else {
+    const welded = mergeVertices(raw)
+    geometry = toCreasedNormals(welded, THREE.MathUtils.degToRad(CREASE_ANGLE_DEG))
+    raw.dispose()
+    welded.dispose()
+  }
   geometry.computeBoundingBox()
   const box = geometry.boundingBox!
   const size = {

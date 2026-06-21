@@ -1,32 +1,92 @@
 import { create } from 'zustand'
 import type { BedSize, ChatMessage, CompileResult, ParamValue, ParamValues, Project, ScadParameter } from '../types'
-import { PRINTER_BEDS, QUALITY_PRESETS, resolveBed } from '../types'
-import { buildDefines, extractIntent, extractScadBlock, parseParameters, stripIntentLine } from '../lib/params'
-import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
-import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
-import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
-import { ComputeBudget } from '../lib/openscad/budget'
-import { scoreCandidate, pickBestIndex, BEST_OF_N_COUNT, type CandidateSignals } from '../lib/bestOfN'
+import { PRINTER_BEDS, QUALITY_PRESETS } from '../types'
+import { buildDefines, parseParameters } from '../lib/params'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
-import { fetchHealth, streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type HealthInfo, type SkillIssue } from '../lib/api'
+import { fetchHealth, type HealthInfo } from '../lib/api'
 import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
-import { buildShareFile, parseShareFile, serializeShareFile, shareFileToProject } from '../lib/shareFile'
-import { loadSkillStats, saveSkillStats, recordUses, recordRemovals, type SkillStats } from '../lib/skillStats'
+import { parseShareFile, shareFileToProject } from '../lib/shareFile'
+import { loadSkillStats, type SkillStats } from '../lib/skillStats'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
+import { createExportActions } from './exportActions'
+import { createPlacementActions } from './placementActions'
+import { createGenerationActions } from './generationActions'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
  *  chat while a brand-new window/tab (empty sessionStorage) starts fresh. */
 const SESSION_KEY = 'vibemesh.session.v1'
-import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
-import { buildThreeMF } from '../lib/threeMF'
-import { packPlates } from '../lib/packPlates'
+import { stlBBox, type StlBBox } from '../lib/stl'
 import type { Example } from '../lib/examples'
 
 export type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error'
 
+/** Per-project generation + geometry runtime (concurrent-chats). The store's top-level
+ *  generating/streamText/stl/params/… fields are a live PROJECTION of `sessions[activeId]`
+ *  (see writeSession), so every component reads the active project unchanged while MULTIPLE projects
+ *  each run their own generation/render in the background. A render routes into its owning session
+ *  and paints the viewport only when that project is active. NOT persisted (runtime only; an in-flight
+ *  generation already doesn't survive reload). */
+export interface Session {
+  // generation runtime
+  generating: boolean
+  streamText: string
+  streamHasCode: boolean
+  /** epoch ms the current run started (drives the timeout bar; per-project for the switcher later) */
+  genStartedAt: number | null
+  /** this run's abort handle — replaces the former module-level singleton in generationActions */
+  abortController: AbortController | null
+  // editor working copy (Phase 2: per-project so switching restores it without re-parsing)
+  code: string
+  params: ScadParameter[]
+  paramValues: ParamValues
+  // compile / geometry (Phase 2: cached per-project so switch-back is instant, no recompile)
+  compileStatus: CompileStatus
+  compileError: string | null
+  compileLog: string | null
+  compileMs: number | null
+  compileNote: string | null
+  degradedToDraft: boolean
+  modelDims: StlBBox | null
+  stl: ArrayBuffer | null
+  stlVersion: number
+  fitVersion: number
+  meshTransform: { position: [number, number, number]; rotation: [number, number, number] } | null
+  modelRemoved: boolean
+  vpPast: VpSnapshot[]
+  vpFuture: VpSnapshot[]
+  // slicer
+  viewMode: 'single' | 'plates'
+  pieces: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] | null
+  slicing: boolean
+  slicingToken: number
+  slicerFailed: string[]
+}
+
+/** Session fields that MIRROR a top-level store field (everything except the session-only
+ *  genStartedAt/abortController). The single source for the writeSession mirror + snapshot/restore,
+ *  so a newly added projected field can't be forgotten. */
+const SESSION_PROJECTED = [
+  'generating', 'streamText', 'streamHasCode',
+  'code', 'params', 'paramValues',
+  'compileStatus', 'compileError', 'compileLog', 'compileMs', 'compileNote', 'degradedToDraft',
+  'modelDims', 'stl', 'stlVersion', 'fitVersion', 'meshTransform', 'modelRemoved', 'vpPast', 'vpFuture',
+  'viewMode', 'pieces', 'slicing', 'slicingToken', 'slicerFailed',
+] as const satisfies ReadonlyArray<keyof Session>
+const SESSION_PROJECTED_SET: ReadonlySet<string> = new Set(SESSION_PROJECTED)
+
+function blankSession(): Session {
+  return {
+    generating: false, streamText: '', streamHasCode: false, genStartedAt: null, abortController: null,
+    code: '', params: [], paramValues: {},
+    compileStatus: 'idle', compileError: null, compileLog: null, compileMs: null, compileNote: null, degradedToDraft: false,
+    modelDims: null, stl: null, stlVersion: 0, fitVersion: 0, meshTransform: null, modelRemoved: false, vpPast: [], vpFuture: [],
+    viewMode: 'single', pieces: null, slicing: false, slicingToken: 0, slicerFailed: [],
+  }
+}
+
 /** snapshot of everything a viewport placement action (move/rotate/delete) can change */
-interface VpSnapshot {
+export interface VpSnapshot {
   stl: ArrayBuffer | null
   modelDims: StlBBox | null
   meshTransform: { position: [number, number, number]; rotation: [number, number, number] } | null
@@ -37,7 +97,7 @@ interface VpSnapshot {
   modelRemoved: boolean
 }
 
-interface VibeState {
+export interface VibeState {
   projects: Project[]
   activeId: string | null
   health: HealthInfo | null
@@ -102,11 +162,17 @@ interface VibeState {
 
   generating: boolean
   streamText: string
+  /** true once the streaming reply has emitted its first ```fence — a flip-once flag the
+   *  parameter panel subscribes to (instead of raw streamText) so it doesn't re-render per token */
+  streamHasCode: boolean
   /** project id awaiting its one auto-refine pass (set when the first image-grounded
    *  model renders) → ChatPanel fires only when it matches the active project, so a
    *  lingering flag can never misfire on a different project */
   pendingAutoRefineFor: string | null
   consumeAutoRefine: () => void
+  /** per-project generation runtime, keyed by projectId. The top-level generating/streamText/
+   *  streamHasCode fields above are a live projection of `sessions[activeId]` (see writeSession). */
+  sessions: Record<string, Session>
 
   bedId: string
   /** user-defined bed dimensions, used when bedId === 'custom' */
@@ -125,7 +191,8 @@ interface VibeState {
   /** correct the applied-patterns chip: regenerate the current design with skill retrieval
    *  OVERRIDDEN by `skillIds` (selectSkills skipped for that turn). Advisory — never blocks. */
   regenerateWithSkills: (msgId: string, skillIds: string[]) => Promise<void>
-  abortGeneration: () => void
+  /** stop a generation — the given project's, or the active one's. */
+  abortGeneration: (pid?: string) => void
   setParamValue: (name: string, value: ParamValue) => void
   /** select a multi-part piece (or 'all'): compiles immediately (no slider debounce) and
    *  re-fits the camera — a part switch is navigation, not a slider tweak */
@@ -185,38 +252,12 @@ function loadCustomBed(): BedSize | null {
   return null
 }
 
-const vpSnapshotOf = (s: VibeState): VpSnapshot => ({
-  stl: s.stl,
-  modelDims: s.modelDims,
-  meshTransform: s.meshTransform,
-  compileStatus: s.compileStatus,
-  compileError: s.compileError,
-  compileNote: s.compileNote,
-  compileMs: s.compileMs,
-  modelRemoved: s.modelRemoved,
-})
-
-function sameTransform(a: VibeState['meshTransform'], b: VibeState['meshTransform']): boolean {
-  if (a === b) return true
-  if (!a || !b) return false
-  return a.position.every((v, i) => v === b.position[i]) && a.rotation.every((v, i) => v === b.rotation[i])
-}
-
-const VP_HISTORY_LIMIT = 30
 
 // Render watchdogs (ms). Primary interactive renders use the client default; the
 // Draft fallback gets a tight budget so a heavy model fails fast (primary+draft,
 // not 90s+90s), while deliberate one-shot exports get extra headroom.
 const RENDER_TIMEOUT_DRAFT = 20_000
 const RENDER_TIMEOUT_EXPORT = 90_000
-// Per-attempt anti-hang backstop for the AI stream. Deliberately a generous ABSOLUTE
-// cap, NOT an idle-on-delta timer: thinking engines (claude-code/Opus) stream NO deltas
-// for minutes during extended thinking, so a delta-reset idle timer would falsely abort
-// them. This only catches a truly-stalled stream (dead connection / crashed server)
-// without cutting a legitimately-slow generation; on fire it surfaces a recoverable
-// error and does NOT auto-retry (a stalled engine usually stalls again).
-const GEN_TIMEOUT = 1_200_000 // 20 min
-
 /** column-major 4×4 from position + XYZ-order euler rotation (radians) */
 function composeMatrix(p: [number, number, number], r: [number, number, number]): number[] {
   const [cx, cy, cz] = r.map(Math.cos)
@@ -234,42 +275,7 @@ function composeMatrix(p: [number, number, number], r: [number, number, number])
   return [m00, m10, m20, 0, m01, m11, m21, 0, m02, m12, m22, 0, p[0], p[1], p[2], 1]
 }
 
-/** Does the prompt ask for a buildable KIT (→ reinforce multi-part + connector rules)?
- *  Strong phrases only; deliberately ignores bare "part"/"lego" so singular requests
- *  ("a replacement part", "a spare gear") are NOT over-split into kits. */
-function detectKitIntent(text: string): boolean {
-  const t = text.toLowerCase()
-  return (
-    // "modular" alone is too weak — "modular fidget spinner" is ONE solid, not a kit;
-    // require a kit noun nearby (allowing an adjective between, e.g. "modular building blocks").
-    /\bkit\b|\bbuildable\b|\binterlock/.test(t) ||
-    /\bmodular\b[^.?!]{0,20}?\b(kit|set|system|parts|pieces|blocks?|bricks?)\b/.test(t) ||
-    /\b(snaps?|clips?)[\s-]?together\b/.test(t) ||
-    /\b(set|kit)\s+of\s+(parts|pieces)\b/.test(t) ||
-    /\bparts?\s+(that|which|to|so)\b/.test(t) ||
-    /\b(assemble|build)\b[^.?!]*\b(it|them|together)\b/.test(t)
-  )
-}
-
-/** A clean compile can still be unusable. Return a reason the render is degenerate,
- *  or null. checkBed is false for multi-part assembly previews (allowed to exceed
- *  the bed); empty/NaN/tiny checks always apply. */
-function degenerateReason(dims: StlBBox | null, bed: { x: number; y: number; z: number }, checkBed: boolean): string | null {
-  if (!dims) return 'the render produced no measurable geometry'
-  const { x, y, z } = dims
-  if (![x, y, z].every((n) => Number.isFinite(n))) return 'the bounding box is not finite (NaN/Infinity)'
-  if (Math.min(x, y, z) < 0.5) return `a dimension is implausibly small (${x}×${y}×${z} mm)`
-  if (checkBed && x > bed.x && y > bed.y && z > bed.z) return `every dimension exceeds the ${bed.x}×${bed.y}×${bed.z} mm bed (${x}×${y}×${z} mm)`
-  return null
-}
-
-let abortController: AbortController | null = null
 let paramTimer: ReturnType<typeof setTimeout> | null = null
-// how many auto-refine passes each project has fired — a complex reference needs
-// more than one blind correction. Counter incremented when a pass STARTS
-// (consumeAutoRefine), so an aborted pass doesn't burn budget. Tunable.
-const MAX_AUTO_REFINE = 2 // total auto-refine passes per project (was a single pass)
-const autoRefinePass = new Map<string, number>()
 function clearParamTimer() {
   if (paramTimer) {
     clearTimeout(paramTimer)
@@ -351,45 +357,46 @@ export const useStore = create<VibeState>((set, get) => {
     if (failed.length) set({ compileNote: `Slicer: ${failed.length} part(s) failed to render — ${failed.join(', ')}` })
   }
 
-  async function compile(code: string, defines: string[]): Promise<CompileResult> {
+  /** Compile FOR a specific project (defaults to the active one). Results route into sessions[pid]
+   *  via writeSession, which paints the viewport ONLY when pid is active — so a background chat's
+   *  render lands in its own session (shown instantly on switch-back) and never disturbs the
+   *  foreground. The render goes through that project's lane in the worker (no cross-chat supersede). */
+  async function compile(code: string, defines: string[], pid: string = get().activeId ?? ''): Promise<CompileResult> {
+    if (!pid) return { ok: false, error: 'empty' }
+    // bring the active project's session current before mutating it (placement/slider writes go to
+    // the top level directly, so the session can lag); a background project's session is authoritative.
+    if (pid === get().activeId) snapshotSession(pid)
     if (!code.trim()) {
-      set({ compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
+      writeSession(pid, { compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
       return { ok: false, error: 'empty' }
     }
-    // results landing after a project switch must not touch state (stale-render race)
-    const projectAtStart = get().activeId
-    const stale = () => get().activeId !== projectAtStart
-
-    // a re-render replaces the geometry — placement history would restore stale meshes.
-    // bump slicingToken so any in-flight compilePieces() abandons its now-stale pack rather
-    // than racing this compile and clobbering the pieces:null invalidation below.
-    set({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false, pieces: null, slicerFailed: [], slicingToken: get().slicingToken + 1 })
+    // a re-render replaces the geometry — reset THIS project's viewport history + bump its slicing
+    // token so its own in-flight compilePieces() abandons a now-stale pack.
+    writeSession(pid, (cur) => ({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false, pieces: null, slicerFailed: [], slicingToken: cur.slicingToken + 1 }))
     // adaptive curve quality: kill any global $fn, drive $fa/$fs from the preset.
-    // Per-call $fn (hex sockets etc.) is untouched by these root-scope overrides.
     const preset = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
-    let result: CompileResult = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)])
-    // superseded/stale → a sentinel the caller treats as "ignore" (no auto-repair)
-    if (result.error === 'superseded' || stale()) return { ok: false, error: 'superseded' }
+    let result: CompileResult = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], undefined, { projectId: pid })
+    // a same-chat newer render superseded this one → ignore (don't overwrite the newer result).
+    // NOTE: no "active changed" drop anymore — writeSession routes to sessions[pid] and paints only
+    // if pid is still active, so a switch mid-compile preserves the result in its owning session.
+    if (result.error === 'superseded') return { ok: false, error: 'superseded' }
 
     // heavy-model fallback: a timeout at higher quality gets one retry at Draft
     let note: string | null = null
     if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-      set({ compileStatus: 'compiling' })
-      result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
-      if (result.error === 'superseded' || stale()) return { ok: false, error: 'superseded' }
-      if (result.ok) {
-        note = `model too heavy for ${preset.label} — rendered at Draft`
-      }
+      writeSession(pid, { compileStatus: 'compiling' })
+      result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT, { projectId: pid })
+      if (result.error === 'superseded') return { ok: false, error: 'superseded' }
+      if (result.ok) note = `model too heavy for ${preset.label} — rendered at Draft`
     }
 
     if (result.ok && result.stl) {
-      set((s) => ({
+      writeSession(pid, (cur) => ({
         compileStatus: 'ok',
         stl: result.stl!,
-        stlVersion: s.stlVersion + 1,
-        // auto-fit the camera only when the viewport was empty — never yank the
-        // user's framing mid-iteration (slider tweaks, refine passes)
-        fitVersion: s.stl === null ? s.fitVersion + 1 : s.fitVersion,
+        stlVersion: cur.stlVersion + 1,
+        // auto-fit the camera only when this project's viewport was empty — never yank the framing mid-iteration
+        fitVersion: cur.stl === null ? cur.fitVersion + 1 : cur.fitVersion,
         modelDims: stlBBox(result.stl!),
         meshTransform: null, // fresh geometry → reset viewport arrangement
         compileError: null,
@@ -399,14 +406,7 @@ export const useStore = create<VibeState>((set, get) => {
         compileMs: result.ms ?? null,
       }))
     } else {
-      set({
-        compileStatus: 'error',
-        compileError: result.error ?? 'Unknown OpenSCAD error',
-        compileNote: null,
-        degradedToDraft: false,
-        compileLog: result.log ?? null,
-        compileMs: result.ms ?? null,
-      })
+      writeSession(pid, { compileStatus: 'error', compileError: result.error ?? 'Unknown OpenSCAD error', compileNote: null, degradedToDraft: false, compileLog: result.log ?? null, compileMs: result.ms ?? null })
     }
     return result
   }
@@ -414,13 +414,6 @@ export const useStore = create<VibeState>((set, get) => {
   function activeChat(): ChatMessage[] {
     const { projects, activeId } = get()
     return projects.find((p) => p.id === activeId)?.chat ?? []
-  }
-
-  function setChat(chat: ChatMessage[]) {
-    const { projects, activeId } = get()
-    const updated = projects.map((p) => (p.id === activeId ? { ...p, chat, updatedAt: Date.now() } : p))
-    set({ projects: updated })
-    saveProjects(updated)
   }
 
   /** the rolled-past version tail (redo stack) for the active project */
@@ -446,7 +439,8 @@ export const useStore = create<VibeState>((set, get) => {
    * default, the code wins), and only if the carried value is still in range/valid.
    * Without `carryFrom` (rollback / load example) every param resets to its default.
    */
-  function adoptCode(code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }): Promise<CompileResult> {
+  function adoptCode(code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }, pid: string = get().activeId ?? ''): Promise<CompileResult> {
+    if (!pid) return Promise.resolve({ ok: false, error: 'empty' })
     const params = parseParameters(code)
     const paramValues: ParamValues = {}
     for (const p of params) {
@@ -462,341 +456,99 @@ export const useStore = create<VibeState>((set, get) => {
       }
       paramValues[p.name] = value
     }
-    set({ code, params, paramValues })
-    return compile(code, buildDefines(params, paramValues))
+    // route the editor working copy into the project's session (mirrors to the top level if active)
+    writeSession(pid, { code, params, paramValues })
+    return compile(code, buildDefines(params, paramValues), pid)
   }
 
-  /** automatic repair budget, SHARED across the contract-format retry and the
-   *  render/degenerate/structural auto-fix so they can never stack unboundedly.
-   *  Off for weak local engines. 2 lets a grounded second attempt land. */
-  const MAX_AUTO_FIX = 2
-
-  /** A2 — verifier-guided best-of-N. Fan out N generations, compile + score each on REFERENCE-FREE
-   *  signals (compile-clean dominates, then degenerate, then structural/dim issue counts), and return
-   *  the winner's reply text + skill report. Candidates stream SILENTLY (one status line, not N
-   *  interleaved token streams); each compiles once through the bounded BACKGROUND queue under a
-   *  shared per-request budget, so the N compiles can't blow the single worker's watchdog. */
-  async function runBestOfN(
-    engine: string,
-    messages: ReturnType<typeof toApiMessages>,
-    baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'>,
-    ctx: { bed: { x: number; y: number; z: number }; stated: ReturnType<typeof clampStatedDimensions>['dimensions'] },
-  ): Promise<{ full: string; skillReport: SkillIssue[]; appliedSkillIds: string[]; dropped: string[] }> {
-    const n = BEST_OF_N_COUNT
-    const reports = Array.from({ length: n }, () => ({ skillIds: [] as string[], dropped: [] as string[], report: [] as SkillIssue[] }))
-    let done = 0
-    set({ streamText: `Generating ${n} candidates, keeping the best…` })
-    const fulls = await Promise.all(
-      Array.from({ length: n }, (_, i) =>
-        streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info } })
-          .then((text) => { set({ streamText: `Generated ${++done}/${n} candidates…` }); return text })
-          .catch(() => ''),
-      ),
-    )
-    const budget = new ComputeBudget({ wallMs: 60_000, maxRenders: n + 2 })
-    const signals: CandidateSignals[] = []
-    for (const text of fulls) {
-      const { code, blockCount } = extractScadBlock(text)
-      if (code === null || blockCount > 1) {
-        signals.push({ hasScad: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
-        continue
-      }
-      const params = parseParameters(code)
-      const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
-      let compiled = false
-      let degenerate = false
-      let dimMismatches = 0
-      if (budget.canSpend()) {
-        const r = await openscad.compile(code, [], 30_000, { background: true })
-        budget.spend()
-        if (r.ok && r.stl) {
-          compiled = true
-          const dims = stlBBox(r.stl)
-          degenerate = degenerateReason(dims, ctx.bed, !isMultiPart) !== null
-          dimMismatches = ctx.stated.length ? dimDiscrepancies(dims, ctx.stated).length : 0
+  /** The single funnel for per-project generation-runtime writes. Updates sessions[pid] and, when
+   *  pid is the ACTIVE project, mirrors the projected fields (generating/streamText/streamHasCode)
+   *  to the top level so every existing component reader stays unchanged. The patch may be an object
+   *  or an updater `(cur) => patch` (the latter reads the live session — used for streaming append). */
+  function writeSession(pid: string, patch: Partial<Session> | ((cur: Session) => Partial<Session>)) {
+    set((s) => {
+      const cur = s.sessions[pid] ?? blankSession()
+      const p = typeof patch === 'function' ? patch(cur) : patch
+      const merged = { ...cur, ...p }
+      const next: Partial<VibeState> = { sessions: { ...s.sessions, [pid]: merged } }
+      // mirror ONLY the patched projected fields to the top level (not all) so a gen write can't
+      // clobber a placement/slider write that went to the top level directly.
+      if (pid === s.activeId) {
+        const mirror = next as unknown as Record<string, unknown>
+        const src = merged as unknown as Record<string, unknown>
+        for (const k of Object.keys(p)) {
+          if (SESSION_PROJECTED_SET.has(k)) mirror[k] = src[k]
         }
       }
-      signals.push({ hasScad: true, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
-    }
-    const best = pickBestIndex(signals.map(scoreCandidate))
-    set({ streamText: '' })
-    return { full: fulls[best], skillReport: reports[best].report, appliedSkillIds: reports[best].skillIds, dropped: reports[best].dropped }
+      return next
+    })
+  }
+  function genSession(pid: string): Session {
+    return get().sessions[pid] ?? blankSession()
   }
 
-  /** stream one assistant turn for the chat as it stands (shared by send + retry) */
-  async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0, opts: { skillIds?: string[] } = {}) {
-    set({ generating: true, streamText: '' })
-    abortController = new AbortController()
-    const ctrl = abortController
-    let genTimedOut = false
-    let genTimer: ReturnType<typeof setTimeout> | undefined
-    try {
-      const engine = get().engine
-      if (!engine) throw new Error('No AI engine is available — connect one (see the engine menu next to Send).')
-      // bind history to the active engine's context window (token budget), not a fixed count
-      const provider = get().health?.providers.find((p) => p.id === engine)
-      const budgetTokens = historyBudgetTokens(provider, get().health?.systemTokens)
-      const messages = toApiMessages(activeChat(), { budgetTokens, maxImages: imageBudgetFor(provider) })
-      const bed = resolveBed(get().bedId, get().customBed)
-      // anti-hang: abort a truly-stalled stream after GEN_TIMEOUT. Guards ONLY the
-      // network stream and is cleared the instant it resolves, so it can never fire
-      // during the downstream compile / auto-fix recursion (which awaits child runs).
-      genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, GEN_TIMEOUT)
-      // carry the PRIOR turn's intent forward so a follow-up that drops the mechanism
-      // keyword ("make it bigger") still retrieves the same skill (server prefers its
-      // domainTags over the regex). First turn → none → server-side selectSkills from prompt.
-      const priorIntent = [...activeChat()].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
-      // coarse first-turn source hint from the latest user turn's image roles (tiles →
-      // multiview, ≥2 globals → multiobject); the model's own sourceType takes over after.
-      const latestImgs = [...activeChat()].reverse().find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)?.images ?? []
-      const sourceHint = latestImgs.some((im) => im.role === 'tile')
-        ? ('multiview' as const)
-        : latestImgs.filter((im) => (im.role ?? 'global') === 'global').length >= 2
-          ? ('multiobject' as const)
-          : undefined
-      let skillReport: SkillIssue[] = []
-      let appliedSkillIds: string[] = []
-      let droppedSkillIds: string[] = []
-      const isKit = detectKitIntent(nameSource.text)
-      // opts.skillIds (from the applied-patterns chip's correction) OVERRIDES retrieval for this turn
-      // — the server assembler injects exactly those fragments, no selectSkills.
-      const baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'> = {
-        signal: ctrl.signal,
-        model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
-        effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
-        context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: isKit, intent: priorIntent, skillIds: opts.skillIds, sourceHint },
-      }
-      // A2 — verifier-guided best-of-N: only on the FIRST attempt of a hard request (kit or image),
-      // only when the user opted in (off by default), never on local engines or auto-fix re-entries.
-      // The winner feeds the SAME downstream below; OFF → the single-stream path is unchanged.
-      const useBestOfN = attempt === 0 && useUi.getState().bestOfN && !engine.startsWith('local:') && (isKit || latestImgs.length > 0)
-      let full: string
-      if (useBestOfN) {
-        const stated = clampStatedDimensions(priorIntent?.statedDimensions).dimensions
-        const winner = await runBestOfN(engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated })
-        full = winner.full
-        skillReport = winner.skillReport
-        appliedSkillIds = winner.appliedSkillIds
-        droppedSkillIds = winner.dropped
-      } else {
-        full = await streamGenerate(engine, messages, {
-          ...baseOpts,
-          onDelta: (delta) => set((s) => ({ streamText: s.streamText + delta })),
-          onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
-        })
-      }
-      clearTimeout(genTimer)
-      genTimer = undefined
-      const { code, prose: rawProse, blockCount } = extractScadBlock(full)
-      // parse the advisory INTENT line, then strip it so the user sees clean PLAN prose
-      const intent = extractIntent(rawProse)
-      const prose = stripIntentLine(rawProse)
+  /** Capture the active project's current top-level projected fields into its session — call BEFORE
+   *  switching away. Placement/slider/compile writes go to the top level directly, so a session can be
+   *  stale between switches; this brings it current exactly when we're about to leave it. */
+  function snapshotSession(pid: string) {
+    set((s) => {
+      const cur = s.sessions[pid] ?? blankSession()
+      const top = s as unknown as Record<string, unknown>
+      const snap: Record<string, unknown> = {}
+      for (const k of SESSION_PROJECTED) snap[k] = top[k]
+      return { sessions: { ...s.sessions, [pid]: { ...cur, ...snap } } }
+    })
+  }
+  /** Restore a project's cached session into the top-level projection (instant switch-back, no
+   *  recompile). Returns false when the session has nothing rendered yet (never visited / never
+   *  compiled) so the caller falls back to the parse+compile path. */
+  function restoreSession(pid: string): boolean {
+    const sess = get().sessions[pid] ?? blankSession()
+    // ALWAYS project the generation fields first — so a stale `generating` flag from the project we
+    // just left (which may still be running in the background) never bleeds onto the new view, and
+    // switching TO a background-generating project correctly shows its spinner + stream.
+    set({ generating: sess.generating, streamText: sess.streamText, streamHasCode: sess.streamHasCode })
+    if (sess.compileStatus === 'idle' && !sess.stl) return false // no cached geometry → caller compiles
+    const src = sess as unknown as Record<string, unknown>
+    const patch: Record<string, unknown> = {}
+    for (const k of SESSION_PROJECTED) patch[k] = src[k]
+    // re-frame the restored model, matching today's switch-then-recompile (which re-fit the camera)
+    patch.fitVersion = get().fitVersion + 1
+    set(patch as Partial<VibeState>)
+    return true
+  }
 
-      // Contract enforcement: the reply MUST contain exactly ONE scad block. On 0
-      // or >1 blocks, ask once for a single complete program — Opus 4.8 asks more
-      // often and a prose-only / multi-block reply adopts nothing useful. Shares
-      // the auto-fix attempt budget so it can never stack, and is off for weak
-      // local engines (which can't reliably honor the format anyway).
-      const contractViolated = code === null || blockCount > 1
-      if (contractViolated && attempt < MAX_AUTO_FIX && engine && !engine.startsWith('local:')) {
-        setChat([...activeChat(), { id: newId(), role: 'assistant', text: prose || 'Returning the program again.' }])
-        const nudge =
-          code === null
-            ? 'Your last reply contained no OpenSCAD code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program, per the response format.'
-            : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
-        setChat([...activeChat(), { id: newId(), role: 'user', text: nudge, action: 'Fix format' }])
-        await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1, opts)
-        return
-      }
-
-      // Contract re-asks exhausted (or a local engine that can't honor the format):
-      // surface a clear, recoverable message instead of silently showing prose with no
-      // model. Both cloud engines have been seen to plan correctly but omit the block.
-      if (code === null) {
-        const tries = engine && !engine.startsWith('local:') ? ` after ${MAX_AUTO_FIX + 1} attempts` : ''
-        setChat([
-          ...activeChat(),
-          {
-            id: newId(),
-            role: 'assistant',
-            text: (prose ? prose + '\n\n' : '') + `I couldn't produce a single OpenSCAD code block${tries}. Try rephrasing or simplifying the request, or switch engines.`,
-            error: true,
-          },
-        ])
-        return
-      }
-
-      const isFirstModel = code !== null && !activeChat().some((m) => m.code)
-      // advisory: surface the retrieved skills' mechanism check (verified-skill validators)
-      // next to the model — never blocks, just flags printability issues the model slipped.
-      // Kept off `text` so it does NOT re-enter the model's next-turn history.
-      const skillNote = skillReport.length
-        ? skillReport.flatMap((r) => r.issues).join('\n')
-        : undefined
-      const assistantMsg: ChatMessage = {
-        id: newId(),
-        role: 'assistant',
-        text: prose || 'Here is the model.',
-        code: code ?? undefined,
-        skillNote,
-        appliedSkillIds: appliedSkillIds.length ? appliedSkillIds : undefined,
-        droppedSkillIds: droppedSkillIds.length ? droppedSkillIds : undefined,
-        intent: intent ?? undefined,
-      }
-      setChat([...activeChat(), assistantMsg])
-      // local skill-health signal: count this application (paired with chip removals below)
-      if (appliedSkillIds.length) {
-        const ns = recordUses(get().skillStats, appliedSkillIds)
-        set({ skillStats: ns })
-        saveSkillStats(ns)
-      }
-      // teach the loop once per project (UX-AUDIT F9): point at sliders / chat / export
-      if (isFirstModel) {
-        setChat([
-          ...activeChat(),
-          {
-            id: newId(),
-            role: 'assistant',
-            text: 'Tip: fine-tune it with the sliders on the right, ask me for changes here, or use Export when it looks good.',
-          },
-        ])
-      }
-      if (code) {
-        // carry the user's still-valid slider tweaks across the iteration
-        const compileResult = await adoptCode(code, { params: get().params, values: get().paramValues })
-        persist()
-        // auto-name the project: prefer the user's words; for app-initiated
-        // image-only sends use the AI's description instead of canned text
-        const project = get().projects.find((p) => p.id === get().activeId)
-        if (project && project.name === 'Untitled part') {
-          const source = nameSource.action && prose ? prose : nameSource.text
-          const name = source.replace(/\s+/g, ' ').trim()
-          persist({ name: name.length > 42 ? name.slice(0, 39) + '…' : name || 'Untitled part' })
-        }
-
-        // ── Recovery loop. Repair not only hard render errors but clean-but-WRONG
-        // renders (empty/NaN/tiny/over-bed) and structural assembly faults. Gated on
-        // the ACTUAL compile result (not the racing compileStatus), capped by the
-        // shared attempt budget, off for weak local engines. Off-bed single parts get
-        // a deterministic drop-to-bed instead of spending an AI turn.
-        const eng = get().engine
-        const canRepair = attempt < MAX_AUTO_FIX && useUi.getState().autoRepair && !!eng && !eng.startsWith('local:')
-        if (canRepair && !compileResult.ok && compileResult.error && compileResult.error !== 'superseded' && compileResult.error !== 'empty') {
-          const fixText = buildAutoFixPrompt(compileResult.error)
-          setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
-          await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
-        } else if (compileResult.ok) {
-          const params = get().params
-          const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
-          // is the currently-rendered view the ASSEMBLED all-view of a kit (not a per-piece view, and
-          // not deliberately exploded)? Then, like a single part, it should rest flat on the bed.
-          const pv = get().paramValues
-          const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
-          const explodeParam = params.find((p) => p.name === 'explode')
-          const isAssembledAllView =
-            isMultiPart &&
-            (pv['part'] ?? partParam?.defaultValue) === 'all' &&
-            !Number(explodeParam ? (pv['explode'] ?? explodeParam.defaultValue) : 0)
-          const bed = resolveBed(get().bedId, get().customBed)
-          const dims = get().modelDims
-          const degenerate = degenerateReason(dims, bed, !isMultiPart)
-          // assembly/mechanism faults = cheap client structural checks PLUS the retrieved
-          // skills' validators (server-side, received via skillReport). The advisory
-          // skillNote already shows them; here they also drive a BOUNDED auto-fix (gated on
-          // the autoRepair toggle + the shared MAX_AUTO_FIX budget, so it can't loop).
-          const assembly = [...structuralReport(code, params).issues, ...skillReport.flatMap((r) => r.issues)]
-          // C1 — runtime interference proxy: a cutter slicing protected structure (a bore through a
-          // clutch tube, a pocket into a bearing seat) is invisible to compile/dim/IoU but caught here
-          // by rendering the hidden _debug probe (positives vs negatives) and measuring their overlap.
-          // The signal is REFERENCE-FREE, so it drives the SAME bounded auto-fix turn as the structural
-          // checks. Gated on canRepair + the probe contract so the two extra probe renders only run for
-          // a kit that can act on the result; a superseded/failed probe yields null → no false issue.
-          if (canRepair && hasDebugContract(code)) {
-            // shared per-generation ceiling so the probe renders (and future best-of-N) degrade
-            // gracefully instead of compounding latency through the single-flight worker.
-            const budget = new ComputeBudget({ wallMs: 30_000, maxRenders: 4 })
-            const interference = await interferenceIssue(code, budget)
-            if (interference) assembly.push(interference)
-          }
-          if (canRepair && (degenerate || assembly.length)) {
-            const parts: string[] = []
-            if (degenerate) parts.push(`The program rendered but the result is not usable: ${degenerate}. Return a corrected complete program with sensible millimeter dimensions.`)
-            if (assembly.length)
-              parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly/mechanism problems, then return the corrected complete program:\n${assembly.map((i) => `- ${i}`).join('\n')}`)
-            const fixText = parts.join('\n\n')
-            setChat([...activeChat(), { id: newId(), role: 'user', text: fixText, action: 'Auto-fix' }])
-            await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
-          } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
-            // off-bed single part → deterministic drop-to-bed (no AI turn). The export
-            // bakes meshTransform, so the exported/printed part sits flat on z=0. This also
-            // catches the case where the auto-fix budget is exhausted with assembly/skill
-            // issues still unfixed — the part still gets dropped onto the bed.
-            get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
-            set({ compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
-          } else if (isAssembledAllView && dims && Math.abs(dims.minZ) > 0.5) {
-            // assembled kit preview sunk below / floating above the bed → drop onto z=0 so the all-view
-            // reads as sitting on the plate and a single-STL export of it prints flat. A per-piece view
-            // recompiles (meshTransform resets to null), and a deliberate explode (>0) is never fought.
-            get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
-            set({ compileNote: `Assembly rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for preview/export.` })
-          }
-        }
-
-        // Auto-fire BOUNDED refine passes after an image-grounded model renders —
-        // the refine loop is the main accuracy mechanism but is opt-in/undiscoverable.
-        // Re-arms after the FIRST model AND after each refine result (action 'Refine
-        // pass'), up to MAX_AUTO_REFINE passes — but NOT on 'Auto-fix'/'Fix format'
-        // re-entries (those carry code so isFirstModel is false and their action
-        // differs), so error-repair turns never burn a refine pass. ChatPanel consumes
-        // the flag once the canvas has painted; consumeAutoRefine increments the count.
-        if (compileResult.ok && (isFirstModel || nameSource.action === 'Refine pass')) {
-          const triggerImages = [...activeChat()].reverse().find((m) => m.role === 'user')?.images
-          const provider = get().health?.providers.find((p) => p.id === eng)
-          const aid = get().activeId
-          // proxy-gated convergence: when the model read off stated dimensions, auto-refine ONLY
-          // while the model-INDEPENDENT dimension check still flags a mismatch — stop the moment the
-          // render matches the read-off dims (don't burn fixed passes). No stated dims → the proxy
-          // has nothing to check, so keep the visual-fidelity refine.
-          const stated = clampStatedDimensions(intent?.statedDimensions).dimensions
-          const proxyWantsRefine = stated.length === 0 || dimDiscrepancies(get().modelDims, stated).length > 0
-          if (
-            triggerImages?.length &&
-            provider?.vision &&
-            !!eng &&
-            !eng.startsWith('local:') &&
-            useUi.getState().autoRepair &&
-            aid &&
-            proxyWantsRefine &&
-            (autoRefinePass.get(aid) ?? 0) < MAX_AUTO_REFINE
-          ) {
-            set({ pendingAutoRefineFor: aid })
-          }
-        }
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        // Distinguish a timeout-abort from a user Stop: the timeout surfaces a
-        // recoverable error; a user Stop stays silent.
-        if (genTimedOut) {
-          setChat([
-            ...activeChat(),
-            {
-              id: newId(),
-              role: 'assistant',
-              text: `Generation timed out after ${Math.round(GEN_TIMEOUT / 60000)} min — the engine may be overloaded or unreachable. Try again, or switch to a faster engine / lower effort.`,
-              error: true,
-            },
-          ])
-        }
-      } else {
-        const message = err instanceof Error ? err.message : String(err)
-        setChat([...activeChat(), { id: newId(), role: 'assistant', text: message, error: true }])
-      }
-    } finally {
-      if (genTimer) clearTimeout(genTimer)
-      abortController = null
-      set({ generating: false, streamText: '' })
-    }
+  // projectId-BOUND twins of the generation helpers (the param-less versions above resolve via
+  // get().activeId at call time — unsafe across a generation's many awaits once switching is allowed).
+  // runGeneration uses ONLY these with its captured pid. Functional set() reads live state at apply
+  // time so two concurrent durable writers can't clobber each other (the lost-write fix).
+  function activeChatFor(pid: string): ChatMessage[] {
+    return get().projects.find((p) => p.id === pid)?.chat ?? []
+  }
+  function setChatFor(pid: string, chat: ChatMessage[]) {
+    set((s) => ({ projects: s.projects.map((p) => (p.id === pid ? { ...p, chat, updatedAt: Date.now() } : p)) }))
+    saveProjects(get().projects)
+  }
+  function setChatAndFutureFor(pid: string, chat: ChatMessage[], chatFuture: ChatMessage[]) {
+    set((s) => ({ projects: s.projects.map((p) => (p.id === pid ? { ...p, chat, chatFuture, updatedAt: Date.now() } : p)) }))
+    saveProjects(get().projects)
+  }
+  function persistFor(pid: string, partial?: Partial<Project>) {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== pid) return p
+        // the ACTIVE project also captures the live editor code/paramValues (as persist() does);
+        // a background project persists only the explicit partial (its code lives in its session).
+        const live = pid === s.activeId ? { code: s.code, paramValues: s.paramValues } : {}
+        return { ...p, ...live, ...partial, updatedAt: Date.now() }
+      }),
+    }))
+    saveProjects(get().projects)
+  }
+  function adoptCodeFor(pid: string, code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }): Promise<CompileResult> {
+    // adopt + compile FOR pid: the active project paints the viewport; a background project's render
+    // lands in its own session (shown instantly on switch-back), via writeSession's mirror gate.
+    return adoptCode(code, carryFrom, pid)
   }
 
   return {
@@ -830,7 +582,9 @@ export const useStore = create<VibeState>((set, get) => {
     slicerFailed: [],
     generating: false,
     streamText: '',
+    streamHasCode: false,
     pendingAutoRefineFor: null,
+    sessions: {},
     bedId: localStorage.getItem(BED_KEY) ?? PRINTER_BEDS[0].id,
     customBed: loadCustomBed(),
     quality: localStorage.getItem(QUALITY_KEY) ?? 'standard',
@@ -893,7 +647,10 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     refreshHealth: async (providers) => {
-      const health = providers ? { ok: true, providers } : await fetchHealth()
+      // A providers-only refresh (after saving a key) must PRESERVE systemTokens/genTimeoutMs from
+      // the last full fetch — /api/connect returns only providers, so a naive replace would drop
+      // them (silently widening the history budget and blanking the UI's timeout note).
+      const health = providers ? { ...get().health, ok: true, providers } : await fetchHealth()
       let engine: string | null = null
       if (health) {
         const saved = get().engine ?? localStorage.getItem(ENGINE_KEY)
@@ -904,6 +661,8 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     newProject: () => {
+      const prev = get().activeId
+      if (prev) snapshotSession(prev) // cache the project we're leaving for instant return
       clearParamTimer()
       // Reuse an existing pristine empty chat rather than minting a duplicate (the header
       // "New chat" button + the bare-hash handler both call this; init() reuses the same way).
@@ -912,7 +671,7 @@ export const useStore = create<VibeState>((set, get) => {
         set({
           activeId: existing.id, code: '', params: [], paramValues: {}, stl: null, meshTransform: null,
           vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null,
-          streamText: '', viewMode: 'single', pieces: null, slicing: false,
+          streamText: '', generating: false, streamHasCode: false, viewMode: 'single', pieces: null, slicing: false,
         })
         setChatHash(existing.id)
         saveLastChatId(existing.id)
@@ -942,6 +701,8 @@ export const useStore = create<VibeState>((set, get) => {
         compileStatus: 'idle',
         compileError: null,
         streamText: '',
+        generating: false,
+        streamHasCode: false,
         viewMode: 'single',
         pieces: null,
         slicing: false,
@@ -954,8 +715,9 @@ export const useStore = create<VibeState>((set, get) => {
     openProject: (id) => {
       const project = get().projects.find((p) => p.id === id)
       if (!project) return
+      const prev = get().activeId
+      if (prev && prev !== id) snapshotSession(prev) // cache the project we're leaving for instant return
       clearParamTimer()
-      set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
       // transient per-model interaction modes live in the UI store — clear them so a
       // selection / measuring session doesn't bleed into the next project
       const ui = useUi.getState()
@@ -963,45 +725,20 @@ export const useStore = create<VibeState>((set, get) => {
       ui.setMeasureMode(false)
       setChatHash(id)
       saveLastChatId(id)
+      set({ activeId: id })
+      // cached render → restore it instantly, no recompile (Phase 2)
+      if (restoreSession(id)) return
+      // first visit (or never compiled): the original reset + parse + compile path
+      set({ stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
       set({ code: project.code, params, paramValues })
       if (project.code.trim()) void compile(project.code, buildDefines(params, paramValues))
     },
 
-    exportShareFile: (fileBase) => {
-      const { code, paramValues, activeId, projects } = get()
-      if (!code.trim()) {
-        useUi.getState().pushToast('Nothing to share yet — generate a model first.')
-        return
-      }
-      // the latest code-bearing assistant turn carries this version's intent + applied skills
-      const last = [...activeChat()].reverse().find((m) => m.role === 'assistant' && m.code)
-      const name = projects.find((p) => p.id === activeId)?.name ?? fileBase
-      // best-effort thumbnail: downscale the (preserveDrawingBuffer) viewport canvas to keep it small
-      let thumbnail: string | undefined
-      try {
-        const canvas = document.querySelector('canvas')
-        if (canvas && canvas.width) {
-          const scale = Math.min(1, 256 / canvas.width)
-          const off = document.createElement('canvas')
-          off.width = Math.round(canvas.width * scale)
-          off.height = Math.round(canvas.height * scale)
-          const ctx = off.getContext('2d')
-          if (ctx) {
-            ctx.drawImage(canvas, 0, 0, off.width, off.height)
-            thumbnail = off.toDataURL('image/png')
-          }
-        }
-      } catch {
-        /* canvas tainted / unavailable — ship without a thumbnail */
-      }
-      const file = buildShareFile(
-        { name, code, paramValues, intent: last?.intent, appliedSkillIds: last?.appliedSkillIds, thumbnail },
-        Date.now(),
-      )
-      downloadBlob(serializeShareFile(file), `${fileBase}.vibemesh`, 'application/json')
-    },
+    // export slice (exportPlates / exportPlates3mf / export3mf / exportStlSmart / exportShareFile)
+    // lives in ./exportActions — leaf actions, split out of this god-store (shared helpers passed in).
+    ...createExportActions(set, get, { qualityArgsFor, exportQuality, composeMatrix, RENDER_TIMEOUT_EXPORT, RENDER_TIMEOUT_DRAFT }),
 
     importShareFile: (text) => {
       const file = parseShareFile(text)
@@ -1009,6 +746,8 @@ export const useStore = create<VibeState>((set, get) => {
         useUi.getState().pushToast("That file isn't a valid .vibemesh share file.", 'error')
         return
       }
+      const prev = get().activeId
+      if (prev) snapshotSession(prev) // cache the project we're leaving for instant return
       const project = shareFileToProject(file, newId(), Date.now())
       const projects = [project, ...get().projects]
       clearParamTimer()
@@ -1028,6 +767,8 @@ export const useStore = create<VibeState>((set, get) => {
         compileStatus: 'idle',
         compileError: null,
         streamText: '',
+        generating: false,
+        streamHasCode: false,
         viewMode: 'single',
         pieces: null,
         slicing: false,
@@ -1040,11 +781,16 @@ export const useStore = create<VibeState>((set, get) => {
 
     deleteProject: (id) => {
       const projects = get().projects.filter((p) => p.id !== id)
-      set({ projects })
+      // evict the deleted project's cached session (its STL/abort handle must not linger)
+      const sessions = { ...get().sessions }
+      // a deleted project must not keep generating in the background — stop its run first
+      get().sessions[id]?.abortController?.abort()
+      delete sessions[id]
+      set({ projects, sessions })
       saveProjects(projects)
       if (get().activeId === id) {
         clearParamTimer()
-        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false })
+        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false, streamText: '', generating: false, streamHasCode: false })
         setChatHash(null, { replace: true })
         saveLastChatId(null)
       }
@@ -1054,65 +800,10 @@ export const useStore = create<VibeState>((set, get) => {
       persist({ name })
     },
 
-    sendPrompt: async (text, images, action) => {
-      const state = get()
-      if (state.generating) return
-      if (!state.activeId) {
-        get().newProject()
-      }
-      const userMsg: ChatMessage = { id: newId(), role: 'user', text, images, action }
-      // a new prompt commits to the current (possibly rolled-back) version: the stashed
-      // tail is now a genuinely abandoned branch, so clear the redo stack as we append.
-      setChatAndFuture([...activeChat(), userMsg], [])
-      await runGeneration({ text, action })
-    },
-
-    retryLast: async () => {
-      if (get().generating) return
-      const chat = activeChat()
-      // drop trailing FAILED assistant replies only — successful versions stay restorable
-      let end = chat.length
-      while (end > 0 && chat[end - 1].role === 'assistant' && chat[end - 1].error) end--
-      if (end === 0 || chat[end - 1].role !== 'user') return
-      const lastUser = chat[end - 1]
-      setChat(chat.slice(0, end))
-      await runGeneration({ text: lastUser.text, action: lastUser.action })
-    },
-
-    regenerateWithSkills: async (msgId, skillIds) => {
-      if (get().generating) return
-      // health signal: skills the user just REMOVED from this message's chip are a wrong-fit vote
-      const edited = activeChat().find((m) => m.id === msgId)
-      const removed = (edited?.appliedSkillIds ?? []).filter((id) => !skillIds.includes(id))
-      if (removed.length) {
-        const ns = recordRemovals(get().skillStats, removed)
-        set({ skillStats: ns })
-        saveSkillStats(ns)
-      }
-      const labels = skillIds.length ? skillIds.join(', ') : null
-      const text = labels
-        ? `Regenerate the current model using exactly these mechanism patterns: ${labels}. Keep the design otherwise the same.`
-        : `Regenerate the current model with NO mechanism-skill patterns. Keep the design otherwise the same.`
-      // a marker user turn (chip shows an 'Adjust patterns' tag), then generate with the
-      // corrected skillIds OVERRIDING retrieval for this turn. Shares the generating guard +
-      // abortController via runGeneration; the new version carries the corrected appliedSkillIds.
-      setChatAndFuture([...activeChat(), { id: newId(), role: 'user', text, action: 'Adjust patterns' }], [])
-      await runGeneration({ text, action: 'Adjust patterns' }, 0, { skillIds })
-    },
-
-    abortGeneration: () => {
-      abortController?.abort()
-    },
-
-    consumeAutoRefine: () => {
-      // count the pass at START (here), not when the guard armed it: aborting BEFORE
-      // the timer fires (Stop / project switch) clears the timer and never reaches
-      // here, so it doesn't burn budget. (A pass whose compile is later superseded
-      // mid-flight does consume its slot — that's the loop's termination guarantee.)
-      const aid = get().pendingAutoRefineFor
-      if (aid) autoRefinePass.set(aid, (autoRefinePass.get(aid) ?? 0) + 1)
-      set({ pendingAutoRefineFor: null })
-    },
+    // AI-generation slice (sendPrompt / retryLast / regenerateWithSkills / abortGeneration /
+    // consumeAutoRefine) lives in ./generationActions — the most intricate concern, split out of
+    // this god-store; the shared compile-lifecycle helpers are passed in.
+    ...createGenerationActions(set, get, { activeChatFor, setChatFor, setChatAndFutureFor, adoptCodeFor, persistFor, qualityArgsFor, writeSession, genSession }),
 
     setParamValue: (name, value) => {
       const paramValues = { ...get().paramValues, [name]: value }
@@ -1200,7 +891,7 @@ export const useStore = create<VibeState>((set, get) => {
       const tail = chat.slice(idx + 1)
       if (tail.length === 0) return // already the tip — nothing to roll back
       setChatAndFuture(chat.slice(0, idx + 1), [...tail, ...activeFuture()])
-      adoptCode(target.code)
+      void adoptCode(target.code)
       persist()
     },
 
@@ -1211,7 +902,7 @@ export const useStore = create<VibeState>((set, get) => {
       // roll back to any intermediate version again via its chip
       const newest = [...future].reverse().find((m) => m.code !== undefined)
       setChatAndFuture([...activeChat(), ...future], [])
-      if (newest?.code !== undefined) adoptCode(newest.code)
+      if (newest?.code !== undefined) void adoptCode(newest.code)
       persist()
     },
 
@@ -1222,6 +913,7 @@ export const useStore = create<VibeState>((set, get) => {
       const chat = [
         {
           id: newId(),
+          createdAt: Date.now(),
           role: 'assistant' as const,
           text: `Loaded the built-in “${example.name}” example. Tweak it with the sliders, or describe a change and I'll rework the code.`,
           code: example.code,
@@ -1235,6 +927,7 @@ export const useStore = create<VibeState>((set, get) => {
         set({ projects, streamText: '' })
         saveProjects(projects)
       } else {
+        if (state.activeId) snapshotSession(state.activeId) // cache the project we're leaving
         const project: Project = {
           id: newId(),
           name: example.name,
@@ -1249,6 +942,8 @@ export const useStore = create<VibeState>((set, get) => {
           projects,
           activeId: project.id,
           streamText: '',
+          generating: false,
+          streamHasCode: false,
           // drop the previous project's geometry so the example gets a fresh viewport + camera fit
           stl: null,
           meshTransform: null,
@@ -1261,7 +956,7 @@ export const useStore = create<VibeState>((set, get) => {
         setChatHash(project.id)
         saveLastChatId(project.id)
       }
-      adoptCode(example.code)
+      void adoptCode(example.code)
     },
 
     setBed: (id) => {
@@ -1274,45 +969,8 @@ export const useStore = create<VibeState>((set, get) => {
       localStorage.setItem(CUSTOM_BED_KEY, JSON.stringify(bed))
     },
 
-    setMeshTransform: (meshTransform) => {
-      const s = get()
-      if (sameTransform(s.meshTransform, meshTransform)) return
-      set({
-        vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)],
-        vpFuture: [],
-        meshTransform,
-      })
-    },
-
-    clearModel: () => {
-      clearParamTimer() // don't let a pending slider render resurrect the model after Remove
-      const s = get()
-      set({
-        vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)],
-        vpFuture: [],
-        stl: null,
-        modelDims: null,
-        meshTransform: null,
-        compileStatus: 'idle',
-        compileError: null,
-        compileNote: null,
-        modelRemoved: true,
-      })
-    },
-
-    vpUndo: () => {
-      const s = get()
-      const prev = s.vpPast[s.vpPast.length - 1]
-      if (!prev) return
-      set({ vpPast: s.vpPast.slice(0, -1), vpFuture: [...s.vpFuture, vpSnapshotOf(s)], ...prev })
-    },
-
-    vpRedo: () => {
-      const s = get()
-      const next = s.vpFuture[s.vpFuture.length - 1]
-      if (!next) return
-      set({ vpFuture: s.vpFuture.slice(0, -1), vpPast: [...s.vpPast, vpSnapshotOf(s)], ...next })
-    },
+    // viewport-placement slice (move/rotate/delete + undo/redo) lives in ./placementActions
+    ...createPlacementActions(set, get, { clearParamTimer }),
 
     setQuality: (id) => {
       set({ quality: id })
@@ -1340,206 +998,16 @@ export const useStore = create<VibeState>((set, get) => {
       localStorage.setItem(KIMI_MODEL_KEY, id)
     },
 
-    /** Compile and download every piece of a multi-part design (`part` enum). */
-    exportPlates: async (fileBase) => {
-      const { code, params, paramValues } = get()
-      const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
-      if (!partParam || get().exportingPlates) return
-      const preset = exportQuality()
-      const pieces = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
-      set({ exportingPlates: true })
-      const failed: string[] = []
-      const degraded: string[] = []
-      try {
-        for (const piece of pieces) {
-          const defines = buildDefines(params, { ...paramValues, part: piece })
-          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
-          // same heavy-model fallback the viewport gets: retry timeouts at Draft
-          if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
-            if (result.ok) degraded.push(piece)
-          }
-          if (result.ok && result.stl) {
-            downloadBlob(result.stl, `${fileBase}-${piece}.stl`, 'model/stl')
-          } else {
-            failed.push(piece)
-          }
-        }
-      } finally {
-        set({ exportingPlates: false })
-      }
-      // never let a partial export look successful
-      if (failed.length > 0) {
-        set({ compileNote: `EXPORT INCOMPLETE — failed: ${failed.join(', ')} (${pieces.length - failed.length}/${pieces.length} downloaded)` })
-        useUi.getState().pushToast(`Export incomplete! Failed parts: ${failed.join(', ')} — downloaded ${pieces.length - failed.length} of ${pieces.length}. Select a failed part in the viewport to see its error, or use Ask AI to Fix.`, 'error')
-      } else if (degraded.length > 0) {
-        set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
-      }
-    },
+  }
+})
 
-    exportPlates3mf: async (fileBase) => {
-      const { code, params, paramValues } = get()
-      const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
-      if (!partParam || get().exportingPlates) return
-      const preset = exportQuality()
-      const bed = resolveBed(get().bedId, get().customBed)
-      const projectAtStart = get().activeId
-      const names = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
-      set({ exportingPlates: true })
-      const compiled: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] = []
-      const failed: string[] = []
-      const degraded: string[] = []
-      try {
-        for (const name of names) {
-          const defines = buildDefines(params, { ...paramValues, part: name })
-          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
-          if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
-            if (result.ok) degraded.push(name)
-          }
-          const bb = result.ok && result.stl ? stlBBox(result.stl) : null
-          if (result.ok && result.stl && bb) compiled.push({ name, stl: result.stl, bbox: bb })
-          else failed.push(name)
-        }
-      } finally {
-        set({ exportingPlates: false })
-      }
-      // pack the rendered pieces onto bed-sized plates — the SAME packer the slicer view uses,
-      // so each .3mf is WYSIWYG with what was on screen
-      const plan = packPlates(
-        compiled.map((c) => ({ name: c.name, w: c.bbox.x, h: c.bbox.y, z: c.bbox.z })),
-        { x: bed.x, y: bed.y, z: bed.z },
-      )
-      const byName = new Map(compiled.map((c) => [c.name, c]))
-      let written = 0
-      plan.plates.forEach((placements, pi) => {
-        const parts = placements
-          .map((pl) => {
-            const c = byName.get(pl.name)
-            return c ? { name: pl.name, stl: c.stl, place: { x: pl.x, y: pl.y, rot: pl.rot } } : null
-          })
-          .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number; rot: 0 | 90 } } => p !== null)
-        if (parts.length) {
-          downloadBlob(buildThreeMF(parts), `${fileBase}-plate${pi + 1}.3mf`, 'model/3mf')
-          written++
-        }
-      })
-      // a project switch mid-export already downloaded the right files; don't post a stale note/alert
-      if (get().activeId !== projectAtStart) return
-      // loud accounting — a part dropped from the export must never be silent (SPEC §4); Draft
-      // degradation is surfaced even alongside failures (not swallowed by the problem branch)
-      const problems: string[] = []
-      if (failed.length) problems.push(`failed to render: ${failed.join(', ')}`)
-      if (plan.oversize.length)
-        problems.push(`too big for the ${bed.label} bed: ${plan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')}`)
-      const degradedNote = degraded.length ? ` ${degraded.length} part(s) exported at Draft (too heavy for ${preset.label}): ${degraded.join(', ')}.` : ''
-      if (problems.length) {
-        const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written).${degradedNote}`
-        set({ compileNote: note })
-        useUi.getState().pushToast(`${note} Fix the named parts (select them in the viewport, or Ask AI to split), then export again.`, 'error')
-      } else if (written === 0) {
-        set({ compileNote: 'Nothing to export — no parts rendered.' })
-      } else {
-        set({ compileNote: `Exported ${written} plate file(s) for the ${bed.label} bed.${degradedNote}` })
-      }
-    },
-
-    export3mf: async (fileBase) => {
-      const { code, params, paramValues, quality, stl, meshTransform } = get()
-      if (get().exportingPlates) return
-      const preset = exportQuality()
-      const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
-
-      // single-piece design: package the current geometry (with viewport placement baked)
-      if (!partParam) {
-        if (!stl) return
-        // re-render at Fine for a smooth printed part (the Standard preview is coarse);
-        // ask first, since 3MF should reflect what the user is exporting.
-        let source = stl
-        const belowFine = quality !== 'fine' && quality !== 'ultra'
-        if (belowFine) {
-          const upgrade = await useUi.getState().requestConfirm({
-            title: 'Re-render at Fine quality for export?',
-            body: 'The preview caps curve smoothness; Fine prints noticeably smoother curves. Re-rendering may take a while.',
-            confirmLabel: 'Re-render at Fine',
-          })
-          if (upgrade) {
-            const defines = buildDefines(params, paramValues)
-            const result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
-            if (result.ok && result.stl) source = result.stl
-            else useUi.getState().pushToast('Fine-quality render failed (model too heavy) — exporting the preview as-is.', 'error')
-          }
-        }
-        const buffer = meshTransform ? transformStl(source, composeMatrix(meshTransform.position, meshTransform.rotation)) : source
-        // arrange:false — the mesh already carries its placement (baked above);
-        // re-centering would discard it and disagree with the STL path.
-        downloadBlob(buildThreeMF([{ name: fileBase, stl: buffer }], { arrange: false }), `${fileBase}.3mf`, 'model/3mf')
-        return
-      }
-
-      const pieces = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
-      set({ exportingPlates: true })
-      const collected: Array<{ name: string; stl: ArrayBuffer }> = []
-      const failed: string[] = []
-      const degraded: string[] = []
-      try {
-        for (const piece of pieces) {
-          const defines = buildDefines(params, { ...paramValues, part: piece })
-          let result = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], RENDER_TIMEOUT_EXPORT)
-          if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-            result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
-            if (result.ok) degraded.push(piece)
-          }
-          if (result.ok && result.stl) collected.push({ name: piece, stl: result.stl })
-          else failed.push(piece)
-        }
-      } finally {
-        set({ exportingPlates: false })
-      }
-      if (failed.length > 0) {
-        set({ compileNote: `3MF INCOMPLETE — failed: ${failed.join(', ')}` })
-        useUi.getState().pushToast(`3MF export incomplete! Failed parts: ${failed.join(', ')} — included: ${collected.map((c) => c.name).join(', ') || 'none'}. Select a failed part in the viewport to see its error.`, 'error')
-        if (collected.length === 0) return
-      } else if (degraded.length > 0) {
-        set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
-      }
-      downloadBlob(buildThreeMF(collected), `${fileBase}.3mf`, 'model/3mf')
-    },
-
-    exportStlSmart: async (fileBase) => {
-      const { stl, quality, degradedToDraft, code, params, paramValues } = get()
-      if (!stl) return
-      // bake any viewport move/rotate into the export so WYSIWYG holds
-      const bake = (buffer: ArrayBuffer): ArrayBuffer => {
-        const t = get().meshTransform
-        if (!t) return buffer
-        return transformStl(buffer, composeMatrix(t.position, t.rotation))
-      }
-      // Anything below Fine ships a coarse mesh — the default Standard preview caps
-      // curves at fa4/fs0.8. Offer a Fine re-render (with consent, since STL is the
-      // "what you see" format); Fine/Ultra previews are already smooth enough.
-      const fine = QUALITY_PRESETS.find((q) => q.id === 'fine')!
-      const belowFine = quality !== 'fine' && quality !== 'ultra'
-      if (belowFine && fine) {
-        const wasDraft = quality === 'draft' || degradedToDraft
-        const upgrade = await useUi.getState().requestConfirm({
-          title: 'Re-render at Fine quality for export?',
-          body: wasDraft
-            ? 'The preview was rendered at Draft — curves will look faceted when printed. Re-rendering at Fine may take a while.'
-            : 'The Standard preview caps curve smoothness; Fine prints noticeably smoother curves. Re-rendering may take a while.',
-          confirmLabel: 'Re-render at Fine',
-        })
-        if (upgrade) {
-          const defines = buildDefines(params, paramValues)
-          const result = await openscad.compile(code, [...defines, ...qualityArgsFor(fine)], RENDER_TIMEOUT_EXPORT)
-          if (result.ok && result.stl) {
-            downloadBlob(bake(result.stl), `${fileBase}.stl`, 'model/stl')
-            return
-          }
-          useUi.getState().pushToast('Fine-quality render failed (model too heavy) — exporting the preview STL instead.', 'error')
-        }
-      }
-      downloadBlob(bake(stl), `${fileBase}.stl`, 'model/stl')
-    },
+// Keep the worker's foreground render lane synced with the active project across EVERY switch path
+// (so the focused chat's interactive render always drains ahead of any background chat's). One
+// subscription covers openProject/newProject/import/loadExample/init/delete without peppering calls.
+let _lastForeground: string | null | undefined
+useStore.subscribe((s) => {
+  if (s.activeId !== _lastForeground) {
+    _lastForeground = s.activeId
+    openscad.setForeground(s.activeId)
   }
 })

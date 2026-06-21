@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { migrateRecord, slimProjects, SCHEMA_VERSION } from './storage'
+import { migrateRecord, slimProjects, reconcileRecord, SCHEMA_VERSION } from './storage'
 import type { Project } from '../types'
 
 const proj = (over: Partial<Project> = {}): Project => ({
@@ -32,6 +32,13 @@ describe('migrateRecord', () => {
     expect(migrateRecord(undefined)).toEqual({ schemaVersion: SCHEMA_VERSION, projects: [] })
     expect(migrateRecord({ projects: 'not-an-array' as unknown as Project[] })).toEqual({ schemaVersion: SCHEMA_VERSION, projects: [] })
   })
+
+  it('does NOT down-stamp a record from a newer build (preserves its higher version, never drops data)', () => {
+    const future = { schemaVersion: SCHEMA_VERSION + 5, projects: [proj({ id: 'x' })] }
+    const out = migrateRecord(future)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION + 5) // preserved, not down-stamped to ours
+    expect(out.projects.map((p) => p.id)).toEqual(['x'])
+  })
 })
 
 describe('slimProjects', () => {
@@ -53,5 +60,53 @@ describe('slimProjects', () => {
     const [slim] = slimProjects([proj()])
     expect(slim.chatFuture).toBeUndefined()
     expect(slim.chat).toEqual([])
+  })
+
+  it('with keepNewest, retains images on the most-recently-updated project and sheds them from the rest', () => {
+    const img = { mediaType: 'image/png' as const, data: 'AAAA' }
+    const old = proj({ id: 'old', updatedAt: 100, chat: [{ id: 'm1', role: 'user', text: 'a', images: [img] }] })
+    const active = proj({ id: 'active', updatedAt: 999, chat: [{ id: 'm2', role: 'user', text: 'b', images: [img] }] })
+    const slimmed = slimProjects([old, active], { keepNewest: true })
+    expect(slimmed.find((p) => p.id === 'old')!.chat[0].images).toBeUndefined()
+    expect(slimmed.find((p) => p.id === 'active')!.chat[0].images).toEqual([img])
+  })
+})
+
+describe('reconcileRecord (boot recovery of a lost async write)', () => {
+  it('keeps IndexedDB when it is at least as fresh as the backup', () => {
+    const idb = [proj({ id: 'a', updatedAt: 100 })]
+    const backup = [proj({ id: 'a', updatedAt: 100 })]
+    expect(reconcileRecord(idb, backup)).toBe(idb)
+  })
+
+  it('prefers the backup when it captured strictly newer edits than IDB', () => {
+    const idb = [proj({ id: 'a', updatedAt: 100 })]
+    const backup = [proj({ id: 'a', updatedAt: 250 }), proj({ id: 'b', updatedAt: 250 })]
+    expect(reconcileRecord(idb, backup)).toBe(backup)
+  })
+
+  it('never prefers an empty backup over a populated IDB', () => {
+    const idb = [proj({ id: 'a', updatedAt: 100 })]
+    expect(reconcileRecord(idb, [])).toBe(idb)
+  })
+
+  it('re-grafts images from IDB when the newer backup was quota-slimmed (refresh-loses-my-photo bug)', () => {
+    const img = { mediaType: 'image/png' as const, data: 'AAAA' }
+    // IDB has the image (older); backup is newer (a final edit IDB missed) but slimmed — no images
+    const idb = [proj({ id: 'a', updatedAt: 100, chat: [{ id: 'm1', role: 'user', text: 'see', images: [img] }] })]
+    const backup = [proj({ id: 'a', updatedAt: 250, chat: [{ id: 'm1', role: 'user', text: 'see' }] })]
+    const out = reconcileRecord(idb, backup)
+    // newer text/structure from the backup is kept, but the image is recovered from IDB
+    expect(out[0].updatedAt).toBe(250)
+    expect(out[0].chat[0].images).toEqual([img])
+  })
+
+  it('does not overwrite images the backup already holds', () => {
+    const a = { mediaType: 'image/png' as const, data: 'AAAA' }
+    const b = { mediaType: 'image/png' as const, data: 'BBBB' }
+    const idb = [proj({ id: 'a', updatedAt: 100, chat: [{ id: 'm1', role: 'user', text: 'x', images: [a] }] })]
+    const backup = [proj({ id: 'a', updatedAt: 250, chat: [{ id: 'm1', role: 'user', text: 'x', images: [b] }] })]
+    const out = reconcileRecord(idb, backup)
+    expect(out[0].chat[0].images).toEqual([b]) // backup's own images win
   })
 })

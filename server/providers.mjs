@@ -7,14 +7,23 @@ import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
 import { SKILLS, selectSkills, selectSkillsDetailed, composePlan } from './skills.mjs'
 import { billOfMaterials } from './hardware.mjs'
+import { getConnection, listConnections, catalogEntry, validateFetchUrl } from './connections.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
 
 /** Settings the UI may write at runtime (persisted to .env, applied immediately). */
 const SETTABLE_KEYS = new Set(['KIMI_API_KEY', 'KIMI_MODELS', 'ANTHROPIC_API_KEY', 'LOCAL_LLM_BASE_URL'])
 
-export function applyRuntimeSetting(key, value) {
-  if (!SETTABLE_KEYS.has(key)) throw new UserFacingError(`Setting "${key}" is not configurable.`)
+/** Pure validation for a runtime setting: throws UserFacingError on a bad key/value,
+ *  returns the trimmed value on success. No I/O — split out from applyRuntimeSetting so the
+ *  security-sensitive guards (key allowlist, control-char/newline injection, SSRF on the
+ *  base URL) are unit-testable without writing the real .env (bench/server.selftest.mjs). */
+/** Marketplace connection-secret keys (CONN_<id>_KEY) are allowed alongside the fixed built-ins.
+ *  The control-char/newline guard below still applies, so a value can't inject extra .env lines. */
+const CONN_KEY_RE = /^CONN_[a-z0-9]{3,24}_KEY$/
+
+export function validateRuntimeSetting(key, value) {
+  if (!SETTABLE_KEYS.has(key) && !CONN_KEY_RE.test(key)) throw new UserFacingError(`Setting "${key}" is not configurable.`)
   const trimmed = String(value ?? '').trim()
   // Reject control chars / newlines so a value can't inject extra KEY=value lines into .env.
   if (Array.from(trimmed).some((c) => c.charCodeAt(0) < 0x20)) throw new UserFacingError('Value contains invalid characters.')
@@ -28,6 +37,11 @@ export function applyRuntimeSetting(key, value) {
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new UserFacingError('Base URL must use http or https.')
   }
+  return trimmed
+}
+
+export function applyRuntimeSetting(key, value) {
+  const trimmed = validateRuntimeSetting(key, value)
   if (trimmed) process.env[key] = trimmed
   else delete process.env[key]
 
@@ -81,10 +95,40 @@ function kimiModelChoices(discovered) {
 const localBaseUrl = () => process.env.LOCAL_LLM_BASE_URL || 'http://localhost:11434'
 const anthropicModel = () => process.env.VIBEMESH_MODEL || process.env.VIBESCAD_MODEL || 'claude-opus-4-8'
 
-// ── Engine output / context budgets ──
-// Output-token reservations, referenced by BOTH the stream functions AND providerStatus, so the
-// client's history-token budget can never drift from what the server actually sends.
-const ANTHROPIC_MAX_TOKENS = 64000
+// ── Per-model capability table (single source for context window + output ceiling) ──
+// context = total tokens the model accepts (input+output) — the "1M" number; maxOutput = the
+// SEPARATE, smaller completion cap (the max_tokens we actually send), never the context window.
+// Fact-checked 2026-06-20 (docs/ENGINE-MARKETPLACE-DESIGN.md §3). Unknown models fall back below.
+const MODEL_CAPS = {
+  'claude-opus-4-8': { context: 1000000, maxOutput: 128000 },
+  'claude-sonnet-4-6': { context: 1000000, maxOutput: 64000 },
+  'claude-haiku-4-5': { context: 200000, maxOutput: 64000 },
+  'claude-fable-5': { context: 1000000, maxOutput: 128000 },
+}
+const ANTHROPIC_CAPS_DEFAULT = { context: 1000000, maxOutput: 64000 }
+
+/** Context window + output ceiling for an Anthropic model (table-driven, not a flat constant). */
+export function anthropicCaps(model) {
+  return MODEL_CAPS[model] || ANTHROPIC_CAPS_DEFAULT
+}
+
+// Default output budget for the Anthropic stream. The model's REAL ceiling (anthropicCaps) is the
+// hard cap; VIBEMESH_MAX_OUTPUT_TOKENS overrides it but is CLAMPED to that ceiling (asking for 1M
+// output just gets you the model max, never an API rejection). The default stays 64k so a full
+// program plus its adaptive thinking fits and bench output is unchanged — while Opus's true 128k
+// ceiling is now reachable via the override instead of being silently hardcoded away.
+const DEFAULT_ANTHROPIC_OUTPUT = 64000
+
+/** Resolved max_tokens for an Anthropic model: min(real ceiling, configured budget). Referenced by
+ *  BOTH the anthropic-protocol adapter AND providerStatus so the client's history budget can never
+ *  drift from what is actually sent. Pure (env-only) → unit-tested in bench/server.selftest.mjs. */
+export function anthropicMaxTokens(model) {
+  const ceiling = anthropicCaps(model).maxOutput
+  const override = Number(process.env.VIBEMESH_MAX_OUTPUT_TOKENS)
+  const want = Number.isFinite(override) && override > 0 ? Math.floor(override) : DEFAULT_ANTHROPIC_OUTPUT
+  return Math.min(ceiling, Math.max(1, want))
+}
+
 const KIMI_MAX_TOKENS = 16000
 // claude-code runs through the Agent SDK (no max_tokens literal) — reserve a conservative output budget.
 const CLAUDE_CODE_OUTPUT_RESERVE = 32000
@@ -93,6 +137,18 @@ const CLAUDE_CODE_OUTPUT_RESERVE = 32000
 // reservation left no room for history, so Ollama silently left-truncated the printability rules.
 const LOCAL_NUM_CTX = Number(process.env.LOCAL_LLM_NUM_CTX) || 16384
 const LOCAL_NUM_PREDICT = Number(process.env.LOCAL_LLM_MAX_TOKENS) || 4096
+
+// ── Generation request timeout + retries ──
+// The Anthropic SDK defaults to a 10-min per-request timeout AND auto-retries (×2), so a slow
+// xhigh/max run could be cut mid-think or silently stretch to ~30 min (the "it timed out at ~15
+// min while I was fine to wait" symptom). Replace that with ONE explicit, generous, configurable
+// budget and at most one retry. Threaded to the Anthropic/Kimi/local clients, published to the
+// client for the Engines UI, and used to widen Node's server.requestTimeout (server/index.mjs).
+export const GEN_TIMEOUT_MS = Math.max(60000, Number(process.env.VIBEMESH_GEN_TIMEOUT_MS) || 60 * 60000)
+export const GEN_MAX_RETRIES = (() => {
+  const n = Number(process.env.VIBEMESH_GEN_MAX_RETRIES)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 1
+})()
 // rough token size of the shared system prompt (chars/4), published to the client so its budget
 // subtracts the REAL amount rather than a hardcoded guess that drifts as the prompt grows.
 export const SYSTEM_PROMPT_TOKENS = Math.ceil(SYSTEM_PROMPT.length / 4)
@@ -236,6 +292,10 @@ function resolveEffort(effort) {
 export async function providerStatus() {
   const [claudeBin, localModels, kimiModelIds] = await Promise.all([claudeBinaryAvailable(), listLocalModels(), listKimiModels()])
   const kimi = kimiAuth()
+  // Resolve the Anthropic model + caps ONCE so model/contextWindow/outputReservation/maxOutput can
+  // never describe different models if process.env is rewritten mid-build (no-drift, airtight).
+  const anthModel = anthropicModel()
+  const anthCaps = anthropicCaps(anthModel)
 
   const providers = [
     {
@@ -248,7 +308,7 @@ export async function providerStatus() {
       contextWindow: 200000, // conservative login floor (the Agent SDK won't compact a flattened single-turn prompt)
       outputReservation: CLAUDE_CODE_OUTPUT_RESERVE,
       vision: true,
-      maxImages: 4, // CAP=4: a global + the 3 worst regions (the tiler degrades resolution before dropping tiles)
+      maxImages: 10, // a global + up to 9 region tiles (the tiler degrades resolution before dropping tiles)
       models: [
         { id: 'default', label: claudeCliDefaultModel() ? `default (${claudeCliDefaultModel()})` : 'default' },
         { id: 'opus', label: 'opus — best quality' },
@@ -262,12 +322,13 @@ export async function providerStatus() {
       label: 'Claude · API key',
       group: 'apikey',
       available: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
-      detail: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ? anthropicModel() : 'connect with an API key',
-      model: anthropicModel(),
-      contextWindow: 1000000,
-      outputReservation: ANTHROPIC_MAX_TOKENS,
+      detail: process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ? anthModel : 'connect with an API key',
+      model: anthModel,
+      contextWindow: anthCaps.context,
+      outputReservation: anthropicMaxTokens(anthModel),
+      maxOutput: anthCaps.maxOutput,
       vision: true,
-      maxImages: 8, // 1M window + strong vision → room for a global + several tiles
+      maxImages: 10, // 1M window + strong vision → room for a global + several tiles
       connect: { envKey: 'ANTHROPIC_API_KEY', placeholder: 'sk-ant-…', url: 'https://console.anthropic.com/settings/keys', urlLabel: 'Get a key at console.anthropic.com' },
       efforts: EFFORT_CHOICES,
     },
@@ -286,7 +347,7 @@ export async function providerStatus() {
       contextWindow: 200000, // model-dependent; stay conservative — Kimi 400s readily
       outputReservation: KIMI_MAX_TOKENS,
       vision: true,
-      maxImages: 6,
+      maxImages: 10,
       models: kimiModelChoices(kimiModelIds),
       connect: { envKey: 'KIMI_API_KEY', placeholder: 'Kimi Code console key…', url: 'https://www.kimi.com/code', urlLabel: 'Get a key in the Kimi Code console' },
     },
@@ -329,6 +390,34 @@ export async function providerStatus() {
     })
   }
 
+  // Marketplace connections (P2): the user-added providers. Only added connections appear — the
+  // catalog of addable providers is served separately (GET /api/catalog). Each reuses the SAME
+  // protocol adapters as the built-ins, so availability is just "is the secret present".
+  for (const conn of listConnections()) {
+    const secret = process.env[conn.auth?.envKey]
+    const available = Boolean(secret)
+    const desc = resolveConnectionDescriptor(conn)
+    const cat = catalogEntry(conn.catalogId)
+    providers.push({
+      id: `conn:${conn.id}`,
+      label: conn.label,
+      group: 'apikey',
+      available,
+      detail: available ? `${conn.model} · ${conn.baseUrl}` : 'add an API key to connect',
+      model: conn.model,
+      contextWindow: conn.caps?.contextWindow,
+      outputReservation: desc?.maxTokens ?? CONNECTION_DEFAULT_OUTPUT,
+      maxOutput: conn.caps?.maxOutputTokens,
+      vision: !!conn.caps?.vision,
+      maxImages: conn.caps?.vision ? 4 : 0,
+      efforts: conn.caps?.thinking ? EFFORT_CHOICES : undefined,
+      connection: true,
+      catalogId: conn.catalogId,
+      baseUrl: conn.baseUrl,
+      connect: { envKey: conn.auth.envKey, placeholder: cat?.connect?.placeholder ?? 'API key…', url: cat?.connect?.url ?? '', urlLabel: cat?.connect?.urlLabel ?? '' },
+    })
+  }
+
   return providers
 }
 
@@ -361,6 +450,31 @@ export async function testEngine(engine) {
       return models && models.length
         ? { ok: true, message: `Found ${models.length} model(s): ${models.join(', ')}` }
         : { ok: false, message: `Nothing answering at ${localBaseUrl()}.` }
+    }
+    if (engine.startsWith('conn:')) {
+      // a marketplace connection: 1-token ping via the same adapter protocol it generates through.
+      const desc = resolveEngineDescriptor(engine)
+      if (!desc) return { ok: false, message: 'Connection not found.' }
+      // http(s)-only + metadata/link-local blocked before any outbound request
+      try { if (desc.baseURL) validateFetchUrl(desc.baseURL) } catch { return { ok: false, message: 'That base URL is not allowed.' } }
+      if (desc.protocol === 'anthropic') {
+        if (!desc.auth?.secret) return { ok: false, message: 'No API key saved yet.' }
+        const client = new Anthropic({ baseURL: desc.baseURL, apiKey: desc.auth.secret })
+        await client.messages.create({ model: desc.model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] })
+        return { ok: true, message: `Connected — ${desc.model} responded.` }
+      }
+      // openai-protocol connection: a minimal /v1/chat/completions call
+      const headers = { 'Content-Type': 'application/json' }
+      if (desc.auth?.secret) headers.Authorization = `Bearer ${desc.auth.secret}`
+      const res = await fetch(chatCompletionsUrl(desc.baseURL), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model: desc.model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+        signal: AbortSignal.timeout(8000),
+      })
+      if (res.ok) return { ok: true, message: `Connected — ${desc.model} responded.` }
+      const text = await res.text().catch(() => '')
+      return { ok: false, message: `Rejected (${res.status}): ${text.slice(0, 140)}` }
     }
     return { ok: false, message: `Unknown engine "${engine}".` }
   } catch (error) {
@@ -522,95 +636,180 @@ export function reviewWithSkills({ context, messages, code }) {
   return { skillIds, droppedSkillIds, report }
 }
 
+/* ────────────────────────────────────────────────────────────────
+   Engine dispatch — resolve an engine id to a PROTOCOL descriptor,
+   then run the matching adapter. Adding a provider becomes a
+   descriptor (a catalog row), not a new branch in a switch. The
+   built-ins below are the seam the connection store (P2) plugs into:
+   resolveConnectionDescriptor() returns the same shape for a saved
+   connection, so streamChat dispatches both through ADAPTERS.
+   ──────────────────────────────────────────────────────────────── */
+
+/** Protocol adapters, keyed by descriptor.protocol. Each takes
+ *  { desc, messages, ctx, onDelta, signal, effort } and resolves when the stream completes. */
+const ADAPTERS = {
+  anthropic: streamAnthropicProtocol,
+  openai: streamOpenAiProtocol,
+  cli: streamClaudeCodeAdapter,
+}
+
+/** Map a built-in engine id to its protocol descriptor. `null` for an unknown id.
+ *  Exported so the dispatch is unit-testable (bench/server.selftest.mjs). */
+export function resolveEngineDescriptor(engine, model) {
+  if (engine === 'anthropic') {
+    const m = anthropicModel()
+    return { protocol: 'anthropic', who: 'Anthropic', model: m, baseURL: null, auth: { kind: 'default' }, maxTokens: anthropicMaxTokens(m), thinking: true, caching: true, effort: true }
+  }
+  if (engine === 'kimi') {
+    // Anthropic-compatible endpoint, payload kept portable: no thinking, no cache_control.
+    return { protocol: 'anthropic', who: 'Kimi', model: model && model !== 'default' ? model : kimiModel(), baseURL: kimiBaseUrl(), auth: { kind: 'kimi' }, maxTokens: KIMI_MAX_TOKENS, thinking: false, caching: false, effort: false }
+  }
+  if (engine === 'claude-code') {
+    return { protocol: 'cli', who: 'Claude Code', model }
+  }
+  if (typeof engine === 'string' && engine.startsWith('local:')) {
+    return { protocol: 'openai', who: 'Local LLM', model: engine.slice(6), baseURL: localBaseUrl(), auth: null, maxTokens: LOCAL_NUM_PREDICT, numCtx: LOCAL_NUM_CTX }
+  }
+  if (typeof engine === 'string' && engine.startsWith('conn:')) {
+    const conn = getConnection(engine.slice(5))
+    return conn ? resolveConnectionDescriptor(conn) : null
+  }
+  return null
+}
+
+// SENT max_tokens for a marketplace connection: the model's real ceiling clamped to a sane default.
+// A SCAD program + reasoning fits well under it, and reserving a model's full 128k would starve the
+// history budget (the ceiling itself stays visible in the UI as the informational maxOutput).
+const CONNECTION_DEFAULT_OUTPUT = 32000
+
+function isLocalhostUrl(url) {
+  try {
+    const h = new URL(url).hostname.replace(/^\[|\]$/g, '')
+    return h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '::1'
+  } catch {
+    return false
+  }
+}
+
+/** Resolve a saved-connection payload (P2 marketplace) to a protocol descriptor. The client sends
+ *  the NON-secret connection record; the secret is read here from process.env (the .env line keyed
+ *  by auth.envKey) so it never round-trips to the browser. `null` for an unsupported protocol. */
+export function resolveConnectionDescriptor(conn) {
+  if (!conn || typeof conn !== 'object') return null
+  const who = (typeof conn.label === 'string' && conn.label) || conn.catalogId || 'Provider'
+  const model = typeof conn.model === 'string' ? conn.model : undefined
+  const baseURL = (typeof conn.baseUrl === 'string' && conn.baseUrl) || null
+  const caps = conn.caps && typeof conn.caps === 'object' ? conn.caps : {}
+  const secret = conn.auth?.envKey ? process.env[conn.auth.envKey] : undefined
+  const ceiling = Math.max(1, Math.floor(Number(caps.maxOutputTokens) || CONNECTION_DEFAULT_OUTPUT))
+  const maxTokens = Math.min(CONNECTION_DEFAULT_OUTPUT, ceiling)
+  // a connection pointed at a localhost server (e.g. custom-openai → Ollama) needs the num_ctx
+  // options block; a hosted API must NOT receive it. Detect by hostname, not a catalog flag.
+  const isLocal = isLocalhostUrl(baseURL)
+  if (conn.protocol === 'anthropic') {
+    return { protocol: 'anthropic', who, model, baseURL, auth: { kind: 'apikey', secret }, maxTokens, thinking: !!caps.thinking, caching: !!caps.promptCaching, effort: !!caps.thinking }
+  }
+  if (conn.protocol === 'openai') {
+    // num_ctx is an Ollama-only knob — send it ONLY for a local connection, never to a hosted API.
+    return { protocol: 'openai', who, model, baseURL, auth: secret ? { secret } : null, maxTokens, numCtx: isLocal ? caps.contextWindow || LOCAL_NUM_CTX : undefined }
+  }
+  return null
+}
+
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
   // seed prompt-intent retrieval from the latest user turn unless the caller pinned skillIds
   const ctx = contextText({ ...context, prompt: context?.prompt ?? latestUserText(messages) }, engine)
-  // effort applies only to the Claude engines (Kimi 400s on it, local is OpenAI-shaped)
-  if (engine === 'anthropic') return streamAnthropic({ messages, ctx, onDelta, signal, effort })
-  if (engine === 'kimi') return streamKimi({ messages, ctx, onDelta, signal, model })
-  if (engine === 'claude-code') return streamClaudeCode({ messages, model, ctx, onDelta, signal, effort })
-  if (engine.startsWith('local:')) return streamLocal({ model: engine.slice(6), messages, ctx, onDelta, signal })
-  throw new UserFacingError(`Unknown engine "${engine}".`)
+  // built-in id OR a saved-connection id (conn:<id>); resolveEngineDescriptor handles both, reading
+  // the connection's secret server-side from .env — the client only ever sends the id, never the key
+  const desc = resolveEngineDescriptor(engine, model)
+  if (!desc) throw new UserFacingError(`Unknown engine "${engine}".`)
+  const adapter = ADAPTERS[desc.protocol]
+  if (!adapter) throw new UserFacingError(`No adapter for protocol "${desc.protocol}".`)
+  return adapter({ desc, messages, ctx, onDelta, signal, effort })
 }
 
 export class UserFacingError extends Error {}
 
-/* ── Claude first-party API ── */
-
-async function streamAnthropic({ messages, ctx, onDelta, signal, effort }) {
-  const client = new Anthropic()
-  const system = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }]
-  if (ctx) system.push({ type: 'text', text: ctx })
-  const stream = client.messages.stream(
-    {
-      model: anthropicModel(),
-      // 64k: thinking + output share one budget on Opus 4.8 with adaptive thinking,
-      // so a rich design plus its reasoning can crowd a 32k ceiling — give headroom.
-      max_tokens: ANTHROPIC_MAX_TOKENS,
-      thinking: { type: 'adaptive' },
-      // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking; xhigh is
-      // the documented sweet spot for coding/agentic work. The level is chosen in the Engines UI
-      // (per request) and falls back to DEFAULT_EFFORT (VIBEMESH_EFFORT or xhigh) when unset.
-      output_config: { effort: resolveEffort(effort) },
-      system,
-      messages,
-    },
-    { signal },
-  )
-  stream.on('text', onDelta)
-  try {
-    await stream.finalMessage()
-  } catch (error) {
-    throw translateAnthropicError(error, 'Anthropic')
+/* ── Anthropic-protocol adapter — first-party Claude AND Anthropic-compatible providers (Kimi, and
+   P2's GLM / DeepSeek / custom). Capability-driven: thinking / effort / the cache_control'd system
+   block are sent ONLY when the descriptor opts in, so a portable provider gets a plain payload (no
+   thinking, no cache_control) while first-party Claude keeps adaptive thinking + prompt caching. ── */
+async function streamAnthropicProtocol({ desc, messages, ctx, onDelta, signal, effort }) {
+  const { attempts, kimiLogin } = anthropicAuthAttempts(desc)
+  // first-party caches the system prompt (block array + cache_control); portable providers take the
+  // plain concatenated string so the payload stays protocol-portable.
+  let system
+  if (desc.caching) {
+    system = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }]
+    if (ctx) system.push({ type: 'text', text: ctx })
+  } else {
+    system = SYSTEM_PROMPT + ctx
   }
-}
-
-/* ── Kimi K2.6 via Anthropic-compatible endpoint ── */
-
-async function streamKimi({ messages, ctx, onDelta, signal, model }) {
-  const auth = kimiAuth()
-  const useModel = model && model !== 'default' ? model : kimiModel()
-  if (!auth) {
-    throw new UserFacingError('Kimi is not connected. Log in with the kimi CLI, or create an API key in the Kimi Code console and set KIMI_API_KEY in .env.')
+  const body = {
+    model: desc.model,
+    // table-driven output ceiling (anthropicMaxTokens); for Kimi/compat it's the descriptor's cap.
+    max_tokens: desc.maxTokens,
+    ...(desc.thinking ? { thinking: { type: 'adaptive' } } : {}),
+    // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking; falls back to
+    // DEFAULT_EFFORT (VIBEMESH_EFFORT or xhigh) when unset. Only sent for effort-capable engines.
+    ...(desc.effort ? { output_config: { effort: resolveEffort(effort) } } : {}),
+    system,
+    messages,
   }
-  const secret = auth.kind === 'api-key' ? auth.apiKey : auth.token
-  // Kimi's Anthropic-compatible endpoint: API keys go in x-api-key; the CLI's
-  // login token may need Authorization: Bearer — try both before giving up.
-  const headerStyles = auth.kind === 'api-key' ? ['x-api-key', 'bearer'] : ['bearer', 'x-api-key']
 
   let lastAuthError = null
-  for (const style of headerStyles) {
-    const client = new Anthropic(
-      style === 'x-api-key' ? { baseURL: kimiBaseUrl(), apiKey: secret } : { baseURL: kimiBaseUrl(), apiKey: null, authToken: secret },
-    )
-    // keep the payload protocol-portable: no thinking, no cache_control
-    const stream = client.messages.stream(
-      {
-        model: useModel,
-        max_tokens: KIMI_MAX_TOKENS,
-        system: SYSTEM_PROMPT + ctx,
-        messages,
-      },
-      { signal },
-    )
+  for (const attempt of attempts) {
+    const client = new Anthropic({ ...attempt.clientOpts, timeout: GEN_TIMEOUT_MS, maxRetries: GEN_MAX_RETRIES })
+    const stream = client.messages.stream(body, { signal })
     stream.on('text', onDelta)
     try {
-      await stream.finalMessage()
-      return
+      const final = await stream.finalMessage()
+      // Forward stop_reason so the client can tell a complete reply from one cut off at the
+      // output-token ceiling ('max_tokens') instead of feeding half a program to the parser.
+      return { stopReason: final?.stop_reason ?? undefined }
     } catch (error) {
-      if (error instanceof Anthropic.AuthenticationError || error?.status === 403) {
+      // multi-attempt providers (Kimi: x-api-key vs Bearer) fall through to the next auth style on
+      // an auth/403; every other error — and the final attempt — is surfaced.
+      if (attempts.length > 1 && (error instanceof Anthropic.AuthenticationError || error?.status === 403)) {
         lastAuthError = error
         continue
       }
-      throw translateAnthropicError(error, 'Kimi')
+      throw translateAnthropicError(error, desc.who)
     }
   }
-  if (auth.kind === 'login') {
+  if (kimiLogin) {
     throw new UserFacingError(
       'Kimi rejected the CLI login token. Their coding API needs a key from the Kimi Code console (kimi.com → Kimi Code → API keys, included in your subscription) — put it in .env as KIMI_API_KEY and restart.',
     )
   }
-  throw translateAnthropicError(lastAuthError, 'Kimi')
+  throw translateAnthropicError(lastAuthError, desc.who)
+}
+
+/** Ordered Anthropic-client auth attempts for a descriptor. A list so Kimi's CLI login token can
+ *  fall back between x-api-key and Authorization: Bearer. Throws UserFacingError when not connected.
+ *  Returns { attempts, kimiLogin } (kimiLogin → the login-only rejection message above). */
+function anthropicAuthAttempts(desc) {
+  const kind = desc.auth?.kind
+  if (kind === 'default') {
+    // first-party: the SDK reads ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from the environment.
+    return { attempts: [{ clientOpts: {} }], kimiLogin: false }
+  }
+  if (kind === 'kimi') {
+    const auth = kimiAuth()
+    if (!auth) throw new UserFacingError('Kimi is not connected. Log in with the kimi CLI, or create an API key in the Kimi Code console and set KIMI_API_KEY in .env.')
+    const secret = auth.kind === 'api-key' ? auth.apiKey : auth.token
+    const styles = auth.kind === 'api-key' ? ['x-api-key', 'bearer'] : ['bearer', 'x-api-key']
+    const attempts = styles.map((style) => ({
+      clientOpts: style === 'x-api-key' ? { baseURL: desc.baseURL, apiKey: secret } : { baseURL: desc.baseURL, apiKey: null, authToken: secret },
+    }))
+    return { attempts, kimiLogin: auth.kind === 'login' }
+  }
+  if (kind === 'apikey') {
+    // generic Anthropic-compatible provider (P2: GLM / DeepSeek / custom-anthropic). Key passed inline.
+    if (!desc.auth.secret) throw new UserFacingError(`${desc.who} is not connected — add its API key.`)
+    return { attempts: [{ clientOpts: { baseURL: desc.baseURL, apiKey: desc.auth.secret } }], kimiLogin: false }
+  }
+  throw new UserFacingError(`Unsupported auth kind for ${desc.who}.`)
 }
 
 function translateAnthropicError(error, who) {
@@ -626,9 +825,10 @@ function translateAnthropicError(error, who) {
   return error
 }
 
-/* ── Claude Code subscription login (Agent SDK) ── */
+/* ── CLI adapter — Claude Code subscription login (Agent SDK) ── */
 
-async function streamClaudeCode({ messages, model, ctx, onDelta, signal, effort }) {
+async function streamClaudeCodeAdapter({ desc, messages, ctx, onDelta, signal, effort }) {
+  const model = desc.model
   let query
   try {
     ;({ query } = await import('@anthropic-ai/claude-agent-sdk'))
@@ -767,64 +967,147 @@ function collectImages(content) {
   return content.filter((b) => b.type === 'image')
 }
 
-/* ── Local LLM (Ollama / LM Studio, OpenAI-compatible) ── */
+/* ── OpenAI-protocol adapter — local (Ollama / LM Studio) AND hosted OpenAI-compatible providers
+   (P2: OpenAI / OpenRouter / DeepSeek / custom). Differences are descriptor-driven: a local engine
+   carries numCtx (sends Ollama's options block) and no auth; a hosted engine carries a Bearer key
+   and no numCtx (a clean OpenAI payload). ── */
 
-async function streamLocal({ model, messages, ctx, onDelta, signal }) {
-  // Without these, Ollama's ~2-4K default context truncates the system prompt
-  // before the model sees the multi-part/connector rules, and its ~128-token
-  // output default cuts programs off mid-module — guaranteeing blobs. Both knobs
-  // are belt-and-suspenders: LM Studio honors top-level max_tokens; Ollama reads
-  // options.num_ctx/num_predict and ignores unknown keys.
+/** Build the chat-completions URL, tolerant of base URLs WITH a version segment (hosted APIs:
+ *  `https://api.openai.com/v1`, OpenRouter `…/api/v1`, Gemini's OpenAI shim `…/v1beta/openai`) OR
+ *  WITHOUT one (bare hosts: Ollama `http://localhost:11434`, `https://api.deepseek.com`). Prevents a
+ *  double `/v1` on hosted providers while still adding `/v1` for bare hosts. */
+/** Strip trailing slashes without a regex (avoids the ReDoS a `/\/+$/` over attacker-controlled
+ *  input would carry). */
+function trimTrailingSlashes(s) {
+  let i = String(s).length
+  while (i > 0 && s[i - 1] === '/') i--
+  return String(s).slice(0, i)
+}
+function openAiApiUrl(baseURL, apiPath) {
+  const b = trimTrailingSlashes(baseURL)
+  // `\d\w*` (single digit + word chars), NOT `\d+\w*` — the latter has two adjacent quantifiers over
+  // overlapping classes (\d ⊂ \w), which backtracks polynomially on a crafted host (ReDoS).
+  return /\/v\d\w*(\/openai)?$/.test(b) ? `${b}/${apiPath}` : `${b}/v1/${apiPath}`
+}
+export function chatCompletionsUrl(baseURL) {
+  return openAiApiUrl(baseURL, 'chat/completions')
+}
+
+/** Live model discovery for a connection (generalizes the Kimi/local listers): query the provider's
+ *  models endpoint with the supplied key. Returns model ids (newest-first as the API gives them) or
+ *  null on any failure. Used by POST /api/discover-models to populate the add-form picker. */
+export async function discoverModels({ protocol, baseUrl, secret }) {
+  if (!baseUrl) return null
+  try {
+    // re-validate at the fetch site (defense-in-depth beyond the route guard): http(s)-only,
+    // cloud-metadata + link-local blocked. Throws on a bad/blocked host → caught → null.
+    validateFetchUrl(baseUrl)
+    if (protocol === 'anthropic') {
+      const url = `${trimTrailingSlashes(baseUrl)}/v1/models`
+      const res = await fetch(url, { headers: { 'x-api-key': secret || '', 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(6000) })
+      if (!res.ok) return null
+      const body = await res.json()
+      return (body.data ?? body.models ?? []).map((m) => m.id ?? m.name).filter(Boolean)
+    }
+    const headers = {}
+    if (secret) headers.Authorization = `Bearer ${secret}`
+    const res = await fetch(openAiApiUrl(baseUrl, 'models'), { headers, signal: AbortSignal.timeout(6000) })
+    if (!res.ok) return null
+    const body = await res.json()
+    return (body.data ?? body.models ?? []).map((m) => m.id ?? m.name).filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+async function streamOpenAiProtocol({ desc, messages, ctx, onDelta, signal }) {
+  const baseURL = desc.baseURL
+  const who = desc.who
+  // http(s)-only + cloud-metadata/link-local blocked (localhost IS allowed — local LLMs live there).
+  // Connections are pre-validated on save; this guards the fetch site itself.
+  try { validateFetchUrl(baseURL) } catch { throw new UserFacingError(`Invalid base URL for ${who}.`) }
+  // Bound the whole request by the same generation timeout as the SDK engines, combined with the
+  // caller's abort (client disconnect). AbortSignal.timeout fires a TimeoutError we translate; the
+  // merged signal also aborts mid-stream if the model stalls past the budget.
+  const timeoutSignal = AbortSignal.timeout(GEN_TIMEOUT_MS)
+  const fetchSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  const isTimeout = (err) => err?.name === 'TimeoutError' || (timeoutSignal.aborted && !signal?.aborted)
+  const timeoutError = () =>
+    new UserFacingError(
+      `${who} did not respond within ${Math.round(GEN_TIMEOUT_MS / 60000)} min — raise VIBEMESH_GEN_TIMEOUT_MS${desc.numCtx ? ' or use a smaller model' : ''}.`,
+    )
+
+  // For local (Ollama) the options.num_ctx/num_predict knobs are belt-and-suspenders: without them
+  // Ollama's ~2-4K default context truncates the system prompt and its ~128-token output default
+  // cuts programs off mid-module. LM Studio + hosted OpenAI-compatible APIs honor top-level
+  // max_tokens and ignore `options`; we send `options` ONLY when numCtx is set (a local engine).
   const body = {
-    model,
+    model: desc.model,
     stream: true,
-    // set BOTH: LM Studio honors top-level max_tokens, Ollama reads options.num_ctx/num_predict
-    max_tokens: LOCAL_NUM_PREDICT,
+    max_tokens: desc.maxTokens,
     temperature: 0.2,
-    options: { num_ctx: LOCAL_NUM_CTX, num_predict: LOCAL_NUM_PREDICT, temperature: 0.2 },
+    ...(desc.numCtx ? { options: { num_ctx: desc.numCtx, num_predict: desc.maxTokens, temperature: 0.2 } } : {}),
     messages: [{ role: 'system', content: SYSTEM_PROMPT + ctx }, ...messages.map(toOpenAiMessage)],
   }
+  const headers = { 'Content-Type': 'application/json' }
+  // hosted OpenAI-compatible providers take a Bearer key; a local server (no auth) sends none.
+  if (desc.auth?.secret) headers.Authorization = `Bearer ${desc.auth.secret}`
 
   let res
   try {
-    res = await fetch(`${localBaseUrl()}/v1/chat/completions`, {
+    res = await fetch(chatCompletionsUrl(baseURL), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
-      signal,
+      signal: fetchSignal,
     })
   } catch (err) {
+    if (isTimeout(err)) throw timeoutError()
     if (err?.name === 'AbortError') throw err
-    throw new UserFacingError(`Could not reach the local LLM at ${localBaseUrl()} — is Ollama/LM Studio running?`)
+    throw new UserFacingError(`Could not reach ${who} at ${baseURL}${desc.numCtx ? ' — is Ollama/LM Studio running?' : '.'}`)
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new UserFacingError(`Local LLM error (${res.status}): ${text.slice(0, 300)}`)
+    throw new UserFacingError(`${who} error (${res.status}): ${text.slice(0, 300)}`)
   }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith('data:')) continue
-      const payload = trimmed.slice(5).trim()
-      if (payload === '[DONE]') return
-      try {
-        const chunk = JSON.parse(payload)
-        const delta = chunk.choices?.[0]?.delta?.content
-        if (delta) onDelta(delta)
-      } catch {
-        /* keep-alive or partial line */
+  // OpenAI-shaped finish_reason: 'length' means the output hit num_predict/max_tokens and the
+  // program is truncated. Normalize to 'max_tokens' so the client's single truncation check works
+  // across engines (the 4096-token local default is the most likely to trip this).
+  let finishReason
+  const result = () => ({ stopReason: finishReason === 'length' ? 'max_tokens' : undefined })
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) continue
+        const payload = trimmed.slice(5).trim()
+        if (payload === '[DONE]') return result()
+        try {
+          const chunk = JSON.parse(payload)
+          const delta = chunk.choices?.[0]?.delta?.content
+          if (delta) onDelta(delta)
+          if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason
+        } catch {
+          /* keep-alive or partial line */
+        }
       }
     }
+  } catch (err) {
+    // a mid-stream timeout aborts reader.read() with a TimeoutError — translate it. A client
+    // disconnect rethrows; the generate route's `abort.signal.aborted` guard then ends quietly.
+    if (isTimeout(err)) throw timeoutError()
+    throw err
   }
+  return result()
 }
 
 function toOpenAiMessage(message) {

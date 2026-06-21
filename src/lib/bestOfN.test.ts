@@ -3,6 +3,7 @@ import { scoreCandidate, pickBestIndex, type CandidateSignals } from './bestOfN'
 
 const sig = (o: Partial<CandidateSignals>): CandidateSignals => ({
   hasScad: true,
+  compileAttempted: true,
   compiled: true,
   degenerate: false,
   structuralIssues: 0,
@@ -35,6 +36,16 @@ describe('scoreCandidate — reference-free priority', () => {
     const noScad = scoreCandidate(sig({ hasScad: false, compiled: false }))
     const worstReal = scoreCandidate(sig({ compiled: false, structuralIssues: 99 }))
     expect(noScad).toBeLessThan(worstReal)
+  })
+
+  it('a budget-starved (not-attempted) candidate beats a confirmed fail/degenerate but loses to a clean compile', () => {
+    const notAttempted = scoreCandidate(sig({ compileAttempted: false, compiled: false }))
+    const confirmedFail = scoreCandidate(sig({ compileAttempted: true, compiled: false }))
+    const degenerate = scoreCandidate(sig({ compileAttempted: true, compiled: true, degenerate: true }))
+    const clean = scoreCandidate(sig({ compileAttempted: true, compiled: true }))
+    expect(notAttempted).toBeGreaterThan(confirmedFail) // an environmental miss is not a fault
+    expect(notAttempted).toBeGreaterThan(degenerate) // and beats a known-bad render
+    expect(notAttempted).toBeLessThan(clean) // but a confirmed clean compile is still preferred
   })
 })
 

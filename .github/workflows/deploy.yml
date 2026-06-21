@@ -5,8 +5,12 @@ name: Deploy static demo to GitHub Pages
 # AI generation needs the Express backend, which Pages cannot run; the app
 # detects the missing backend at runtime and shows a "demo mode" notice.
 
+# Gated on CI: deploy only after the "CI" workflow (lint → test → bench ratchets → build)
+# succeeds on main, so a red-CI commit can never publish. Manual dispatch stays available.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -22,9 +26,14 @@ concurrency:
 
 jobs:
   build:
+    # Only publish a commit whose CI run passed (or an explicit manual dispatch).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # build the exact commit CI validated, not just the branch tip
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: actions/setup-node@v6
         with:

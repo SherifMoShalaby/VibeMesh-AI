@@ -50,10 +50,12 @@
     "bench:composition": "node bench/composition.selftest.mjs",
     "bench:compgraph": "node bench/composition-graph.selftest.mjs",
     "bench:hardware": "node bench/hardware.selftest.mjs",
+    "bench:server": "node bench/server.selftest.mjs",
     "bench:coilspring": "node bench/coilspring-verdict.mjs",
     "bench:gatelogic": "node bench/gate.selftest.mjs",
     "test:pack": "tsx bench/packplates.selftest.ts",
-    "bench:gate": "vitest run && node bench/interference.selftest.mjs && node bench/skills.selftest.mjs && node bench/retrieval.selftest.mjs && node bench/retrieval-recall.mjs && tsx bench/intent.selftest.ts && node bench/composition.selftest.mjs && node bench/composition-graph.selftest.mjs && node bench/hardware.selftest.mjs && node bench/gate.selftest.mjs && node bench/gate.mjs",
+    "bench:selftests": "node bench/interference.selftest.mjs && node bench/skills.selftest.mjs && node bench/retrieval.selftest.mjs && node bench/retrieval-recall.mjs && tsx bench/intent.selftest.ts && node bench/composition.selftest.mjs && node bench/composition-graph.selftest.mjs && node bench/hardware.selftest.mjs && node bench/server.selftest.mjs && node bench/gate.selftest.mjs",
+    "bench:gate": "vitest run && npm run bench:selftests && node bench/gate.mjs",
     "bench:baseline": "node bench/gate.mjs --update-baseline"
   },
   "dependencies": {

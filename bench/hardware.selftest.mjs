@@ -12,9 +12,10 @@
  *   node bench/hardware.selftest.mjs   → exit 0 (all pass) / 1 (a guard tripped)
  */
 import assert from 'node:assert/strict'
-import { SCREWS, BEARINGS, FASTENER_SET, billOfMaterials, screwSpec, bearingSpec, hasHardwareToken } from '../server/hardware.mjs'
+import { SCREWS, BEARINGS, FASTENER_SET, billOfMaterials, screwSpec, bearingSpec, hasHardwareToken, counterboreDia } from '../server/hardware.mjs'
 import { SKILLS } from '../server/skills.mjs'
 import { hardwareDirective } from '../server/providers.mjs'
+import { SYSTEM_PROMPT } from '../server/prompt.mjs'
 
 let passed = 0
 const cases = []
@@ -107,6 +108,23 @@ test('screwSpec / bearingSpec / hasHardwareToken normalize tokens', () => {
   assert.equal(bearingSpec('a box'), null)
   assert.equal(hasHardwareToken('M4 bolt'), true)
   assert.equal(hasHardwareToken('a plain box'), false)
+})
+
+test('hasHardwareToken is idempotent (the /g regexes do not leak lastIndex across calls)', () => {
+  // a /g regex with .test() advances lastIndex — without a reset, the 2nd call would flip to false
+  assert.equal(hasHardwareToken('M4 bolt'), true)
+  assert.equal(hasHardwareToken('M4 bolt'), true, 'repeated screw check must stay true')
+  assert.equal(hasHardwareToken('a 608 bearing'), true)
+  assert.equal(hasHardwareToken('a 608 bearing'), true, 'repeated bearing check must stay true')
+  assert.equal(hasHardwareToken('a plain box'), false)
+  assert.equal(hasHardwareToken('a plain box'), false)
+})
+
+test('counterboreDia is catalog-derived (exceeds the head Ø) and the prompt cites it (single source)', () => {
+  for (const key of ['M3', 'M4', 'M5']) {
+    assert.ok(counterboreDia(key) > SCREWS[key].headDia, `${key} counterbore must clear the head Ø ${SCREWS[key].headDia}`)
+    assert.ok(SYSTEM_PROMPT.includes(`${key} ⌀${counterboreDia(key)}`), `the prompt must cite the catalog-derived ${key} counterbore ⌀${counterboreDia(key)}`)
+  }
 })
 
 test('hardwareDirective injects exact dims for named hardware, nothing otherwise', () => {

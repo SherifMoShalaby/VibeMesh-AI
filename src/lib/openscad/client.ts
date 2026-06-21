@@ -6,8 +6,11 @@ import type { CompileResult } from '../../types'
 // roomier one for deliberate one-shot exports.
 const DEFAULT_RENDER_TIMEOUT_MS = 60_000
 
+const DEFAULT_LANE = '__default__'
+
 interface PendingJob {
   id: number
+  projectId: string
   code: string
   defines: string[]
   timeoutMs: number
@@ -20,6 +23,10 @@ export interface CompileOpts {
    *  and are NEVER coalesced/superseded — they always run — but yield scheduling priority to the
    *  user's interactive render. Default false = the interactive, latest-wins coalescing path. */
   background?: boolean
+  /** which chat/project this interactive render belongs to. Each project gets its OWN coalescing
+   *  lane, so a BACKGROUND chat's render can never supersede the FOREGROUND chat's (concurrent
+   *  chats). Omitted → a single shared lane (the pre-concurrency single-chat behavior). */
+  projectId?: string
 }
 
 /**
@@ -29,13 +36,23 @@ export interface CompileOpts {
  * - BACKGROUND renders (loop work) queue FIFO and always complete, but yield to interactive jobs
  * - watchdog: terminates and respawns the worker if a render hangs
  */
-class OpenScadEngine {
+export class OpenScadEngine {
   private worker: Worker | null = null
   private nextId = 1
   private active: PendingJob | null = null
-  private queued: PendingJob | null = null // at most one INTERACTIVE job (coalesced, latest wins)
+  // one INTERACTIVE job per project LANE (coalesced, latest wins WITHIN a lane). Map iteration is
+  // insertion order, so non-foreground lanes drain oldest-first. A background chat's render lives in
+  // its own lane and can never supersede the foreground's.
+  private queued = new Map<string, PendingJob>()
   private bgQueue: PendingJob[] = [] // FIFO of BACKGROUND jobs — never coalesced/superseded
+  private foreground: string | null = null // the active project's lane is drained first
   private timer: ReturnType<typeof setTimeout> | null = null
+
+  /** Tell the engine which project is in the foreground so its interactive lane jumps the queue.
+   *  Called on every project switch; the engine never imports the store. */
+  setForeground(projectId: string | null): void {
+    this.foreground = projectId
+  }
 
   compile(
     code: string,
@@ -44,16 +61,18 @@ class OpenScadEngine {
     opts: CompileOpts = {},
   ): Promise<CompileResult> {
     return new Promise((resolve) => {
-      const job: PendingJob = { id: this.nextId++, code, defines, timeoutMs, background: !!opts.background, resolve }
+      const pid = opts.projectId ?? DEFAULT_LANE
+      const job: PendingJob = { id: this.nextId++, projectId: pid, code, defines, timeoutMs, background: !!opts.background, resolve }
       if (!this.active) {
         this.run(job)
       } else if (job.background) {
         // background/loop renders must not be dropped — queue them FIFO behind the active job
         this.bgQueue.push(job)
       } else {
-        // interactive: replace any previously queued interactive job — only the newest matters
-        this.queued?.resolve({ ok: false, error: 'superseded' })
-        this.queued = job
+        // interactive: replace any previously queued job IN THIS PROJECT'S LANE — only the newest
+        // matters per chat, but another chat's queued render is left untouched
+        this.queued.get(pid)?.resolve({ ok: false, error: 'superseded' })
+        this.queued.set(pid, job)
       }
     })
   }
@@ -97,13 +116,25 @@ class OpenScadEngine {
     const job = this.active
     this.active = null
     job?.resolve(result)
-    // interactive render takes priority for responsiveness; otherwise drain the background FIFO
-    const next = this.queued ?? this.bgQueue.shift() ?? null
-    if (next) {
-      // clear the interactive slot only when that's what we picked (a bg job leaves queued untouched)
-      if (next === this.queued) this.queued = null
-      this.run(next)
+    const next = this.pickNext()
+    if (next) this.run(next)
+  }
+
+  /** Next job to run: the FOREGROUND project's interactive lane first (responsiveness), then the
+   *  other interactive lanes oldest-first, then the background FIFO. */
+  private pickNext(): PendingJob | null {
+    if (this.foreground && this.queued.has(this.foreground)) {
+      const job = this.queued.get(this.foreground)!
+      this.queued.delete(this.foreground)
+      return job
     }
+    const oldest = this.queued.keys().next().value as string | undefined
+    if (oldest !== undefined) {
+      const job = this.queued.get(oldest)!
+      this.queued.delete(oldest)
+      return job
+    }
+    return this.bgQueue.shift() ?? null
   }
 
   private respawn(): void {

@@ -37,6 +37,10 @@ export interface ChatImage {
 export interface ChatMessage {
   id: string
   role: ChatRole
+  /** epoch ms stamped at creation, so the rendered time is the SEND time and stays stable across
+   *  re-renders. Optional: messages persisted before this field load without it (the UI hides the
+   *  time rather than showing a wrong one). */
+  createdAt?: number
   /** prose part of the message (code stripped for assistant messages) */
   text: string
   /** full scad code carried by this message, if any */

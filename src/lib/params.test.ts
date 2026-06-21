@@ -68,6 +68,13 @@ describe('parseParameters', () => {
     const p = parseParameters('w = 10; // [50:5]')
     expect(byName(p, 'w')).toMatchObject({ kind: 'slider', min: 5, max: 50 })
   })
+
+  it('keeps parsing params after a string default that contains a semicolon', () => {
+    const p = parseParameters('label = "a;b"; // a label\nsize = 10;')
+    expect(byName(p, 'label')?.defaultValue).toBe('a;b')
+    // before the fix, the `;` inside the string broke the match and dropped `size` (and all after)
+    expect(byName(p, 'size')).toBeDefined()
+  })
 })
 
 describe('buildDefines', () => {
@@ -81,6 +88,11 @@ describe('buildDefines', () => {
   })
   it('never emits a non-finite number define', () => {
     expect(buildDefines(params, { w: NaN })).toEqual([])
+  })
+  it('escapes backslashes (before quotes) so a string value can never break the SCAD literal', () => {
+    const sp = parseParameters('p = "x"; // a path')
+    // value a\b → SCAD literal "a\\b"; a trailing-backslash value would otherwise escape the close-quote
+    expect(buildDefines(sp, { p: 'a\\b' })).toEqual(['-D', 'p="a\\\\b"'])
   })
 })
 

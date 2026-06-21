@@ -8,7 +8,7 @@ import { tileReference } from '../lib/tile'
 import { DSpark, DImage, DSparkFill, DArrowRight, DBox, DCamera, DGrid, DCylinder } from './icons'
 
 const CHIP_ICONS = [DBox, DCamera, DGrid, DCylinder]
-const MAX_IMAGES = 3
+const MAX_IMAGES = 10
 const IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/
 
 export default function EmptyState() {
@@ -118,7 +118,7 @@ export default function EmptyState() {
             accept="image/png,image/jpeg,image/webp,image/gif"
             multiple
             hidden
-            onChange={(e) => { attachFiles(e.target.files ?? []); e.currentTarget.value = '' }}
+            onChange={(e) => { void attachFiles(e.target.files ?? []); e.currentTarget.value = '' }}
           />
           <button
             className="chip-btn icon-only"

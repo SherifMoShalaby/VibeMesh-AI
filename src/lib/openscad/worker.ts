@@ -86,7 +86,7 @@ function pickError(stderr: string[]): string | undefined {
   // assertions — and, by taking the first 6 matches, dropped the aborting ERROR
   // when warnings preceded it. ERRORs go first so the repair turn sees the cause.
   const isError = (l: string) =>
-    /\bERROR\b|Parser error|Compile error|assert|2-manifold|CSG normalization|top level object is empty|object may not be|unable to convert/i.test(l)
+    /\bERROR\b|Parser error|Compile error|assert|2-manifold|CSG normalization|top level object is empty|object may not be|not a [23]D object|unable to convert/i.test(l)
   const isUsefulWarning = (l: string) =>
     /\bWARNING\b/i.test(l) && /ignored|unknown|undefined|not defined|exceed|deprecat/i.test(l)
   const errors = stderr.filter(isError)
@@ -96,7 +96,9 @@ function pickError(stderr: string[]): string | undefined {
   // nothing matched — return a bounded tail of the NON-BLANK raw stderr so the
   // repair turn has real text to act on; if stderr is all blank lines, return
   // undefined so the caller's informative exit-code fallback applies instead.
-  const tail = stderr.filter((l) => l.trim()).slice(-8)
+  // Drop the harmless "Could not initialize localization" startup noise so it never
+  // surfaces as the headline "error" on an otherwise-empty stderr.
+  const tail = stderr.filter((l) => l.trim() && !/localization|locale/i.test(l)).slice(-8)
   return tail.length ? tail.join('\n') : undefined
 }
 

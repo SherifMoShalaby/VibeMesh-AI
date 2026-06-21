@@ -28,8 +28,8 @@
   /* ── text ramp ────────────────────────────────────────────── */
   --text:        #eef1f5;
   --text-dim:    #a8aeb8;
-  --text-faint:  #7e858f;
-  --text-ghost:  #565c66;
+  --text-faint:  #8d949e;
+  --text-ghost:  #7a818c; /* ≥4.5:1 on the dark panels — carries param ranges + export caveats (a11y) */
 
   /* ── ACCENT · electric cobalt ─────────────────────────────── */
   --accent:       #3d6ff5;
@@ -521,8 +521,31 @@ input[type='checkbox']:focus-visible,
 .msg-img {
   max-width: 200px; border-radius: var(--r-sm); border: 1px solid var(--line-strong);
   display: block; margin-bottom: var(--s2);
+  cursor: zoom-in; transition: border-color var(--t-fast) var(--ease-out);
 }
+.msg-img:hover, .msg-img:focus-visible { border-color: var(--accent); outline: none; }
 .msg.ai .msg-img { margin-left: calc(22px + var(--s2)); }
+.attach-thumb img { cursor: zoom-in; }
+
+/* full-size image preview (lightbox) — own class, not .scrim, so it stays centered on mobile
+ * (.scrim is overridden to a bottom-sheet there). */
+.img-lightbox {
+  position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
+  padding: var(--s6); background: rgba(6, 7, 9, 0.82); backdrop-filter: blur(4px);
+  cursor: zoom-out; animation: menu-in var(--t-med) var(--ease-out);
+}
+.img-lightbox img {
+  max-width: min(92vw, 1200px); max-height: 88vh; object-fit: contain;
+  border-radius: var(--r-md); border: 1px solid var(--line-strong); box-shadow: var(--sh-glass);
+  cursor: default;
+}
+.img-lightbox-x {
+  position: fixed; top: var(--s4); right: var(--s4); width: 40px; height: 40px;
+  display: grid; place-items: center; font-size: 24px; line-height: 1; color: var(--text);
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 50%;
+  cursor: pointer; transition: background var(--t-fast) var(--ease-out);
+}
+.img-lightbox-x:hover { background: var(--panel-2); }
 
 /* version / code-updated chip */
 .code-chip {
@@ -726,6 +749,17 @@ input[type='checkbox']:focus-visible,
 }
 .drop-overlay span { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-text); font-weight: 600; }
 .drop-overlay svg { width: 18px; height: 18px; }
+
+/* generation timeout progress bar (above the composer while a request streams) */
+.gen-progress { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; padding: var(--s2) var(--s3) 0; }
+.gen-progress-track { height: 4px; border-radius: var(--r-pill); background: var(--inset); overflow: hidden; }
+.gen-progress-fill { height: 100%; min-width: 6px; border-radius: var(--r-pill); transition: width 1s linear; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent)); background-size: 200% 100%; animation: gen-shimmer 1.4s linear infinite; }
+@keyframes gen-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.gen-progress-label { display: flex; justify-content: space-between; gap: var(--s3); font-size: var(--fs-micro); color: var(--text-dim); }
+.gen-progress-remaining { font-family: var(--font-mono); color: var(--text-faint); }
+.gen-progress.low .gen-progress-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 55%, transparent), var(--warn)); }
+.gen-progress.low .gen-progress-remaining { color: var(--warn); }
+@media (prefers-reduced-motion: reduce) { .gen-progress-fill { animation: none; } }
 
 /* composer */
 .composer { flex-shrink: 0; padding: var(--s3); border-top: 1px solid var(--line-soft); background: var(--panel-hi); }
@@ -1387,6 +1421,12 @@ input[type='checkbox']:focus-visible,
 .menu-item.danger:hover:not(:disabled) { background: var(--err-soft); }
 .menu-item .mi-check { margin-left: auto; color: transparent; display: grid; }
 .menu-item.active .mi-check { color: var(--accent-text); }
+/* per-project generation status in the switcher (concurrent chats) */
+.menu-item .mi-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: mi-spin 0.7s linear infinite; flex-shrink: 0; }
+@keyframes mi-spin { to { transform: rotate(360deg); } }
+.menu-item .mi-stop { font-size: var(--fs-micro); color: var(--warn); padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--warn-soft); cursor: pointer; flex-shrink: 0; }
+.menu-item .mi-stop:hover { background: var(--warn-soft); }
+@media (prefers-reduced-motion: reduce) { .menu-item .mi-spin { animation-duration: 1.6s; } }
 .menu-item .mi-check svg { width: 15px; height: 15px; }
 .menu-sep { height: 1px; margin: 5px 6px; background: var(--line-soft); }
 .menu-note { padding: 8px 10px 4px; font-size: var(--fs-micro); color: var(--text-ghost); }
@@ -1458,6 +1498,21 @@ input[type='checkbox']:focus-visible,
 .engine-row-actions { margin-left: auto; display: flex; gap: var(--s1); }
 .engine-row-detail { font-size: var(--fs-micro); color: var(--text-faint); line-height: var(--lh-snug); }
 .engine-row-detail code { font-family: var(--font-mono); background: var(--inset); padding: 1px 5px; border-radius: 4px; color: var(--text-dim); }
+.engine-specs { margin-top: 3px; font-family: var(--font-mono); color: var(--text-dim); }
+.engine-specs-note { margin-top: 2px; font-style: italic; }
+
+/* marketplace: "Add a provider" catalog + add form */
+.add-connection { display: flex; flex-direction: column; gap: var(--s3); }
+.catalog-gallery { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.catalog-chip { padding: 6px 11px; border-radius: var(--r-pill); background: var(--inset); border: 1px solid var(--line-strong); color: var(--text-dim); font-size: var(--fs-small); cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
+.catalog-chip:hover { color: var(--text); border-color: var(--accent); }
+.catalog-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.add-form { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); border-radius: var(--r-sm); background: var(--inset); border: 1px solid var(--line); }
+.add-field { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: var(--s3); }
+.add-field > span { font-size: var(--fs-small); color: var(--text-dim); }
+.add-field input { padding: 7px 9px; border-radius: var(--r-sm); background: var(--bg); border: 1px solid var(--line-strong); color: var(--text); font-family: var(--font-mono); font-size: var(--fs-small); outline: none; }
+.add-field input:focus { border-color: var(--accent); }
+.add-actions { display: flex; align-items: center; gap: var(--s2); margin-top: 2px; }
 .engine-connect { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .engine-connect input { flex: 1; min-width: 160px; padding: 7px 9px; border-radius: var(--r-sm); background: var(--inset); border: 1px solid var(--line-strong); color: var(--text); font-family: var(--font-mono); font-size: var(--fs-small); outline: none; }
 .engine-connect input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }

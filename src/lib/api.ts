@@ -27,15 +27,46 @@ export interface ProviderInfo {
   contextWindow?: number
   /** tokens this engine reserves for its OWN output (subtracted from the history budget) */
   outputReservation?: number
+  /** the model's REAL max output ceiling, in tokens — distinct from outputReservation (what we
+   *  reserve by default). Shown in the Engines panel so "context ≠ output" is unambiguous. */
+  maxOutput?: number
   /** max image blocks this engine accepts per request (claude-code CAP=4; local non-vision=0).
    *  toApiMessages drops lowest-priority images (tiles first) before exceeding it. */
   maxImages?: number
+  /** true for a user-added marketplace connection (id `conn:<id>`) — drives the Remove action */
+  connection?: boolean
+  /** the catalog entry a connection was created from (e.g. 'openrouter', 'glm', 'custom-openai') */
+  catalogId?: string
+}
+
+/** A provider in the "Add connection" catalog (GET /api/catalog). */
+export interface CatalogEntry {
+  id: string
+  label: string
+  protocol: 'openai' | 'anthropic'
+  baseUrl: string
+  defaultModel: string
+  models: string[]
+  custom?: boolean
+  caps: { contextWindow: number; maxOutputTokens: number; vision: boolean; thinking: boolean }
+  connect: { placeholder: string; url: string; urlLabel: string }
+}
+
+export interface SaveConnectionInput {
+  catalogId: string
+  /** pass an existing id to UPDATE that connection; omit to create a new one */
+  id?: string
+  label?: string
+  model?: string
+  baseUrl?: string
+  secret?: string
+  caps?: Partial<CatalogEntry['caps']>
 }
 
 /** Per-engine image cap. Unknown → no cap (Infinity); a non-vision engine reports 0. */
 export function imageBudgetFor(provider: ProviderInfo | undefined): number {
   if (provider?.maxImages != null) return provider.maxImages
-  return provider?.vision ? 4 : 0
+  return provider?.vision ? 10 : 0
 }
 
 export interface HealthInfo {
@@ -43,6 +74,8 @@ export interface HealthInfo {
   providers: ProviderInfo[]
   /** token size of the shared system prompt — subtracted from each engine's context window */
   systemTokens?: number
+  /** server-side generation request timeout, in ms (VIBEMESH_GEN_TIMEOUT_MS) — shown in the UI */
+  genTimeoutMs?: number
 }
 
 export async function fetchHealth(): Promise<HealthInfo | null> {
@@ -63,6 +96,49 @@ export async function connectEngine(key: string, value: string): Promise<{ ok: b
     body: JSON.stringify({ key, value }),
   })
   return (await res.json()) as { ok: boolean; message?: string; providers?: ProviderInfo[] }
+}
+
+/** The provider catalog for the "Add connection" gallery. */
+export async function fetchCatalog(): Promise<CatalogEntry[]> {
+  try {
+    const res = await fetch('/api/catalog')
+    if (!res.ok) return []
+    const body = (await res.json()) as { catalog?: CatalogEntry[] }
+    return body.catalog ?? []
+  } catch {
+    return []
+  }
+}
+
+/** Add or update a marketplace connection; returns refreshed providers. */
+export async function saveConnection(input: SaveConnectionInput): Promise<{ ok: boolean; id?: string; message?: string; providers?: ProviderInfo[] }> {
+  const res = await fetch('/api/connections', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  return (await res.json()) as { ok: boolean; id?: string; message?: string; providers?: ProviderInfo[] }
+}
+
+/** Remove a marketplace connection entirely (metadata + its saved key); returns refreshed providers. */
+export async function removeConnection(id: string): Promise<{ ok: boolean; providers?: ProviderInfo[] }> {
+  const res = await fetch(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return (await res.json()) as { ok: boolean; providers?: ProviderInfo[] }
+}
+
+/** Live model discovery: ask the provider (with the supplied key) for its model list. [] on failure. */
+export async function discoverModels(input: { protocol: string; baseUrl: string; secret?: string }): Promise<string[]> {
+  try {
+    const res = await fetch('/api/discover-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    const body = (await res.json()) as { ok: boolean; models?: string[] }
+    return body.models ?? []
+  } catch {
+    return []
+  }
 }
 
 /** 1-token connectivity test. */
@@ -318,13 +394,16 @@ export interface StreamCallbacks {
   /** the skills that fired for this request, the ones the cap dropped (matched but cut), and
    *  the fired skills' advisory mechanism-check verdict */
   onSkillReport?: (info: { skillIds: string[]; dropped: string[]; report: SkillIssue[] }) => void
+  /** fired once on the terminal `done` event — carries the engine's stop reason so the caller
+   *  can detect an output-length truncation ('max_tokens') and avoid adopting a cut-off program */
+  onDone?: (info: { stopReason?: string }) => void
 }
 
 /** POST /api/generate and consume the SSE stream. Returns the full reply text. */
 export async function streamGenerate(
   engine: string,
   messages: ApiMessage[],
-  { onDelta, signal, model, effort, context, onSkillReport }: StreamCallbacks,
+  { onDelta, signal, model, effort, context, onSkillReport, onDone }: StreamCallbacks,
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
@@ -348,6 +427,10 @@ export async function streamGenerate(
   const decoder = new TextDecoder()
   let buffer = ''
   let full = ''
+  // The stream must end on a terminal event (done/error). If it closes after some deltas but
+  // before either — server process killed, upstream reset, a proxy dropping the connection — the
+  // accumulated `full` is a partial/truncated reply that must NOT be adopted as a success.
+  let sawTerminal = false
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -366,13 +449,18 @@ export async function streamGenerate(
         full += payload.text
         onDelta(payload.text)
       } else if (payload.type === 'done') {
+        sawTerminal = true
         if (payload.skillIds?.length || payload.droppedSkillIds?.length || payload.skillReport?.length) {
           onSkillReport?.({ skillIds: payload.skillIds ?? [], dropped: payload.droppedSkillIds ?? [], report: payload.skillReport ?? [] })
         }
+        onDone?.({ stopReason: payload.stopReason })
       } else if (payload.type === 'error') {
-        throw new Error(payload.message)
+        throw new Error(payload.message) // an explicit error is terminal too — the throw exits below
       }
     }
   }
+  // A user abort rejects reader.read() with AbortError before we get here, so this only fires on a
+  // genuinely truncated transport — surface a recoverable error rather than returning the partial.
+  if (!sawTerminal) throw new Error('The connection to the server ended before the model finished — please try again.')
   return full
 }

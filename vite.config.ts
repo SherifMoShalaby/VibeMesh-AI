@@ -44,6 +44,12 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:5175',
     },
+    // The API server rewrites .env (saving a key) and .connections.json (the marketplace store) at
+    // runtime; without this, Vite's dev file-watcher full-reloads the page on every save, closing the
+    // Engines panel mid-flow. DEV-only — production (npm start, no Vite) never watches these.
+    watch: {
+      ignored: ['**/.env', '**/.connections.json'],
+    },
   },
   worker: {
     format: 'es',
