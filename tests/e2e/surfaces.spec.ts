@@ -34,6 +34,27 @@ test.describe('in-chat composer + chrome', () => {
     await expect(modal).toBeHidden()
   })
 
+  test('the Engines panel is a card grid; a "+" card expands the connect form in place', async ({ page }) => {
+    await loadExample(page)
+    await page.getByRole('button', { name: /engine|connect ai/i }).first().click()
+    const grid = page.locator('.engine-grid')
+    await expect(grid).toBeVisible()
+    // the addable catalog cards (their "+" corner control) always render once /api/catalog loads,
+    // with or without an AI key — so this works keyless in CI.
+    const addBtn = page.locator('.engine-card .ec-corner-btn').first()
+    await expect(addBtn).toBeVisible()
+    await addBtn.click()
+    const drawer = page.locator('.engine-card .ec-drawer').first()
+    await expect(drawer).toBeVisible()
+    // the connect form is revealed in place (a key / base-URL / name field, depending on the card)
+    await expect(drawer.locator('input').first()).toBeVisible()
+    // collapse restores focus to the trigger (useFocusTrap only restores on dialog unmount, so the
+    // in-place drawer must re-seat focus itself — regression guard for the orphaned-focus bug)
+    await addBtn.click()
+    await expect(drawer).toBeHidden()
+    await expect(addBtn).toBeFocused()
+  })
+
   test('the right panel teaches the slider↔code relationship (Tweak tab + one-time explainer)', async ({ page }) => {
     await loadExample(page)
     await expect(page.locator('.panel-tab', { hasText: 'Tweak' })).toBeVisible() // task-language label
