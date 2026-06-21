@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { useAuth } from '../state/authStore'
@@ -47,7 +47,18 @@ export default function TopBar() {
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const menuRef = useClickOutside(menuOpen, () => setMenuOpen(false))
+
+  // a search box only earns its place once the list is long; auto-focus it on open (the query is
+  // reset when the menu opens, in the toggle handler — keeps this effect free of setState)
+  const showSearch = projects.length > 8
+  useEffect(() => {
+    if (menuOpen && showSearch) searchRef.current?.focus()
+  }, [menuOpen, showSearch])
+  const q = query.trim().toLowerCase()
+  const filteredProjects = q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : projects
 
   const active = projects.find((p) => p.id === activeId)
   const fileBase = (active?.name ?? 'model').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'model'
@@ -93,7 +104,7 @@ export default function TopBar() {
           aria-label="Version history & projects"
           aria-expanded={menuOpen}
           title="Switch, create or delete projects"
-          onClick={() => setMenuOpen(!menuOpen)}
+          onClick={() => { if (!menuOpen) setQuery(''); setMenuOpen(!menuOpen) }}
         >
           <DHistory />
         </button>
@@ -104,8 +115,23 @@ export default function TopBar() {
               <span className="mi-text"><span className="mi-title">New part</span><span className="mi-sub">Start a fresh project</span></span>
             </button>
             {projects.length > 0 && <div className="menu-sep" />}
+            {showSearch && (
+              <input
+                ref={searchRef}
+                className="menu-search"
+                type="text"
+                placeholder="Search projects…"
+                value={query}
+                aria-label="Search projects"
+                onChange={(e) => setQuery(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
             <div className="menu-scroll">
-              {projects.map((p) => {
+              {showSearch && filteredProjects.length === 0 && (
+                <div className="menu-empty">No projects match “{query.trim()}”.</div>
+              )}
+              {filteredProjects.map((p) => {
                 const busy = !!sessions[p.id]?.generating
                 return (
                   <button

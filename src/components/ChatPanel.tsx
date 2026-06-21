@@ -60,6 +60,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const restoreVersion = useStore((s) => s.restoreVersion)
   const restoreNewer = useStore((s) => s.restoreNewer)
   const retryLast = useStore((s) => s.retryLast)
+  const rerollLast = useStore((s) => s.rerollLast)
   const currentCode = useStore((s) => s.code)
   const newProject = useStore((s) => s.newProject)
 
@@ -571,6 +572,19 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                 <button className="code-chip" title="Run the same prompt again" onClick={() => void retryLast()}>
                   <span className="cc-icon"><DRefresh /></span>
                   <span className="cc-text"><span className="cc-title">Retry</span></span>
+                </button>
+              )}
+              {msg.code && isCurrent && !generating && (
+                <button
+                  className="code-chip reroll"
+                  title="Generate a different version of this model — both are kept; switch between them with the version chips"
+                  onClick={() => void rerollLast()}
+                >
+                  <span className="cc-icon"><DRefresh /></span>
+                  <span className="cc-text">
+                    <span className="cc-title">Regenerate</span>
+                    <span className="cc-meta">a different take · keeps this version</span>
+                  </span>
                 </button>
               )}
             </motion.div>

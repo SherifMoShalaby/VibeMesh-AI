@@ -1,10 +1,30 @@
 import type { StlBBox } from './stl'
+import type { Project } from '../types'
 
 /**
  * Pure decision helpers for the generation / compile lifecycle, split out of the zustand store so
  * they're unit-testable without importing the store (which pulls in localStorage-touching UI state
  * that crashes a headless test env). No side effects, no runtime imports.
  */
+
+/**
+ * Cross-tab merge: fold the durable projects another tab just wrote (`incoming`) into THIS tab's
+ * `current` projects, without disturbing the project the user is actively editing. The active
+ * project keeps its live in-tab version (never yank the open chat/editor), and survives even if the
+ * other tab deleted it. Every other project is taken from `incoming` (the reconciled durable truth).
+ */
+export function mergeExternalProjects(
+  incoming: Project[],
+  current: Project[],
+  activeId: string | null,
+): Project[] {
+  const liveActive = activeId ? current.find((p) => p.id === activeId) : undefined
+  if (!liveActive) return incoming // no live active project to preserve — adopt the durable set as-is
+  const next = incoming.map((p) => (p.id === activeId ? liveActive : p))
+  // active project was deleted in the other tab → keep ours so the rug isn't pulled mid-edit
+  if (!incoming.some((p) => p.id === activeId)) return [liveActive, ...next]
+  return next
+}
 
 /** Does the prompt ask for a buildable KIT (→ reinforce multi-part + connector rules)?
  *  Strong phrases only; deliberately ignores bare "part"/"lego" so singular requests
