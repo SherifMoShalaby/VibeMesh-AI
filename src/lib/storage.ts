@@ -1,4 +1,4 @@
-import type { Project } from '../types'
+import type { ChatImage, ChatMessage, Project } from '../types'
 
 /**
  * Persistence facade. Projects + versions live in IndexedDB (async, ~GBs) behind a
@@ -55,13 +55,38 @@ export interface ProjectsRecord {
   projects: Project[]
 }
 
-/** Drop chat images (the bulk of a project's bytes) — the localStorage backup/quota path. */
-export function slimProjects(projects: Project[]): Project[] {
-  return projects.map((p) => ({
+/** Strip chat (and chatFuture) images from a single project — the bulk of its bytes. */
+function stripImages(p: Project): Project {
+  return {
     ...p,
-    chat: p.chat.map((m) => ({ ...m, images: undefined })),
-    chatFuture: p.chatFuture?.map((m) => ({ ...m, images: undefined })),
-  }))
+    chat: p.chat.map((m) => (m.images ? { ...m, images: undefined } : m)),
+    chatFuture: p.chatFuture?.map((m) => (m.images ? { ...m, images: undefined } : m)),
+  }
+}
+
+/** id of the most-recently-updated project (the one the user is most likely still working in). */
+function newestId(projects: Project[]): string | null {
+  let id: string | null = null
+  let max = -Infinity
+  for (const p of projects) {
+    const t = typeof p.updatedAt === 'number' ? p.updatedAt : 0
+    if (t >= max) {
+      max = t
+      id = p.id
+    }
+  }
+  return id
+}
+
+/**
+ * Drop chat images (the bulk of a project's bytes) — the localStorage backup/quota path.
+ * With `keepNewest`, retain images on the single most-recently-updated project (the one the user is
+ * most likely still working in) and shed them only from the rest, so a quota-pressured backup keeps
+ * the active reference photo instead of wiping every image wholesale.
+ */
+export function slimProjects(projects: Project[], opts: { keepNewest?: boolean } = {}): Project[] {
+  const keep = opts.keepNewest ? newestId(projects) : null
+  return projects.map((p) => (p.id === keep ? p : stripImages(p)))
 }
 
 /** Forward migration, indexed by the version it UPGRADES FROM. Empty today: v0 (the raw
@@ -95,16 +120,57 @@ function maxUpdatedAt(projects: Project[]): number {
   return max
 }
 
+/** Re-graft images onto `base` messages from `source` (matched by message id) where base lost them
+ *  to a quota-slim. Returns the SAME `base` reference when there is nothing to graft. */
+function regraftChatImages(
+  base: ChatMessage[] | undefined,
+  source: ChatMessage[] | undefined,
+): { chat: ChatMessage[] | undefined; changed: boolean } {
+  if (!base || !source) return { chat: base, changed: false }
+  const byId = new Map<string, ChatImage[]>()
+  for (const m of source) if (m.images?.length) byId.set(m.id, m.images)
+  if (!byId.size) return { chat: base, changed: false }
+  let changed = false
+  const out = base.map((m) => {
+    if (m.images?.length) return m // base already has its own images
+    const imgs = byId.get(m.id)
+    if (!imgs) return m
+    changed = true
+    return { ...m, images: imgs }
+  })
+  return { chat: changed ? out : base, changed }
+}
+
+/** Restore images from `source` projects (by project + message id) onto `base`. */
+function regraftImages(base: Project[], source: Project[]): Project[] {
+  const srcById = new Map(source.map((p) => [p.id, p]))
+  let any = false
+  const out = base.map((p) => {
+    const src = srcById.get(p.id)
+    if (!src) return p
+    const c = regraftChatImages(p.chat, src.chat)
+    const f = regraftChatImages(p.chatFuture, src.chatFuture)
+    if (!c.changed && !f.changed) return p
+    any = true
+    return { ...p, chat: c.chat as ChatMessage[], chatFuture: f.chat }
+  })
+  return any ? out : base
+}
+
 /**
  * Choose the durable source at boot. Normally the IndexedDB record wins, but the localStorage
  * backup is refreshed on every tab-hide (`flushStorageOnHide`); if it captured STRICTLY newer
  * edits than IDB, a final write was lost to the async-write window (tab closed/crashed before the
  * coalesced IDB transaction landed) — prefer the backup so those last edits survive. Pure +
- * deterministic for unit tests. (Caveat: a quota-slimmed backup has dropped chat images; recovering
- * code+params+chat-text is still far better than losing the last session's work.)
+ * deterministic for unit tests.
+ *
+ * The backup may have been quota-slimmed (chat images dropped). IndexedDB is the durable image
+ * store, so when the (newer) backup wins we re-graft images from the IDB copy by message id — a
+ * slimmed backup then never destroys images IDB still holds (the refresh-loses-my-photo bug).
  */
 export function reconcileRecord(idb: Project[], backup: Project[]): Project[] {
-  return backup.length && maxUpdatedAt(backup) > maxUpdatedAt(idb) ? backup : idb
+  if (!(backup.length && maxUpdatedAt(backup) > maxUpdatedAt(idb))) return idb
+  return regraftImages(backup, idb)
 }
 
 /* ── localStorage primitives (seed + fallback) ── */
@@ -123,13 +189,22 @@ function readLocal(): Project[] {
 function writeLocal(projects: Project[]): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(projects))
+    return
   } catch {
-    // quota exceeded — drop chat images, then retry once
-    try {
-      localStorage.setItem(KEY, JSON.stringify(slimProjects(projects)))
-    } catch {
-      /* give up silently */
-    }
+    /* quota exceeded — shed images progressively, keeping the active project's as long as it fits */
+  }
+  try {
+    // drop images everywhere EXCEPT the project the user is most likely still working in, so its
+    // reference photo survives the backup (IDB-less / quota-pressured browsers lose it otherwise)
+    localStorage.setItem(KEY, JSON.stringify(slimProjects(projects, { keepNewest: true })))
+    return
+  } catch {
+    /* still too big — drop all chat images */
+  }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(slimProjects(projects)))
+  } catch {
+    /* give up silently */
   }
 }
 

@@ -61,6 +61,15 @@ describe('slimProjects', () => {
     expect(slim.chatFuture).toBeUndefined()
     expect(slim.chat).toEqual([])
   })
+
+  it('with keepNewest, retains images on the most-recently-updated project and sheds them from the rest', () => {
+    const img = { mediaType: 'image/png' as const, data: 'AAAA' }
+    const old = proj({ id: 'old', updatedAt: 100, chat: [{ id: 'm1', role: 'user', text: 'a', images: [img] }] })
+    const active = proj({ id: 'active', updatedAt: 999, chat: [{ id: 'm2', role: 'user', text: 'b', images: [img] }] })
+    const slimmed = slimProjects([old, active], { keepNewest: true })
+    expect(slimmed.find((p) => p.id === 'old')!.chat[0].images).toBeUndefined()
+    expect(slimmed.find((p) => p.id === 'active')!.chat[0].images).toEqual([img])
+  })
 })
 
 describe('reconcileRecord (boot recovery of a lost async write)', () => {
@@ -79,5 +88,25 @@ describe('reconcileRecord (boot recovery of a lost async write)', () => {
   it('never prefers an empty backup over a populated IDB', () => {
     const idb = [proj({ id: 'a', updatedAt: 100 })]
     expect(reconcileRecord(idb, [])).toBe(idb)
+  })
+
+  it('re-grafts images from IDB when the newer backup was quota-slimmed (refresh-loses-my-photo bug)', () => {
+    const img = { mediaType: 'image/png' as const, data: 'AAAA' }
+    // IDB has the image (older); backup is newer (a final edit IDB missed) but slimmed — no images
+    const idb = [proj({ id: 'a', updatedAt: 100, chat: [{ id: 'm1', role: 'user', text: 'see', images: [img] }] })]
+    const backup = [proj({ id: 'a', updatedAt: 250, chat: [{ id: 'm1', role: 'user', text: 'see' }] })]
+    const out = reconcileRecord(idb, backup)
+    // newer text/structure from the backup is kept, but the image is recovered from IDB
+    expect(out[0].updatedAt).toBe(250)
+    expect(out[0].chat[0].images).toEqual([img])
+  })
+
+  it('does not overwrite images the backup already holds', () => {
+    const a = { mediaType: 'image/png' as const, data: 'AAAA' }
+    const b = { mediaType: 'image/png' as const, data: 'BBBB' }
+    const idb = [proj({ id: 'a', updatedAt: 100, chat: [{ id: 'm1', role: 'user', text: 'x', images: [a] }] })]
+    const backup = [proj({ id: 'a', updatedAt: 250, chat: [{ id: 'm1', role: 'user', text: 'x', images: [b] }] })]
+    const out = reconcileRecord(idb, backup)
+    expect(out[0].chat[0].images).toEqual([b]) // backup's own images win
   })
 })

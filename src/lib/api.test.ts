@@ -140,8 +140,8 @@ describe('token estimators', () => {
     expect(estImageTokens({ mediaType: 'image/png', data: 'x', width: 4000, height: 4000 })).toBe(3000) // clamp down
   })
 
-  it('imageBudgetFor: explicit maxImages wins, else vision→4 / non-vision→0', () => {
-    expect(imageBudgetFor({ vision: true } as ProviderInfo)).toBe(4)
+  it('imageBudgetFor: explicit maxImages wins, else vision→10 / non-vision→0', () => {
+    expect(imageBudgetFor({ vision: true } as ProviderInfo)).toBe(10)
     expect(imageBudgetFor({ vision: true, maxImages: 2 } as ProviderInfo)).toBe(2)
     expect(imageBudgetFor({ vision: false } as ProviderInfo)).toBe(0)
     expect(imageBudgetFor(undefined)).toBe(0)
