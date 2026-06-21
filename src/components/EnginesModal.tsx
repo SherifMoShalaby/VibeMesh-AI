@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
-import { connectEngine, testEngine, type ProviderInfo } from '../lib/api'
+import { connectEngine, testEngine, fetchCatalog, saveConnection, removeConnection, discoverModels, type ProviderInfo, type CatalogEntry } from '../lib/api'
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { IconX, IconRefresh, DChip } from './icons'
 
 type Row = ProviderInfo & { useId?: string }
+
+/** Compact token formatter for the specs line: 1000000 → "1M", 200000 → "200k", 128000 → "128k". */
+function fmtTokens(n: number): string {
+  if (n >= 1000000) return n % 1000000 === 0 ? `${n / 1000000}M` : `${(n / 1000000).toFixed(1)}M`
+  if (n >= 1000) return `${Math.round(n / 1000)}k`
+  return String(n)
+}
 
 // logical groupings, rendered in order; engines self-declare their `group`
 const SECTIONS: Array<{ key: NonNullable<ProviderInfo['group']>; title: string; hint: string }> = [
@@ -20,8 +27,14 @@ export default function EnginesModal() {
   const health = useStore((s) => s.health)
   const refreshHealth = useStore((s) => s.refreshHealth)
   const [scanning, setScanning] = useState(false)
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const dialogRef = useRef<HTMLDivElement>(null)
   useFocusTrap(dialogRef, enginesOpen)
+
+  // load the "Add a provider" catalog once, the first time the panel opens
+  useEffect(() => {
+    if (enginesOpen && catalog.length === 0) void fetchCatalog().then(setCatalog)
+  }, [enginesOpen, catalog.length])
 
   useEffect(() => {
     if (!enginesOpen) return
@@ -71,8 +84,10 @@ export default function EnginesModal() {
     setScanning(false)
   }
 
+  // close ONLY on a click that lands directly on the backdrop — robust against a child button
+  // (Add/Remove) unmounting mid-handler, which can make a bubbled click fall through to the scrim
   return (
-    <div className="scrim" onClick={() => setEnginesOpen(false)}>
+    <div className="scrim" onClick={(e) => { if (e.target === e.currentTarget) setEnginesOpen(false) }}>
       <div ref={dialogRef} tabIndex={-1} className="modal" role="dialog" aria-modal="true" aria-label="AI engines" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="mh-icon"><DChip /></span>
@@ -101,6 +116,16 @@ export default function EnginesModal() {
               ))}
             </div>
           ))}
+
+          {catalog.length > 0 && (
+            <div className="engine-section">
+              <div className="engine-section-head">
+                <span className="engine-section-title">Add a provider</span>
+                <span className="engine-section-hint">Connect any OpenAI- or Anthropic-compatible API. Only providers you add appear above.</span>
+              </div>
+              <AddConnection catalog={catalog} onAdded={refreshHealth} />
+            </div>
+          )}
         </div>
 
         <div className="modal-foot">
@@ -114,8 +139,125 @@ export default function EnginesModal() {
   )
 }
 
+function AddConnection({ catalog, onAdded }: { catalog: CatalogEntry[]; onAdded: (providers?: ProviderInfo[]) => Promise<void> }) {
+  const setEngine = useStore((s) => s.setEngine)
+  const [picked, setPicked] = useState<CatalogEntry | null>(null)
+  const [label, setLabel] = useState('')
+  const [model, setModel] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [discovered, setDiscovered] = useState<string[]>([])
+
+  const pick = (c: CatalogEntry) => {
+    setPicked(c.id === picked?.id ? null : c)
+    setLabel(c.label)
+    setModel(c.defaultModel)
+    setBaseUrl(c.baseUrl)
+    setKey('')
+    setNote(null)
+    setDiscovered([])
+  }
+
+  // live model discovery: query the provider with the typed key and merge into the picker datalist
+  const fetchModels = async () => {
+    if (!picked) return
+    setBusy(true)
+    setNote(null)
+    const models = await discoverModels({ protocol: picked.protocol, baseUrl: baseUrl.trim() || picked.baseUrl, secret: key.trim() || undefined })
+    setDiscovered(models)
+    if (models.length === 0) setNote('No models returned — check the key and base URL.')
+    setBusy(false)
+  }
+
+  const submit = async () => {
+    if (!picked) return
+    setBusy(true)
+    setNote(null)
+    const result = await saveConnection({
+      catalogId: picked.id,
+      label: label.trim() || undefined,
+      model: model.trim() || undefined,
+      baseUrl: baseUrl.trim() || undefined,
+      secret: key.trim() || undefined,
+    })
+    if (result.ok) {
+      await onAdded(result.providers)
+      if (result.id) setEngine(`conn:${result.id}`) // use the new connection straight away
+      setPicked(null)
+      setKey('')
+    } else {
+      setNote(result.message ?? 'Could not add the connection.')
+    }
+    setBusy(false)
+  }
+
+  return (
+    <div className="add-connection">
+      <div className="catalog-gallery">
+        {catalog.map((c) => (
+          <button key={c.id} className={`catalog-chip${picked?.id === c.id ? ' on' : ''}`} onClick={() => pick(c)}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {picked && (
+        <div className="add-form">
+          <label className="add-field">
+            <span>Name</span>
+            <input type="text" aria-label="Connection name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={picked.label} />
+          </label>
+          {picked.custom && (
+            <label className="add-field">
+              <span>Base URL</span>
+              <input type="text" aria-label="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…/v1" />
+            </label>
+          )}
+          <label className="add-field">
+            <span>Model</span>
+            <input type="text" aria-label="Model" list={(picked.models.length || discovered.length) ? `models-${picked.id}` : undefined} value={model} onChange={(e) => setModel(e.target.value)} placeholder={picked.defaultModel || 'model id'} />
+            {(picked.models.length > 0 || discovered.length > 0) && (
+              <datalist id={`models-${picked.id}`}>
+                {[...new Set([...discovered, ...picked.models])].map((m) => <option key={m} value={m} />)}
+              </datalist>
+            )}
+          </label>
+          <label className="add-field">
+            <span>API key</span>
+            <input
+              type="password"
+              aria-label="API key"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={picked.connect.placeholder}
+              onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
+            />
+          </label>
+          <div className="add-actions">
+            <button className="btn btn-primary sm" onClick={() => void submit()} disabled={busy || !model.trim() || (picked.custom && !baseUrl.trim())}>
+              {busy ? 'Adding…' : 'Add connection'}
+            </button>
+            <button className="btn btn-ghost sm" onClick={() => setPicked(null)} disabled={busy}>Cancel</button>
+            <button className="btn btn-ghost sm" onClick={() => void fetchModels()} disabled={busy} title="Ask the provider for its live model list (uses the key above)">
+              {busy ? '…' : 'Fetch models'}
+            </button>
+            {discovered.length > 0 && <span className="engine-row-detail">{discovered.length} model(s) found</span>}
+            {picked.connect.url && (
+              <a className="engine-link" href={picked.connect.url} target="_blank" rel="noreferrer">{picked.connect.urlLabel} ↗</a>
+            )}
+          </div>
+          {note && <div className="engine-note err" role="status">{note}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function EngineRow({ provider }: { provider: Row }) {
   const refreshHealth = useStore((s) => s.refreshHealth)
+  const genTimeoutMs = useStore((s) => s.health?.genTimeoutMs)
   const engine = useStore((s) => s.engine)
   const setEngine = useStore((s) => s.setEngine)
   const claudeModel = useStore((s) => s.claudeModel)
@@ -204,6 +346,17 @@ function EngineRow({ provider }: { provider: Row }) {
     setBusy(false)
   }
 
+  // a marketplace connection: Remove deletes it entirely (metadata + key), unlike Disconnect which
+  // only clears a built-in engine's key. refreshHealth re-selects an available engine if it was active.
+  const removeConn = async () => {
+    if (!provider.connection) return
+    setBusy(true)
+    const result = await removeConnection(provider.id.replace(/^conn:/, ''))
+    if (result.providers) await refreshHealth(result.providers)
+    setNote(null)
+    setBusy(false)
+  }
+
   const handleLocalModelChange = (modelId: string) => {
     setLocalModel(modelId)
     if (isActive) setEngine(`local:${modelId}`)
@@ -238,14 +391,36 @@ function EngineRow({ provider }: { provider: Row }) {
           >
             Test
           </button>
-          {provider.available && provider.connect && !isLocal && (
+          {provider.available && provider.connect && !isLocal && !provider.connection && (
             <button className="btn btn-ghost sm" onClick={() => void disconnect()} disabled={busy} title={`Clear ${provider.connect.envKey}`}>
               Disconnect
+            </button>
+          )}
+          {provider.connection && (
+            <button className="btn btn-ghost sm" onClick={() => void removeConn()} disabled={busy} title="Remove this connection">
+              Remove
             </button>
           )}
         </span>
       </div>
       <div className="engine-row-detail">{provider.detail}</div>
+
+      {/* capability specs: context window vs. the (smaller) max output, and the generation timeout —
+          makes "context ≠ output" unambiguous and answers "how long before it gives up?" */}
+      {provider.available && provider.contextWindow != null && (
+        <div className="engine-row-detail engine-specs">
+          Context {fmtTokens(provider.contextWindow)}
+          {(provider.maxOutput ?? provider.outputReservation) != null && (
+            <> · writes up to {fmtTokens(provider.maxOutput ?? provider.outputReservation!)}</>
+          )}
+          {genTimeoutMs != null && <> · times out after {Math.round(genTimeoutMs / 60000)} min</>}
+        </div>
+      )}
+      {provider.available && (provider.efforts?.length ?? 0) > 0 && (
+        <div className="engine-row-detail engine-specs-note">
+          Higher effort means a longer wait before the first token — set <code>VIBEMESH_GEN_TIMEOUT_MS</code> to wait longer.
+        </div>
+      )}
 
       {/* model + effort settings for a connected engine */}
       {provider.available && (showModels || showEfforts) && (

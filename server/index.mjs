@@ -2,7 +2,8 @@ import 'dotenv/config'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyRuntimeSetting, providerStatus, streamChat, testEngine, SYSTEM_PROMPT_TOKENS, UserFacingError, extractScadBlock, reviewWithSkills } from './providers.mjs'
+import { applyRuntimeSetting, providerStatus, streamChat, testEngine, discoverModels, SYSTEM_PROMPT_TOKENS, GEN_TIMEOUT_MS, GEN_MAX_RETRIES, UserFacingError, extractScadBlock, reviewWithSkills } from './providers.mjs'
+import { CATALOG, saveConnection, removeConnection, validateFetchUrl, ConnectionError } from './connections.mjs'
 import { SCREWS, BEARINGS } from './hardware.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -20,7 +21,7 @@ app.get('/api/health', async (_req, res) => {
   const providers = await providerStatus()
   // systemTokens lets the client subtract the real shared-system-prompt cost from each engine's
   // context window when budgeting history (no hardcoded guess that drifts as the prompt grows).
-  res.json({ ok: true, providers, systemTokens: SYSTEM_PROMPT_TOKENS })
+  res.json({ ok: true, providers, systemTokens: SYSTEM_PROMPT_TOKENS, genTimeoutMs: GEN_TIMEOUT_MS })
 })
 
 /** The metal-hardware catalog (data only) — the client computes the bill-of-materials over the
@@ -38,6 +39,53 @@ app.post('/api/connect', jsonSmall, async (req, res) => {
   } catch (error) {
     res.status(400).json({ ok: false, message: error instanceof UserFacingError ? error.message : 'Could not save setting.' })
     return
+  }
+  res.json({ ok: true, providers: await providerStatus() })
+})
+
+/** The provider catalog for the "Add connection" gallery (data only — no secrets). */
+app.get('/api/catalog', (_req, res) => {
+  res.json({ ok: true, catalog: CATALOG })
+})
+
+/** Add or update a marketplace connection: non-secret metadata + (optionally) its API key. The key
+ *  is written to .env (CONN_<id>_KEY) by the same guarded writer the built-ins use; metadata lives
+ *  in the connections store. Returns the refreshed provider list. */
+app.post('/api/connections', jsonSmall, async (req, res) => {
+  const body = req.body ?? {}
+  try {
+    const record = saveConnection(body)
+    if (typeof body.secret === 'string' && body.secret.trim()) applyRuntimeSetting(record.auth.envKey, body.secret)
+    res.json({ ok: true, id: record.id, providers: await providerStatus() })
+  } catch (error) {
+    const msg = error instanceof ConnectionError || error instanceof UserFacingError ? error.message : 'Could not save the connection.'
+    res.status(400).json({ ok: false, message: msg })
+  }
+})
+
+/** Live model discovery for the add-form: query the provider's models endpoint with the supplied
+ *  key (used immediately, never stored). The base URL must be http(s) (SSRF guard). */
+app.post('/api/discover-models', jsonSmall, async (req, res) => {
+  const { protocol, baseUrl, secret } = req.body ?? {}
+  try {
+    validateFetchUrl(baseUrl)
+  } catch (error) {
+    res.status(400).json({ ok: false, models: [], message: error instanceof ConnectionError ? error.message : 'Invalid base URL.' })
+    return
+  }
+  const models = await discoverModels({ protocol, baseUrl, secret })
+  res.json({ ok: !!models, models: models ?? [] })
+})
+
+/** Remove a marketplace connection (its metadata + the .env key holding its secret). */
+app.delete('/api/connections/:id', async (req, res) => {
+  const removed = removeConnection(req.params.id)
+  if (!removed) {
+    res.status(404).json({ ok: false, message: 'Connection not found.' })
+    return
+  }
+  if (removed.auth?.envKey) {
+    try { applyRuntimeSetting(removed.auth.envKey, '') } catch { /* key already absent */ }
   }
   res.json({ ok: true, providers: await providerStatus() })
 })
@@ -130,12 +178,21 @@ if (process.env.NODE_ENV === 'production') {
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`[vibemesh-ai] api on http://${HOST}:${PORT}`)
+  console.log(`[vibemesh-ai]   generation timeout ${Math.round(GEN_TIMEOUT_MS / 60000)} min (VIBEMESH_GEN_TIMEOUT_MS)`)
   providerStatus().then((providers) => {
     for (const p of providers) {
       console.log(`[vibemesh-ai]   ${p.available ? '●' : '○'} ${p.label} — ${p.detail}`)
     }
   })
 })
+
+// A long xhigh/max generation can stream for many minutes. Node's default http requestTimeout
+// (~5 min) would guillotine it, so widen it past the WORST-CASE upstream budget: the AI client
+// allows GEN_MAX_RETRIES retries, each with its own GEN_TIMEOUT_MS, so cover all attempts plus a
+// margin — otherwise a retry that's silently healing a slow first attempt gets cut at the socket.
+// The per-request AbortController (res.on('close')) still ends a stream promptly on client
+// disconnect; headersTimeout (the slow-header DoS guard) stays at its default.
+server.requestTimeout = GEN_TIMEOUT_MS * (GEN_MAX_RETRIES + 1) + 120000
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') console.error(`[vibemesh-ai] port ${PORT} is already in use — set PORT to a free port.`)

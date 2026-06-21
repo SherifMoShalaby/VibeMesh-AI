@@ -7,6 +7,9 @@ dist/
 .env
 *.local
 
+# marketplace connection store (per-machine; secrets live in .env, not here)
+.connections.json
+
 # OS / editor
 .DS_Store
 
