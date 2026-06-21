@@ -50,4 +50,17 @@ describe('buildThreeMF — per-part color (R3)', () => {
     expect(colors).toHaveLength(9)
     expect(colors[8]).toBe(colors[0]) // 9th part wraps to palette[0]
   })
+
+  it('replicas sharing a colorKey read as ONE color, N instances (per-part quantities)', () => {
+    // 2 lids + 1 base — lids share a colorKey so they get one swatch, base gets its own
+    const xml = modelXml(buildThreeMF([
+      { name: 'lid 1 of 2', colorKey: 'lid', stl: makeStl([tri]) },
+      { name: 'lid 2 of 2', colorKey: 'lid', stl: makeStl([tri]) },
+      { name: 'base', colorKey: 'base', stl: makeStl([tri]) },
+    ]))
+    const colors = [...xml.matchAll(/displaycolor="(#[0-9A-F]{8})"/g)].map((m) => m[1])
+    expect(colors).toHaveLength(3)
+    expect(colors[0]).toBe(colors[1]) // the two lid replicas share a color
+    expect(colors[2]).not.toBe(colors[0]) // base is distinct
+  })
 })

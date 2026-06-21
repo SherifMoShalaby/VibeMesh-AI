@@ -35,6 +35,17 @@ describe('buildShareFile', () => {
     const f = buildShareFile({ name: 'x', code: 'a();', thumbnail: 'data:image/png;base64,AAAA' }, 0)
     expect(f.thumbnail).toBe('data:image/png;base64,AAAA')
   })
+
+  it('carries partQuantities >1 and drops defaults/garbage', () => {
+    const f = buildShareFile({ name: 'kit', code: 'a();', partQuantities: { lid: 4, base: 1, hinge: 0, bad: NaN, big: 1000 } }, 0)
+    // only counts >1 are stored (1 is the default); garbage dropped; >99 clamped
+    expect(f.partQuantities).toEqual({ lid: 4, big: 99 })
+  })
+
+  it('omits partQuantities entirely when all parts are single', () => {
+    const f = buildShareFile({ name: 'kit', code: 'a();', partQuantities: { lid: 1, base: 1 } }, 0)
+    expect(f.partQuantities).toBeUndefined()
+  })
 })
 
 describe('parseShareFile', () => {
@@ -59,6 +70,16 @@ describe('parseShareFile', () => {
     expect(f?.appliedSkillIds).toEqual(['a', 'b']) // non-strings dropped
     expect(f?.thumbnail).toBeUndefined()
   })
+
+  it('round-trips partQuantities and sanitizes hostile values on parse', () => {
+    const f = buildShareFile({ name: 'kit', code: 'a();', partQuantities: { lid: 4 } }, 1)
+    expect(parseShareFile(serializeShareFile(f))?.partQuantities).toEqual({ lid: 4 })
+    // hostile raw values: string-number coerced+clamped, negatives/non-finite dropped, non-object → undefined
+    const hostile = parseShareFile(JSON.stringify({ format: SHARE_FORMAT, code: 'a();', partQuantities: { lid: '9999', x: -3, y: 1 } }))
+    expect(hostile?.partQuantities).toEqual({ lid: 99 })
+    const notObj = parseShareFile(JSON.stringify({ format: SHARE_FORMAT, code: 'a();', partQuantities: 'nope' }))
+    expect(notObj?.partQuantities).toBeUndefined()
+  })
 })
 
 describe('shareFileToProject', () => {
@@ -76,5 +97,10 @@ describe('shareFileToProject', () => {
     expect(msg.code).toBe('cube();')
     expect(msg.intent).toEqual(intent)
     expect(msg.appliedSkillIds).toEqual(['threaded-fastener-seat'])
+  })
+
+  it('restores partQuantities onto the project', () => {
+    const f = buildShareFile({ name: 'kit', code: 'a();', partQuantities: { lid: 3 } }, 0)
+    expect(shareFileToProject(f, 'p', 0).partQuantities).toEqual({ lid: 3 })
   })
 })

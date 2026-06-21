@@ -15,6 +15,37 @@ export interface PieceFootprint {
   z: number // height (mm) — for the bed-Z fit check
 }
 
+/** Separator between a base part name and a replica index in a packer key (`lid#0`). Part-enum
+ *  option strings are SCAD identifiers/words and never contain it, so the round-trip is unambiguous. */
+const REPLICA_SEP = '#'
+
+/** Strip a replica suffix (`lid#2` → `lid`); a name without one is returned unchanged. The packer
+ *  keys placements by the UNIQUE name it's given, so callers resolve geometry/color via the base. */
+export function baseName(name: string): string {
+  const i = name.lastIndexOf(REPLICA_SEP)
+  return i === -1 ? name : name.slice(0, i)
+}
+
+/**
+ * Expand pieces by per-part print quantity into packer-ready entries with UNIQUE names, so N copies
+ * pack as N distinct placements instead of silently collapsing under one name (the byName→byKey fix).
+ * qty 1 → the base name unchanged (zero behavior change for single-quantity designs); qty N>1 →
+ * `name#0..name#(N-1)`. qtyOf is clamped to [1,99]. Each entry also carries its `baseName` for
+ * geometry/color lookup. Used by BOTH the live Slicer pack and the .3mf plate export (WYSIWYG).
+ */
+export function expandFootprints(pieces: PieceFootprint[], qtyOf: (name: string) => number): (PieceFootprint & { baseName: string })[] {
+  const out: (PieceFootprint & { baseName: string })[] = []
+  for (const p of pieces) {
+    const n = Math.max(1, Math.min(99, Math.floor(qtyOf(p.name) || 1)))
+    if (n === 1) {
+      out.push({ ...p, baseName: p.name })
+      continue
+    }
+    for (let k = 0; k < n; k++) out.push({ ...p, name: `${p.name}${REPLICA_SEP}${k}`, baseName: p.name })
+  }
+  return out
+}
+
 export interface Placement {
   name: string
   x: number // bed-local X of the piece's min corner (mm)

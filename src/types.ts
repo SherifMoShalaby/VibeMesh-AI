@@ -94,6 +94,11 @@ export interface Project {
   name: string
   code: string
   paramValues: ParamValues
+  /** Per-part PRINT quantities for a multi-part design, keyed by the `part` enum option string
+   *  (absent ⇒ 1). PROJECT METADATA, deliberately NOT a Customizer param — a print-shop count is
+   *  not geometry, so it never re-renders or pollutes the slider UI. Optional ⇒ no schema migration;
+   *  old records load with it undefined. Untouched by version restore (a print order, not geometry). */
+  partQuantities?: Record<string, number>
   chat: ChatMessage[]
   /** Versions rolled past via Restore: the abandoned tail (everything after the
    *  restored message), kept so a rollback is reversible (redo) until the user

@@ -5,7 +5,7 @@ import { buildDefines } from '../lib/params'
 import { openscad } from '../lib/openscad/client'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
 import { buildThreeMF } from '../lib/threeMF'
-import { packPlates } from '../lib/packPlates'
+import { packPlates, expandFootprints, baseName } from '../lib/packPlates'
 import { buildShareFile, serializeShareFile } from '../lib/shareFile'
 import { useUi } from './ui'
 
@@ -58,7 +58,15 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
         /* canvas tainted / unavailable — ship without a thumbnail */
       }
       const file = buildShareFile(
-        { name, code, paramValues, intent: last?.intent, appliedSkillIds: last?.appliedSkillIds, thumbnail },
+        {
+          name,
+          code,
+          paramValues,
+          intent: last?.intent,
+          appliedSkillIds: last?.appliedSkillIds,
+          thumbnail,
+          partQuantities: projects.find((p) => p.id === activeId)?.partQuantities,
+        },
         Date.now(),
       )
       downloadBlob(serializeShareFile(file), `${fileBase}.vibemesh`, 'application/json')
@@ -71,6 +79,10 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       if (!partParam || get().exportingPlates) return
       const preset = h.exportQuality()
       const pieces = (partParam.options ?? []).map(String).filter((o) => o !== 'all')
+      // print quantities are a COUNT here, not N identical files — one .stl per piece, the count
+      // carried in a note ("set N copies in your slicer"). Replication happens on plate/3MF export.
+      const quantities = get().projects.find((p) => p.id === get().activeId)?.partQuantities ?? {}
+      const qtyOf = (name: string) => Math.max(1, Math.min(99, Math.floor(quantities[name] ?? 1)))
       set({ exportingPlates: true })
       const failed: string[] = []
       const degraded: string[] = []
@@ -92,12 +104,16 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       } finally {
         set({ exportingPlates: false })
       }
+      const multi = pieces.filter((p) => qtyOf(p) > 1)
+      const qtyNote = multi.length ? ` Print quantities: ${pieces.map((p) => `${p}×${qtyOf(p)}`).join(', ')} — set copies in your slicer.` : ''
       // never let a partial export look successful
       if (failed.length > 0) {
         set({ compileNote: `EXPORT INCOMPLETE — failed: ${failed.join(', ')} (${pieces.length - failed.length}/${pieces.length} downloaded)` })
         useUi.getState().pushToast(`Export incomplete! Failed parts: ${failed.join(', ')} — downloaded ${pieces.length - failed.length} of ${pieces.length}. Select a failed part in the viewport to see its error, or use Ask AI to Fix.`, 'error')
       } else if (degraded.length > 0) {
-        set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
+        set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft.${qtyNote}` })
+      } else if (qtyNote) {
+        set({ compileNote: `Exported ${pieces.length} part file(s).${qtyNote}` })
       }
     },
 
@@ -128,21 +144,27 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       } finally {
         set({ exportingPlates: false })
       }
-      // pack the rendered pieces onto bed-sized plates — the SAME packer the slicer view uses,
-      // so each .3mf is WYSIWYG with what was on screen
-      const plan = packPlates(
+      // pack the rendered pieces onto bed-sized plates — the SAME packer + qty expansion the slicer
+      // view uses, so each .3mf is WYSIWYG with what was on screen. Per-part print quantities expand
+      // each piece into N entries with UNIQUE keys (lid#0, lid#1…), so N copies pack as N placements
+      // instead of silently collapsing under one name (the byName→byKey fix).
+      const quantities = get().projects.find((p) => p.id === projectAtStart)?.partQuantities ?? {}
+      const expanded = expandFootprints(
         compiled.map((c) => ({ name: c.name, w: c.bbox.x, h: c.bbox.y, z: c.bbox.z })),
-        { x: bed.x, y: bed.y, z: bed.z },
+        (name) => quantities[name] ?? 1,
       )
+      const plan = packPlates(expanded, { x: bed.x, y: bed.y, z: bed.z })
       const byName = new Map(compiled.map((c) => [c.name, c]))
       let written = 0
       plan.plates.forEach((placements, pi) => {
         const parts = placements
           .map((pl) => {
-            const c = byName.get(pl.name)
-            return c ? { name: pl.name, stl: c.stl, place: { x: pl.x, y: pl.y, rot: pl.rot } } : null
+            // resolve the unique placement key back to its compiled piece via the BASE name
+            const base = baseName(pl.name)
+            const c = byName.get(base)
+            return c ? { name: pl.name, colorKey: base, stl: c.stl, place: { x: pl.x, y: pl.y, rot: pl.rot } } : null
           })
-          .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number; rot: 0 | 90 } } => p !== null)
+          .filter((p): p is { name: string; colorKey: string; stl: ArrayBuffer; place: { x: number; y: number; rot: 0 | 90 } } => p !== null)
         if (parts.length) {
           downloadBlob(buildThreeMF(parts), `${fileBase}-plate${pi + 1}.3mf`, 'model/3mf')
           written++
@@ -154,8 +176,16 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       // degradation is surfaced even alongside failures (not swallowed by the problem branch)
       const problems: string[] = []
       if (failed.length) problems.push(`failed to render: ${failed.join(', ')}`)
-      if (plan.oversize.length)
-        problems.push(`too big for the ${bed.label} bed: ${plan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')}`)
+      if (plan.oversize.length) {
+        // a part is oversize regardless of how many copies — dedupe the replica keys back to base names
+        const seen = new Set<string>()
+        const over: string[] = []
+        for (const o of plan.oversize) {
+          const b = baseName(o.name)
+          if (!seen.has(b)) { seen.add(b); over.push(`${b} (${o.reason})`) }
+        }
+        problems.push(`too big for the ${bed.label} bed: ${over.join(', ')}`)
+      }
       const degradedNote = degraded.length ? ` ${degraded.length} part(s) exported at Draft (too heavy for ${preset.label}): ${degraded.join(', ')}.` : ''
       if (problems.length) {
         const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written).${degradedNote}`
@@ -227,7 +257,14 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       } else if (degraded.length > 0) {
         set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
       }
-      downloadBlob(buildThreeMF(collected), `${fileBase}.3mf`, 'model/3mf')
+      // print quantities replicate each piece into N objects (colorKey = base name → one color, N
+      // instances); buildThreeMF arranges them side by side. qty 1 ⇒ a single object, as before.
+      const quantities = get().projects.find((p) => p.id === get().activeId)?.partQuantities ?? {}
+      const replicated = collected.flatMap((c) => {
+        const n = Math.max(1, Math.min(99, Math.floor(quantities[c.name] ?? 1)))
+        return Array.from({ length: n }, (_, k) => ({ name: n > 1 ? `${c.name} ${k + 1} of ${n}` : c.name, colorKey: c.name, stl: c.stl }))
+      })
+      downloadBlob(buildThreeMF(replicated), `${fileBase}.3mf`, 'model/3mf')
     },
 
     exportStlSmart: async (fileBase) => {
