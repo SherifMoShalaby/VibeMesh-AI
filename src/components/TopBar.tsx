@@ -25,6 +25,8 @@ import {
   IconTrash,
 } from './icons'
 
+const EMPTY_QTY: Record<string, number> = {} // stable ref so the partQuantities selector fallback doesn't churn renders
+
 export default function TopBar() {
   const projects = useStore((s) => s.projects)
   const activeId = useStore((s) => s.activeId)
@@ -262,6 +264,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const bedId = useStore((s) => s.bedId)
   const exportShareFile = useStore((s) => s.exportShareFile)
   const importShareFile = useStore((s) => s.importShareFile)
+  const partQuantities = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.partQuantities ?? EMPTY_QTY)
   const pushToast = useUi((s) => s.pushToast)
   const importInputRef = useRef<HTMLInputElement>(null)
 
@@ -277,6 +280,12 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const ref = useClickOutside(open, () => setOpen(false))
 
   const hasPlates = params.some((p) => p.name === 'part' && p.kind === 'enum')
+  // per-part print quantities (set in the PARTS bar) — echoed read-only here so the count is visible
+  // at the moment of export. Replicated on the plate/3MF rows; a count note on separate-STL.
+  const pieceNames = (params.find((p) => p.name === 'part' && p.kind === 'enum')?.options ?? []).map(String).filter((o) => o !== 'all')
+  const copyOf = (n: string) => Math.max(1, Math.min(99, Math.floor(partQuantities[n] ?? 1)))
+  const totalCopies = pieceNames.reduce((s, n) => s + copyOf(n), 0)
+  const hasMultiples = pieceNames.some((n) => copyOf(n) > 1)
   const qualityLabel = QUALITY_PRESETS.find((q) => q.id === quality)?.label ?? 'Standard'
   // below Fine, exports offer/auto a Fine re-render; Fine/Ultra previews export as-is
   const belowFine = quality !== 'fine' && quality !== 'ultra'
@@ -362,7 +371,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
               <span className="mi-icon"><DLayers /></span>
               <span className="mi-text">
                 <span className="mi-title">Parts as separate <span className="ext">.stl</span></span>
-                <span className="mi-sub">One file per piece, named after each part</span>
+                <span className="mi-sub">One file per piece, named after each part{hasMultiples ? ' · print counts noted (set copies in slicer)' : ''}</span>
               </span>
               <span className="mi-check"><DArrowRight /></span>
             </button>
@@ -372,7 +381,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
               <span className="mi-icon"><DLayers /></span>
               <span className="mi-text">
                 <span className="mi-title">Plates as <span className="ext">.3mf</span></span>
-                <span className="mi-sub">One slicer-ready file per bed, packed like the Slicer view</span>
+                <span className="mi-sub">One slicer-ready file per bed, packed like the Slicer view{hasMultiples ? ` · ${totalCopies} copies packed` : ''}</span>
               </span>
               <span className="mi-check"><DArrowRight /></span>
             </button>

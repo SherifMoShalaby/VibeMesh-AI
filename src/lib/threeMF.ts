@@ -26,7 +26,9 @@ const PART_PALETTE = [
 export function buildThreeMF(
   // `place` is the per-plate packed position; `rot` (the packer's single source of truth) is the
   // Z-spin to bake — absent/undefined means identity (rot 0). Callers without `place` arrange normally.
-  parts: Array<{ name: string; stl: ArrayBuffer; place?: { x: number; y: number; rot?: 0 | 90 } }>,
+  // `colorKey` groups display color: replicas of one part (same key) share a swatch instead of getting
+  // a per-index color; absent ⇒ keyed by name (distinct parts keep distinct colors, as before).
+  parts: Array<{ name: string; stl: ArrayBuffer; colorKey?: string; place?: { x: number; y: number; rot?: 0 | 90 } }>,
   { arrange = true }: { arrange?: boolean } = {},
 ): Uint8Array<ArrayBuffer> {
   const objects: string[] = []
@@ -34,6 +36,18 @@ export function buildThreeMF(
   const bases: string[] = []
   const materialId = parts.length + 1 // basematerials group id — sits after every object id (1..N)
   let cursorX = 0
+  // assign a palette swatch per distinct colorKey in first-appearance order, so N replicas of one
+  // part read as one color, N instances — not N different colors. Distinct parts (key = name) keep
+  // their prior index-order colors.
+  const colorIndex = new Map<string, number>()
+  const colorFor = (key: string): string => {
+    let i = colorIndex.get(key)
+    if (i === undefined) {
+      i = colorIndex.size
+      colorIndex.set(key, i)
+    }
+    return PART_PALETTE[i % PART_PALETTE.length]
+  }
 
   parts.forEach((part, index) => {
     const { vertices, triangles, bbox } = indexMesh(part.stl)
@@ -41,7 +55,7 @@ export function buildThreeMF(
     // per-part display color, deterministic by part-enum order — so a .vibemesh re-import reproduces
     // the same swatches and each part shows in its own color in Bambu/Prusa/Orca. basematerials is
     // core 3MF, so this needs no extension namespace (a distinct filament slot per part is a later add).
-    bases.push(`<base name="${escapeXml(part.name)}" displaycolor="${PART_PALETTE[index % PART_PALETTE.length]}"/>`)
+    bases.push(`<base name="${escapeXml(part.name)}" displaycolor="${colorFor(part.colorKey ?? part.name)}"/>`)
     objects.push(
       `<object id="${id}" name="${escapeXml(part.name)}" type="model" pid="${materialId}" pindex="${index}"><mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh></object>`,
     )

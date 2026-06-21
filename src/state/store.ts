@@ -227,6 +227,9 @@ export interface VibeState {
   /** select a multi-part piece (or 'all'): compiles immediately (no slider debounce) and
    *  re-fits the camera — a part switch is navigation, not a slider tweak */
   selectPart: (value: string) => Promise<void>
+  /** set the PRINT quantity for a multi-part piece — project metadata, clamped [1,99], triggers NO
+   *  recompile (a print count is not geometry). Drives replication on plate/3MF export + Slicer view. */
+  setPartQuantity: (part: string, n: number) => void
   resetParams: () => void
   setCode: (code: string) => void
   recompile: () => void
@@ -945,6 +948,14 @@ export const useStore = create<VibeState>((set, get) => {
       })
       void compile(code, buildDefines(params, restored))
       persist()
+    },
+
+    setPartQuantity: (part, n) => {
+      const clamped = Math.max(1, Math.min(99, Math.floor(n) || 1))
+      const cur = get().projects.find((p) => p.id === get().activeId)?.partQuantities ?? {}
+      if (cur[part] === clamped) return
+      // project metadata via the existing persist seam — no compile, no slider write
+      persist({ partQuantities: { ...cur, [part]: clamped } })
     },
 
     compilePieces,
