@@ -531,7 +531,7 @@ input[type='checkbox']:focus-visible,
  * (.scrim is overridden to a bottom-sheet there). */
 .img-lightbox {
   position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
-  padding: var(--s6); background: rgba(6, 7, 9, 0.82); backdrop-filter: blur(4px);
+  padding: var(--s6); background: rgba(6, 7, 9, 0.82); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
   cursor: zoom-out; animation: menu-in var(--t-med) var(--ease-out);
 }
 .img-lightbox img {
@@ -915,6 +915,7 @@ input[type='checkbox']:focus-visible,
     var(--glass-3);
   border: 1px solid var(--line-strong);
   box-shadow: var(--sh-glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur-sm));
   backdrop-filter: blur(var(--glass-blur-sm));
   z-index: 5;
 }
@@ -947,6 +948,7 @@ input[type='checkbox']:focus-visible,
   border-radius: var(--r-lg);
   border: 1px solid var(--line-strong);
   box-shadow: var(--sh-glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   background:
     linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0) 16%),
@@ -1069,7 +1071,7 @@ input[type='checkbox']:focus-visible,
   display: flex; flex-direction: column; gap: 1px;
   padding: 8px 12px; border-radius: var(--r-sm);
   background: var(--glass-1);
-  border: 1px solid var(--line); backdrop-filter: blur(var(--glass-blur-sm)); box-shadow: var(--sh-raise); z-index: 6;
+  border: 1px solid var(--line); -webkit-backdrop-filter: blur(var(--glass-blur-sm)); backdrop-filter: blur(var(--glass-blur-sm)); box-shadow: var(--sh-raise); z-index: 6;
   max-width: 280px;
 }
 .ac-label { font-size: var(--fs-micro); color: var(--text-dim); font-weight: 600; letter-spacing: 0.04em; }
@@ -1096,23 +1098,23 @@ input[type='checkbox']:focus-visible,
   font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-dim);
   padding: 7px 11px; border-radius: var(--r-sm);
   background: var(--glass-1);
-  border: 1px solid var(--line); backdrop-filter: blur(var(--glass-blur-sm)); z-index: 4;
+  border: 1px solid var(--line); -webkit-backdrop-filter: blur(var(--glass-blur-sm)); backdrop-filter: blur(var(--glass-blur-sm)); z-index: 4;
   display: flex; gap: 10px; align-items: center;
 }
 
 /* glass fallbacks — when backdrop-filter is unsupported, or on low-power GPUs / reduced-transparency
    (body.perf-lite, set by the App probe), drop the blur and go fully opaque. .perf-lite doubles as
    the field rollback flag for the glass system since there is no UI test suite. */
-@supports not (backdrop-filter: blur(1px)) {
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .tool-rail, .hud-bar, .assembly-chip, .perf-chip, .sel-bar { background: var(--panel); }
 }
 .perf-lite .tool-rail,
 .perf-lite .hud-bar,
 .perf-lite .assembly-chip,
 .perf-lite .perf-chip,
-.perf-lite .sel-bar { backdrop-filter: none; background: var(--panel); }
+.perf-lite .sel-bar { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--panel); }
 @media (prefers-reduced-transparency: reduce) {
-  .tool-rail, .hud-bar, .assembly-chip, .perf-chip, .sel-bar { backdrop-filter: none; background: var(--panel); }
+  .tool-rail, .hud-bar, .assembly-chip, .perf-chip, .sel-bar { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--panel); }
 }
 
 /* selection toolbar — floats above the HUD bar */
@@ -1121,7 +1123,7 @@ input[type='checkbox']:focus-visible,
   z-index: 6;
   display: flex; gap: 3px; padding: 4px; border-radius: var(--r-md);
   background: var(--glass-3);
-  border: 1px solid var(--line-strong); box-shadow: var(--sh-glass); backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--line-strong); box-shadow: var(--sh-glass); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
 }
 .plate-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1463,7 +1465,7 @@ input[type='checkbox']:focus-visible,
 .bom-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: var(--fs-micro); }
 
 /* ───────────────────────── MODAL ───────────────────────────── */
-.scrim { position: fixed; inset: 0; background: rgba(6,7,9,0.62); backdrop-filter: blur(3px); z-index: 70; display: grid; place-items: center; padding: var(--s6); animation: menu-in var(--t-med) var(--ease-out); }
+.scrim { position: fixed; inset: 0; background: rgba(6,7,9,0.62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); z-index: 70; display: grid; place-items: center; padding: var(--s6); animation: menu-in var(--t-med) var(--ease-out); }
 .modal { width: min(560px, 100%); border-radius: var(--r-xl); background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--sh-modal); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 48px); animation: modal-rise var(--t-med) var(--ease-out); }
 .modal.modal-sm { width: min(440px, 100%); }
 .modal-head { display: flex; align-items: center; gap: var(--s3); padding: var(--s5) var(--s5) var(--s4); border-bottom: 1px solid var(--line-soft); }
