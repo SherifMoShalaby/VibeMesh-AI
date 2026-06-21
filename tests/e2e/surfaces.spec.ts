@@ -34,6 +34,49 @@ test.describe('in-chat composer + chrome', () => {
     await expect(modal).toBeHidden()
   })
 
+  test('the Engines panel is a card grid; a "+" card expands the connect form in place', async ({ page }) => {
+    await loadExample(page)
+    await page.getByRole('button', { name: /engine|connect ai/i }).first().click()
+    const grid = page.locator('.engine-grid')
+    await expect(grid).toBeVisible()
+    // the addable catalog cards (their "+" corner control) always render once /api/catalog loads,
+    // with or without an AI key — so this works keyless in CI.
+    const addBtn = page.locator('.engine-card .ec-corner-btn').first()
+    await expect(addBtn).toBeVisible()
+    await addBtn.click()
+    const drawer = page.locator('.engine-card .ec-drawer').first()
+    await expect(drawer).toBeVisible()
+    // the connect form is revealed in place (a key / base-URL / name field, depending on the card)
+    await expect(drawer.locator('input').first()).toBeVisible()
+    // collapse restores focus to the trigger (useFocusTrap only restores on dialog unmount, so the
+    // in-place drawer must re-seat focus itself — regression guard for the orphaned-focus bug)
+    await addBtn.click()
+    await expect(drawer).toBeHidden()
+    await expect(addBtn).toBeFocused()
+  })
+
+  test('the Engines Directory filters by search and by method', async ({ page }) => {
+    await loadExample(page)
+    await page.getByRole('button', { name: /engine|connect ai/i }).first().click()
+    await expect(page.locator('.dir-nav')).toBeVisible()
+    // wait for the async catalog to load (Gemini is always a catalog card) so the grid is fully
+    // populated before we measure / filter — otherwise the search races the fetch under suite load
+    await expect(page.locator('.engine-card .ec-title', { hasText: /gemini/i })).toBeVisible()
+    const total = await page.locator('.engine-card').count()
+    expect(total).toBeGreaterThan(1)
+    // search narrows the grid; Gemini is always in the catalog (works keyless)
+    await page.locator('.dir-search input').fill('gemini')
+    await expect(page.locator('.engine-card')).toHaveCount(1)
+    await expect(page.locator('.engine-card .ec-title')).toContainText(/gemini/i)
+    await expect(page.locator('.dir-count')).toContainText(/1 of/i) // the aria-live result count
+    // clearing + a method filter both re-scope the grid
+    await page.locator('.dir-search-x').click()
+    await page.locator('.dir-nav-item', { hasText: 'API key' }).click()
+    const apiCount = await page.locator('.engine-card').count()
+    expect(apiCount).toBeGreaterThan(0)
+    expect(apiCount).toBeLessThan(total)
+  })
+
   test('the right panel teaches the slider↔code relationship (Tweak tab + one-time explainer)', async ({ page }) => {
     await loadExample(page)
     await expect(page.locator('.panel-tab', { hasText: 'Tweak' })).toBeVisible() // task-language label
@@ -94,6 +137,29 @@ test.describe('mobile layout (phone width)', () => {
     const box = (await badge.boundingBox())!
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.x + box.width).toBeLessThanOrEqual(375 + 1) // within the phone viewport, not off-screen-right
+  })
+
+  test('the Engines Directory is single-column and within the viewport on a phone', async ({ page }) => {
+    await loadExample(page)
+    await page.getByRole('button', { name: /engine|connect ai/i }).first().click()
+    const modal = page.locator('.modal.modal-wide')
+    await expect(modal).toBeVisible()
+    // wait for the catalog so the grid has ≥2 cards to compare (Gemini is always a catalog card)
+    await expect(page.locator('.engine-card .ec-title', { hasText: /gemini/i })).toBeVisible()
+    // the wide 2-pane modal must bottom-sheet to full width — no horizontal overflow at 375px
+    const mbox = (await modal.boundingBox())!
+    expect(mbox.x).toBeGreaterThanOrEqual(0)
+    expect(mbox.x + mbox.width).toBeLessThanOrEqual(375 + 1)
+    // assert the grid container is actually narrow BEFORE asserting the column count (the reflow is
+    // gated on the JS .app.is-mobile class, not assumed "for free")
+    const grid = page.locator('.engine-grid')
+    const gbox = (await grid.boundingBox())!
+    expect(gbox.width).toBeLessThanOrEqual(375)
+    // single column → the first two cards stack (same x, increasing y)
+    const c0 = (await page.locator('.engine-card').nth(0).boundingBox())!
+    const c1 = (await page.locator('.engine-card').nth(1).boundingBox())!
+    expect(Math.abs(c0.x - c1.x)).toBeLessThan(2)
+    expect(c1.y).toBeGreaterThan(c0.y)
   })
 
   test('the model menu stays within the viewport at a phone width', async ({ page }) => {

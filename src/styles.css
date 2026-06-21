@@ -1537,6 +1537,84 @@ input[type='checkbox']:focus-visible,
 /* model + effort dropdowns side by side under a connected engine */
 .engine-config { display: flex; gap: var(--s4); flex-wrap: wrap; }
 
+/* ── Engines marketplace: card grid (Phase 1) ───────────────────── */
+.engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(224px, 1fr)); gap: var(--s3); align-items: start; }
+.engine-card {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s3) var(--s4); border-radius: var(--r-md);
+  background: var(--raised); border: 1px solid var(--line); box-shadow: var(--sh-raise);
+  transition: border-color var(--t-fast) var(--ease);
+}
+.engine-card:hover { border-color: var(--accent-line); }
+.engine-card.on { border-color: var(--accent-line); }
+.ec-head { display: flex; align-items: center; gap: var(--s2); }
+.engine-mono {
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: var(--r-sm);
+  display: grid; place-items: center; background: var(--inset);
+  font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-dim);
+}
+.engine-card.on .engine-mono { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.ec-titles { display: flex; flex-direction: column; min-width: 0; }
+.ec-title { font-size: var(--fs-body); font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ec-sub { font-size: var(--fs-micro); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.ec-corner { margin-left: auto; display: flex; align-items: center; flex-shrink: 0; }
+.ec-corner .dot.ok { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.ec-corner-btn {
+  width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-text); border: 1px solid var(--accent-line); cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.ec-corner-btn:hover { background: var(--accent-fill); color: var(--on-accent); }
+.ec-corner-btn svg { width: 15px; height: 15px; }
+.ec-desc { margin: 0; font-size: var(--fs-micro); color: var(--text-faint); line-height: var(--lh-snug); }
+.clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ec-specs { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-dim); }
+.ec-actions { display: flex; gap: var(--s1); }
+.ec-actions:empty { display: none; }
+.ec-drawer { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s1); padding-top: var(--s3); border-top: 1px solid var(--line-soft); }
+.ec-drawer-actions { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.ec-privacy { margin: 0; font-size: var(--fs-micro); color: var(--text-ghost); }
+.dir-empty { padding: var(--s5); text-align: center; color: var(--text-faint); font-size: var(--fs-small); border: 1px dashed var(--line-strong); border-radius: var(--r-md); }
+.link-btn { background: none; border: none; color: var(--accent-text); cursor: pointer; font: inherit; text-decoration: underline; padding: 0; }
+
+/* ── Engines marketplace: Directory chrome — sidebar + toolbar (Phase 2) ── */
+.modal.modal-wide { width: min(960px, 100%); }
+.modal-body.dir-body { flex: 1; min-height: 0; flex-direction: row; padding: 0; gap: 0; overflow: hidden; }
+.dir-nav { flex: 0 0 188px; display: flex; flex-direction: column; gap: 2px; padding: var(--s4) var(--s3); border-right: 1px solid var(--line-soft); overflow-y: auto; }
+.dir-nav-item {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+  padding: 7px var(--s3); border-radius: var(--r-sm); border: 1px solid transparent;
+  background: transparent; color: var(--text-dim); font-size: var(--fs-small); cursor: pointer; text-align: left;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.dir-nav-item:hover { background: var(--raised); color: var(--text); }
+.dir-nav-item.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.dnav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dnav-ct { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-faint); flex-shrink: 0; }
+.dir-nav-item.on .dnav-ct { color: var(--accent-text); }
+
+.dir-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s3); padding: var(--s4) var(--s5) var(--s5); overflow-y: auto; }
+.dir-toolbar { display: flex; align-items: center; gap: var(--s2); }
+.dir-search { position: relative; flex: 1; display: flex; align-items: center; min-width: 0; }
+.dir-search > svg { position: absolute; left: 9px; width: 15px; height: 15px; color: var(--text-faint); pointer-events: none; }
+.dir-search input { width: 100%; padding: 7px 30px; border-radius: var(--r-sm); background: var(--inset); border: 1px solid var(--line-strong); color: var(--text); font-size: var(--fs-small); outline: none; }
+.dir-search input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.dir-search-x { position: absolute; right: 6px; display: grid; place-items: center; width: 22px; height: 22px; border: none; background: transparent; color: var(--text-faint); cursor: pointer; border-radius: var(--r-sm); }
+.dir-search-x:hover { color: var(--text); background: var(--raised); }
+.dir-search-x svg { width: 13px; height: 13px; }
+.dir-count { font-size: var(--fs-micro); color: var(--text-faint); font-family: var(--font-mono); white-space: nowrap; }
+.dir-sort { white-space: nowrap; }
+.dir-refresh { border-radius: 50%; flex-shrink: 0; }
+
+/* phone width — the JS-added .app.is-mobile (NOT a media query). The existing bottom-sheet rule at
+   .app.is-mobile .modal only sets width; the wide 2-pane body must explicitly stack + go single-column. */
+.app.is-mobile .modal.modal-wide { width: 100%; max-width: 100%; }
+.app.is-mobile .modal-body.dir-body { flex-direction: column; overflow-y: auto; }
+.app.is-mobile .dir-nav { flex: none; flex-direction: row; overflow-x: auto; overflow-y: visible; border-right: none; border-bottom: 1px solid var(--line-soft); padding: var(--s3); gap: var(--s2); }
+.app.is-mobile .dir-nav-item { flex: 0 0 auto; }
+.app.is-mobile .dir-main { overflow-y: visible; }
+.app.is-mobile .engine-grid { grid-template-columns: 1fr; }
+
 /* custom bed fields */
 .bed-fields { display: flex; gap: var(--s3); margin-top: var(--s3); }
 .bed-fields label { display: flex; flex-direction: column; gap: 5px; flex: 1; color: var(--text-faint); }

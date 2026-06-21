@@ -163,6 +163,8 @@ export default function TopBar() {
           <button
             className={`api-chip${activeProvider ? '' : ' warn'}`}
             onClick={() => setEnginesOpen(true)}
+            // explicit label so the chip keeps an accessible name when its text is hidden at phone width
+            aria-label={activeProvider ? `Engine · ${activeProvider.label.split(' · ')[0]} — manage AI engines` : 'Connect AI'}
             title={`${activeProvider?.detail ?? 'No AI connected'} — click to manage`}
           >
             <span className="status-dot" />
