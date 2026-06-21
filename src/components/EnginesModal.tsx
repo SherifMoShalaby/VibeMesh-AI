@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { connectEngine, testEngine, fetchCatalog, saveConnection, removeConnection, discoverModels, type ProviderInfo, type CatalogEntry } from '../lib/api'
+import { deriveCards, type EngineRowData } from './engineCards'
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { IconX, IconRefresh, DChip } from './icons'
 
-type Row = ProviderInfo & { useId?: string }
+type Row = EngineRowData
 
 /** Compact token formatter for the specs line: 1000000 → "1M", 200000 → "200k", 128000 → "128k". */
 function fmtTokens(n: number): string {
@@ -25,6 +26,7 @@ export default function EnginesModal() {
   const enginesOpen = useUi((s) => s.enginesOpen)
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
   const health = useStore((s) => s.health)
+  const engine = useStore((s) => s.engine)
   const refreshHealth = useStore((s) => s.refreshHealth)
   const [scanning, setScanning] = useState(false)
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
@@ -51,27 +53,13 @@ export default function EnginesModal() {
 
   if (!enginesOpen) return null
 
-  // collapse the per-model local entries into one row with a model picker
-  const providers: Row[] = []
-  let localDone = false
-  const localProviders = (health?.providers ?? []).filter((p) => p.id.startsWith('local:'))
-  for (const p of health?.providers ?? []) {
-    if (p.id.startsWith('local:')) {
-      if (!localDone) {
-        providers.push({
-          ...p, // carries group / baseUrl / connect from the first local entry
-          id: 'local',
-          useId: p.id, // selecting "use" targets the first local model
-          label: 'Local LLM',
-          detail: `${p.detail} — ${localProviders.length} model(s)`,
-          models: localProviders.map((m) => ({ id: m.model!, label: m.model! })),
-        })
-        localDone = true
-      }
-    } else {
-      providers.push(p)
-    }
-  }
+  // One source of truth: deriveCards collapses the per-model local:* entries into a single row,
+  // computes the in-use/connected/needs-setup state, and dedupes the addable catalog (a provider
+  // you've already connected drops out of "Add a provider"). The card grid (Phase 1) renders the
+  // same list directly; here it feeds the existing section rows + the catalog gallery.
+  const cards = deriveCards(health, catalog, engine)
+  const providers: Row[] = cards.filter((c) => c.state !== 'addable').map((c) => c.provider!)
+  const addableCatalog: CatalogEntry[] = cards.filter((c) => c.state === 'addable').map((c) => c.catalogEntry!)
 
   // bucket by group, preserving provider order within each section
   const grouped = SECTIONS.map((s) => ({ ...s, rows: providers.filter((p) => (p.group ?? 'apikey') === s.key) })).filter(
@@ -117,13 +105,13 @@ export default function EnginesModal() {
             </div>
           ))}
 
-          {catalog.length > 0 && (
+          {addableCatalog.length > 0 && (
             <div className="engine-section">
               <div className="engine-section-head">
                 <span className="engine-section-title">Add a provider</span>
                 <span className="engine-section-hint">Connect any OpenAI- or Anthropic-compatible API. Only providers you add appear above.</span>
               </div>
-              <AddConnection catalog={catalog} onAdded={refreshHealth} />
+              <AddConnection catalog={addableCatalog} onAdded={refreshHealth} />
             </div>
           )}
         </div>
