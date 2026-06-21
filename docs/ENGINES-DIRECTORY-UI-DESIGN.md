@@ -1,6 +1,6 @@
 # Engines Directory UI — Redesign Plan
 
-**Status:** planned (not built). Senior-lead board, 2026-06-21.
+**Status:** ✅ BUILT — Phases 0–2 shipped on `feat/engines-directory-ui` (2026-06-21), verified live + lint / 195 unit / 23 e2e / build green. Phase 3 (static descriptions) deferred. Senior-lead board, 2026-06-21.
 **Goal:** Restyle the AI Engines panel as a **Directory-style marketplace** — a left method-nav rail, a search box, a sort/refresh toolbar, and a responsive **card grid** — modeled on Anthropic's "Directory" (Skills / Connectors / Plugins) modal, but adapted to AI engines and kept inside this app's dark-engineering design system.
 
 This doc is the output of a 10-agent board (3 surveyors → 4 senior leads → chief-architect synthesis → adversarial completeness critic → finalize). It supersedes nothing; it extends `docs/ENGINE-MARKETPLACE-DESIGN.md` (the data layer) with a UI layer.
