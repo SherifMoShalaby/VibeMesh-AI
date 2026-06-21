@@ -21,6 +21,70 @@ import type { Example } from '../lib/examples'
 
 export type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error'
 
+/** Per-project generation + geometry runtime (concurrent-chats). The store's top-level
+ *  generating/streamText/stl/params/… fields are a live PROJECTION of `sessions[activeId]`
+ *  (see writeSession), so every component reads the active project unchanged while MULTIPLE projects
+ *  each run their own generation/render in the background. A render routes into its owning session
+ *  and paints the viewport only when that project is active. NOT persisted (runtime only; an in-flight
+ *  generation already doesn't survive reload). */
+export interface Session {
+  // generation runtime
+  generating: boolean
+  streamText: string
+  streamHasCode: boolean
+  /** epoch ms the current run started (drives the timeout bar; per-project for the switcher later) */
+  genStartedAt: number | null
+  /** this run's abort handle — replaces the former module-level singleton in generationActions */
+  abortController: AbortController | null
+  // editor working copy (Phase 2: per-project so switching restores it without re-parsing)
+  code: string
+  params: ScadParameter[]
+  paramValues: ParamValues
+  // compile / geometry (Phase 2: cached per-project so switch-back is instant, no recompile)
+  compileStatus: CompileStatus
+  compileError: string | null
+  compileLog: string | null
+  compileMs: number | null
+  compileNote: string | null
+  degradedToDraft: boolean
+  modelDims: StlBBox | null
+  stl: ArrayBuffer | null
+  stlVersion: number
+  fitVersion: number
+  meshTransform: { position: [number, number, number]; rotation: [number, number, number] } | null
+  modelRemoved: boolean
+  vpPast: VpSnapshot[]
+  vpFuture: VpSnapshot[]
+  // slicer
+  viewMode: 'single' | 'plates'
+  pieces: { name: string; stl: ArrayBuffer; bbox: StlBBox }[] | null
+  slicing: boolean
+  slicingToken: number
+  slicerFailed: string[]
+}
+
+/** Session fields that MIRROR a top-level store field (everything except the session-only
+ *  genStartedAt/abortController). The single source for the writeSession mirror + snapshot/restore,
+ *  so a newly added projected field can't be forgotten. */
+const SESSION_PROJECTED = [
+  'generating', 'streamText', 'streamHasCode',
+  'code', 'params', 'paramValues',
+  'compileStatus', 'compileError', 'compileLog', 'compileMs', 'compileNote', 'degradedToDraft',
+  'modelDims', 'stl', 'stlVersion', 'fitVersion', 'meshTransform', 'modelRemoved', 'vpPast', 'vpFuture',
+  'viewMode', 'pieces', 'slicing', 'slicingToken', 'slicerFailed',
+] as const satisfies ReadonlyArray<keyof Session>
+const SESSION_PROJECTED_SET: ReadonlySet<string> = new Set(SESSION_PROJECTED)
+
+function blankSession(): Session {
+  return {
+    generating: false, streamText: '', streamHasCode: false, genStartedAt: null, abortController: null,
+    code: '', params: [], paramValues: {},
+    compileStatus: 'idle', compileError: null, compileLog: null, compileMs: null, compileNote: null, degradedToDraft: false,
+    modelDims: null, stl: null, stlVersion: 0, fitVersion: 0, meshTransform: null, modelRemoved: false, vpPast: [], vpFuture: [],
+    viewMode: 'single', pieces: null, slicing: false, slicingToken: 0, slicerFailed: [],
+  }
+}
+
 /** snapshot of everything a viewport placement action (move/rotate/delete) can change */
 export interface VpSnapshot {
   stl: ArrayBuffer | null
@@ -106,6 +170,9 @@ export interface VibeState {
    *  lingering flag can never misfire on a different project */
   pendingAutoRefineFor: string | null
   consumeAutoRefine: () => void
+  /** per-project generation runtime, keyed by projectId. The top-level generating/streamText/
+   *  streamHasCode fields above are a live projection of `sessions[activeId]` (see writeSession). */
+  sessions: Record<string, Session>
 
   bedId: string
   /** user-defined bed dimensions, used when bedId === 'custom' */
@@ -124,7 +191,8 @@ export interface VibeState {
   /** correct the applied-patterns chip: regenerate the current design with skill retrieval
    *  OVERRIDDEN by `skillIds` (selectSkills skipped for that turn). Advisory — never blocks. */
   regenerateWithSkills: (msgId: string, skillIds: string[]) => Promise<void>
-  abortGeneration: () => void
+  /** stop a generation — the given project's, or the active one's. */
+  abortGeneration: (pid?: string) => void
   setParamValue: (name: string, value: ParamValue) => void
   /** select a multi-part piece (or 'all'): compiles immediately (no slider debounce) and
    *  re-fits the camera — a part switch is navigation, not a slider tweak */
@@ -227,16 +295,6 @@ export const useStore = create<VibeState>((set, get) => {
     saveProjects(updated)
   }
 
-  /** Project-switch affordances are blocked mid-generation. runGeneration re-reads the active
-   *  project after every await (the stream, adoptCode, persist, the auto-fix recursion), so a
-   *  switch would land the streamed reply + adopted code on the NEWLY-active project, corrupting
-   *  it and losing the original. Returns true (and nudges the user) when a switch must be refused. */
-  function blockSwitchWhileGenerating(): boolean {
-    if (!get().generating) return false
-    useUi.getState().pushToast('Finish or stop the current generation before switching projects.')
-    return true
-  }
-
   function qualityArgsFor(preset: (typeof QUALITY_PRESETS)[number]): string[] {
     return ['-D', '$fn=0', '-D', `$fa=${preset.fa}`, '-D', `$fs=${preset.fs}`]
   }
@@ -299,45 +357,46 @@ export const useStore = create<VibeState>((set, get) => {
     if (failed.length) set({ compileNote: `Slicer: ${failed.length} part(s) failed to render — ${failed.join(', ')}` })
   }
 
-  async function compile(code: string, defines: string[]): Promise<CompileResult> {
+  /** Compile FOR a specific project (defaults to the active one). Results route into sessions[pid]
+   *  via writeSession, which paints the viewport ONLY when pid is active — so a background chat's
+   *  render lands in its own session (shown instantly on switch-back) and never disturbs the
+   *  foreground. The render goes through that project's lane in the worker (no cross-chat supersede). */
+  async function compile(code: string, defines: string[], pid: string = get().activeId ?? ''): Promise<CompileResult> {
+    if (!pid) return { ok: false, error: 'empty' }
+    // bring the active project's session current before mutating it (placement/slider writes go to
+    // the top level directly, so the session can lag); a background project's session is authoritative.
+    if (pid === get().activeId) snapshotSession(pid)
     if (!code.trim()) {
-      set({ compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
+      writeSession(pid, { compileStatus: 'idle', stl: null, modelDims: null, compileError: null, compileNote: null, degradedToDraft: false })
       return { ok: false, error: 'empty' }
     }
-    // results landing after a project switch must not touch state (stale-render race)
-    const projectAtStart = get().activeId
-    const stale = () => get().activeId !== projectAtStart
-
-    // a re-render replaces the geometry — placement history would restore stale meshes.
-    // bump slicingToken so any in-flight compilePieces() abandons its now-stale pack rather
-    // than racing this compile and clobbering the pieces:null invalidation below.
-    set({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false, pieces: null, slicerFailed: [], slicingToken: get().slicingToken + 1 })
+    // a re-render replaces the geometry — reset THIS project's viewport history + bump its slicing
+    // token so its own in-flight compilePieces() abandons a now-stale pack.
+    writeSession(pid, (cur) => ({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false, pieces: null, slicerFailed: [], slicingToken: cur.slicingToken + 1 }))
     // adaptive curve quality: kill any global $fn, drive $fa/$fs from the preset.
-    // Per-call $fn (hex sockets etc.) is untouched by these root-scope overrides.
     const preset = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
-    let result: CompileResult = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)])
-    // superseded/stale → a sentinel the caller treats as "ignore" (no auto-repair)
-    if (result.error === 'superseded' || stale()) return { ok: false, error: 'superseded' }
+    let result: CompileResult = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], undefined, { projectId: pid })
+    // a same-chat newer render superseded this one → ignore (don't overwrite the newer result).
+    // NOTE: no "active changed" drop anymore — writeSession routes to sessions[pid] and paints only
+    // if pid is still active, so a switch mid-compile preserves the result in its owning session.
+    if (result.error === 'superseded') return { ok: false, error: 'superseded' }
 
     // heavy-model fallback: a timeout at higher quality gets one retry at Draft
     let note: string | null = null
     if (!result.ok && result.error?.includes('timed out') && preset.id !== 'draft') {
-      set({ compileStatus: 'compiling' })
-      result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT)
-      if (result.error === 'superseded' || stale()) return { ok: false, error: 'superseded' }
-      if (result.ok) {
-        note = `model too heavy for ${preset.label} — rendered at Draft`
-      }
+      writeSession(pid, { compileStatus: 'compiling' })
+      result = await openscad.compile(code, [...defines, ...qualityArgsFor(QUALITY_PRESETS[0])], RENDER_TIMEOUT_DRAFT, { projectId: pid })
+      if (result.error === 'superseded') return { ok: false, error: 'superseded' }
+      if (result.ok) note = `model too heavy for ${preset.label} — rendered at Draft`
     }
 
     if (result.ok && result.stl) {
-      set((s) => ({
+      writeSession(pid, (cur) => ({
         compileStatus: 'ok',
         stl: result.stl!,
-        stlVersion: s.stlVersion + 1,
-        // auto-fit the camera only when the viewport was empty — never yank the
-        // user's framing mid-iteration (slider tweaks, refine passes)
-        fitVersion: s.stl === null ? s.fitVersion + 1 : s.fitVersion,
+        stlVersion: cur.stlVersion + 1,
+        // auto-fit the camera only when this project's viewport was empty — never yank the framing mid-iteration
+        fitVersion: cur.stl === null ? cur.fitVersion + 1 : cur.fitVersion,
         modelDims: stlBBox(result.stl!),
         meshTransform: null, // fresh geometry → reset viewport arrangement
         compileError: null,
@@ -347,14 +406,7 @@ export const useStore = create<VibeState>((set, get) => {
         compileMs: result.ms ?? null,
       }))
     } else {
-      set({
-        compileStatus: 'error',
-        compileError: result.error ?? 'Unknown OpenSCAD error',
-        compileNote: null,
-        degradedToDraft: false,
-        compileLog: result.log ?? null,
-        compileMs: result.ms ?? null,
-      })
+      writeSession(pid, { compileStatus: 'error', compileError: result.error ?? 'Unknown OpenSCAD error', compileNote: null, degradedToDraft: false, compileLog: result.log ?? null, compileMs: result.ms ?? null })
     }
     return result
   }
@@ -362,13 +414,6 @@ export const useStore = create<VibeState>((set, get) => {
   function activeChat(): ChatMessage[] {
     const { projects, activeId } = get()
     return projects.find((p) => p.id === activeId)?.chat ?? []
-  }
-
-  function setChat(chat: ChatMessage[]) {
-    const { projects, activeId } = get()
-    const updated = projects.map((p) => (p.id === activeId ? { ...p, chat, updatedAt: Date.now() } : p))
-    set({ projects: updated })
-    saveProjects(updated)
   }
 
   /** the rolled-past version tail (redo stack) for the active project */
@@ -394,7 +439,8 @@ export const useStore = create<VibeState>((set, get) => {
    * default, the code wins), and only if the carried value is still in range/valid.
    * Without `carryFrom` (rollback / load example) every param resets to its default.
    */
-  function adoptCode(code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }): Promise<CompileResult> {
+  function adoptCode(code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }, pid: string = get().activeId ?? ''): Promise<CompileResult> {
+    if (!pid) return Promise.resolve({ ok: false, error: 'empty' })
     const params = parseParameters(code)
     const paramValues: ParamValues = {}
     for (const p of params) {
@@ -410,10 +456,100 @@ export const useStore = create<VibeState>((set, get) => {
       }
       paramValues[p.name] = value
     }
-    set({ code, params, paramValues })
-    return compile(code, buildDefines(params, paramValues))
+    // route the editor working copy into the project's session (mirrors to the top level if active)
+    writeSession(pid, { code, params, paramValues })
+    return compile(code, buildDefines(params, paramValues), pid)
   }
 
+  /** The single funnel for per-project generation-runtime writes. Updates sessions[pid] and, when
+   *  pid is the ACTIVE project, mirrors the projected fields (generating/streamText/streamHasCode)
+   *  to the top level so every existing component reader stays unchanged. The patch may be an object
+   *  or an updater `(cur) => patch` (the latter reads the live session — used for streaming append). */
+  function writeSession(pid: string, patch: Partial<Session> | ((cur: Session) => Partial<Session>)) {
+    set((s) => {
+      const cur = s.sessions[pid] ?? blankSession()
+      const p = typeof patch === 'function' ? patch(cur) : patch
+      const merged = { ...cur, ...p }
+      const next: Partial<VibeState> = { sessions: { ...s.sessions, [pid]: merged } }
+      // mirror ONLY the patched projected fields to the top level (not all) so a gen write can't
+      // clobber a placement/slider write that went to the top level directly.
+      if (pid === s.activeId) {
+        const mirror = next as unknown as Record<string, unknown>
+        const src = merged as unknown as Record<string, unknown>
+        for (const k of Object.keys(p)) {
+          if (SESSION_PROJECTED_SET.has(k)) mirror[k] = src[k]
+        }
+      }
+      return next
+    })
+  }
+  function genSession(pid: string): Session {
+    return get().sessions[pid] ?? blankSession()
+  }
+
+  /** Capture the active project's current top-level projected fields into its session — call BEFORE
+   *  switching away. Placement/slider/compile writes go to the top level directly, so a session can be
+   *  stale between switches; this brings it current exactly when we're about to leave it. */
+  function snapshotSession(pid: string) {
+    set((s) => {
+      const cur = s.sessions[pid] ?? blankSession()
+      const top = s as unknown as Record<string, unknown>
+      const snap: Record<string, unknown> = {}
+      for (const k of SESSION_PROJECTED) snap[k] = top[k]
+      return { sessions: { ...s.sessions, [pid]: { ...cur, ...snap } } }
+    })
+  }
+  /** Restore a project's cached session into the top-level projection (instant switch-back, no
+   *  recompile). Returns false when the session has nothing rendered yet (never visited / never
+   *  compiled) so the caller falls back to the parse+compile path. */
+  function restoreSession(pid: string): boolean {
+    const sess = get().sessions[pid] ?? blankSession()
+    // ALWAYS project the generation fields first — so a stale `generating` flag from the project we
+    // just left (which may still be running in the background) never bleeds onto the new view, and
+    // switching TO a background-generating project correctly shows its spinner + stream.
+    set({ generating: sess.generating, streamText: sess.streamText, streamHasCode: sess.streamHasCode })
+    if (sess.compileStatus === 'idle' && !sess.stl) return false // no cached geometry → caller compiles
+    const src = sess as unknown as Record<string, unknown>
+    const patch: Record<string, unknown> = {}
+    for (const k of SESSION_PROJECTED) patch[k] = src[k]
+    // re-frame the restored model, matching today's switch-then-recompile (which re-fit the camera)
+    patch.fitVersion = get().fitVersion + 1
+    set(patch as Partial<VibeState>)
+    return true
+  }
+
+  // projectId-BOUND twins of the generation helpers (the param-less versions above resolve via
+  // get().activeId at call time — unsafe across a generation's many awaits once switching is allowed).
+  // runGeneration uses ONLY these with its captured pid. Functional set() reads live state at apply
+  // time so two concurrent durable writers can't clobber each other (the lost-write fix).
+  function activeChatFor(pid: string): ChatMessage[] {
+    return get().projects.find((p) => p.id === pid)?.chat ?? []
+  }
+  function setChatFor(pid: string, chat: ChatMessage[]) {
+    set((s) => ({ projects: s.projects.map((p) => (p.id === pid ? { ...p, chat, updatedAt: Date.now() } : p)) }))
+    saveProjects(get().projects)
+  }
+  function setChatAndFutureFor(pid: string, chat: ChatMessage[], chatFuture: ChatMessage[]) {
+    set((s) => ({ projects: s.projects.map((p) => (p.id === pid ? { ...p, chat, chatFuture, updatedAt: Date.now() } : p)) }))
+    saveProjects(get().projects)
+  }
+  function persistFor(pid: string, partial?: Partial<Project>) {
+    set((s) => ({
+      projects: s.projects.map((p) => {
+        if (p.id !== pid) return p
+        // the ACTIVE project also captures the live editor code/paramValues (as persist() does);
+        // a background project persists only the explicit partial (its code lives in its session).
+        const live = pid === s.activeId ? { code: s.code, paramValues: s.paramValues } : {}
+        return { ...p, ...live, ...partial, updatedAt: Date.now() }
+      }),
+    }))
+    saveProjects(get().projects)
+  }
+  function adoptCodeFor(pid: string, code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }): Promise<CompileResult> {
+    // adopt + compile FOR pid: the active project paints the viewport; a background project's render
+    // lands in its own session (shown instantly on switch-back), via writeSession's mirror gate.
+    return adoptCode(code, carryFrom, pid)
+  }
 
   return {
     projects: [],
@@ -448,6 +584,7 @@ export const useStore = create<VibeState>((set, get) => {
     streamText: '',
     streamHasCode: false,
     pendingAutoRefineFor: null,
+    sessions: {},
     bedId: localStorage.getItem(BED_KEY) ?? PRINTER_BEDS[0].id,
     customBed: loadCustomBed(),
     quality: localStorage.getItem(QUALITY_KEY) ?? 'standard',
@@ -510,7 +647,10 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     refreshHealth: async (providers) => {
-      const health = providers ? { ok: true, providers } : await fetchHealth()
+      // A providers-only refresh (after saving a key) must PRESERVE systemTokens/genTimeoutMs from
+      // the last full fetch — /api/connect returns only providers, so a naive replace would drop
+      // them (silently widening the history budget and blanking the UI's timeout note).
+      const health = providers ? { ...get().health, ok: true, providers } : await fetchHealth()
       let engine: string | null = null
       if (health) {
         const saved = get().engine ?? localStorage.getItem(ENGINE_KEY)
@@ -521,7 +661,8 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     newProject: () => {
-      if (blockSwitchWhileGenerating()) return
+      const prev = get().activeId
+      if (prev) snapshotSession(prev) // cache the project we're leaving for instant return
       clearParamTimer()
       // Reuse an existing pristine empty chat rather than minting a duplicate (the header
       // "New chat" button + the bare-hash handler both call this; init() reuses the same way).
@@ -530,7 +671,7 @@ export const useStore = create<VibeState>((set, get) => {
         set({
           activeId: existing.id, code: '', params: [], paramValues: {}, stl: null, meshTransform: null,
           vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null,
-          streamText: '', viewMode: 'single', pieces: null, slicing: false,
+          streamText: '', generating: false, streamHasCode: false, viewMode: 'single', pieces: null, slicing: false,
         })
         setChatHash(existing.id)
         saveLastChatId(existing.id)
@@ -560,6 +701,8 @@ export const useStore = create<VibeState>((set, get) => {
         compileStatus: 'idle',
         compileError: null,
         streamText: '',
+        generating: false,
+        streamHasCode: false,
         viewMode: 'single',
         pieces: null,
         slicing: false,
@@ -570,11 +713,11 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     openProject: (id) => {
-      if (blockSwitchWhileGenerating()) return
       const project = get().projects.find((p) => p.id === id)
       if (!project) return
+      const prev = get().activeId
+      if (prev && prev !== id) snapshotSession(prev) // cache the project we're leaving for instant return
       clearParamTimer()
-      set({ activeId: id, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
       // transient per-model interaction modes live in the UI store — clear them so a
       // selection / measuring session doesn't bleed into the next project
       const ui = useUi.getState()
@@ -582,6 +725,11 @@ export const useStore = create<VibeState>((set, get) => {
       ui.setMeasureMode(false)
       setChatHash(id)
       saveLastChatId(id)
+      set({ activeId: id })
+      // cached render → restore it instantly, no recompile (Phase 2)
+      if (restoreSession(id)) return
+      // first visit (or never compiled): the original reset + parse + compile path
+      set({ stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
       set({ code: project.code, params, paramValues })
@@ -593,12 +741,13 @@ export const useStore = create<VibeState>((set, get) => {
     ...createExportActions(set, get, { qualityArgsFor, exportQuality, composeMatrix, RENDER_TIMEOUT_EXPORT, RENDER_TIMEOUT_DRAFT }),
 
     importShareFile: (text) => {
-      if (blockSwitchWhileGenerating()) return
       const file = parseShareFile(text)
       if (!file) {
         useUi.getState().pushToast("That file isn't a valid .vibemesh share file.", 'error')
         return
       }
+      const prev = get().activeId
+      if (prev) snapshotSession(prev) // cache the project we're leaving for instant return
       const project = shareFileToProject(file, newId(), Date.now())
       const projects = [project, ...get().projects]
       clearParamTimer()
@@ -618,6 +767,8 @@ export const useStore = create<VibeState>((set, get) => {
         compileStatus: 'idle',
         compileError: null,
         streamText: '',
+        generating: false,
+        streamHasCode: false,
         viewMode: 'single',
         pieces: null,
         slicing: false,
@@ -629,13 +780,17 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     deleteProject: (id) => {
-      if (blockSwitchWhileGenerating()) return
       const projects = get().projects.filter((p) => p.id !== id)
-      set({ projects })
+      // evict the deleted project's cached session (its STL/abort handle must not linger)
+      const sessions = { ...get().sessions }
+      // a deleted project must not keep generating in the background — stop its run first
+      get().sessions[id]?.abortController?.abort()
+      delete sessions[id]
+      set({ projects, sessions })
       saveProjects(projects)
       if (get().activeId === id) {
         clearParamTimer()
-        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false })
+        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false, streamText: '', generating: false, streamHasCode: false })
         setChatHash(null, { replace: true })
         saveLastChatId(null)
       }
@@ -648,7 +803,7 @@ export const useStore = create<VibeState>((set, get) => {
     // AI-generation slice (sendPrompt / retryLast / regenerateWithSkills / abortGeneration /
     // consumeAutoRefine) lives in ./generationActions — the most intricate concern, split out of
     // this god-store; the shared compile-lifecycle helpers are passed in.
-    ...createGenerationActions(set, get, { activeChat, setChat, setChatAndFuture, adoptCode, persist, qualityArgsFor }),
+    ...createGenerationActions(set, get, { activeChatFor, setChatFor, setChatAndFutureFor, adoptCodeFor, persistFor, qualityArgsFor, writeSession, genSession }),
 
     setParamValue: (name, value) => {
       const paramValues = { ...get().paramValues, [name]: value }
@@ -752,7 +907,6 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     loadExample: (example) => {
-      if (blockSwitchWhileGenerating()) return
       clearParamTimer()
       const state = get()
       const current = state.projects.find((p) => p.id === state.activeId)
@@ -773,6 +927,7 @@ export const useStore = create<VibeState>((set, get) => {
         set({ projects, streamText: '' })
         saveProjects(projects)
       } else {
+        if (state.activeId) snapshotSession(state.activeId) // cache the project we're leaving
         const project: Project = {
           id: newId(),
           name: example.name,
@@ -787,6 +942,8 @@ export const useStore = create<VibeState>((set, get) => {
           projects,
           activeId: project.id,
           streamText: '',
+          generating: false,
+          streamHasCode: false,
           // drop the previous project's geometry so the example gets a fresh viewport + camera fit
           stl: null,
           meshTransform: null,
@@ -841,5 +998,16 @@ export const useStore = create<VibeState>((set, get) => {
       localStorage.setItem(KIMI_MODEL_KEY, id)
     },
 
+  }
+})
+
+// Keep the worker's foreground render lane synced with the active project across EVERY switch path
+// (so the focused chat's interactive render always drains ahead of any background chat's). One
+// subscription covers openProject/newProject/import/loadExample/init/delete without peppering calls.
+let _lastForeground: string | null | undefined
+useStore.subscribe((s) => {
+  if (s.activeId !== _lastForeground) {
+    _lastForeground = s.activeId
+    openscad.setForeground(s.activeId)
   }
 })

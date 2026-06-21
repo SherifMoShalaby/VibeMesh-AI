@@ -30,6 +30,8 @@ export default function TopBar() {
   const openProject = useStore((s) => s.openProject)
   const newProject = useStore((s) => s.newProject)
   const deleteProject = useStore((s) => s.deleteProject)
+  const sessions = useStore((s) => s.sessions)
+  const abortGeneration = useStore((s) => s.abortGeneration)
   const health = useStore((s) => s.health)
   const engine = useStore((s) => s.engine)
   const code = useStore((s) => s.code)
@@ -98,17 +100,36 @@ export default function TopBar() {
             </button>
             {projects.length > 0 && <div className="menu-sep" />}
             <div className="menu-scroll">
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  className={`menu-item${p.id === activeId ? ' active' : ''}`}
-                  role="menuitem"
-                  onClick={() => { setMenuOpen(false); if (p.id !== activeId) openProject(p.id) }}
-                >
-                  <span className="mi-text"><span className="mi-title">{p.name}</span></span>
-                  <span className="mi-check"><DCheck /></span>
-                </button>
-              ))}
+              {projects.map((p) => {
+                const busy = !!sessions[p.id]?.generating
+                return (
+                  <button
+                    key={p.id}
+                    className={`menu-item${p.id === activeId ? ' active' : ''}`}
+                    role="menuitem"
+                    onClick={() => { setMenuOpen(false); if (p.id !== activeId) openProject(p.id) }}
+                  >
+                    <span className="mi-text"><span className="mi-title">{p.name}</span></span>
+                    {busy && (
+                      <>
+                        <span className="mi-spin" aria-label="Generating" title="Generating…" />
+                        {/* stop this chat's run without opening it (works for a background generation) */}
+                        <span
+                          className="mi-stop"
+                          role="button"
+                          tabIndex={0}
+                          title="Stop this generation"
+                          onClick={(e) => { e.stopPropagation(); abortGeneration(p.id) }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); abortGeneration(p.id) } }}
+                        >
+                          Stop
+                        </span>
+                      </>
+                    )}
+                    <span className="mi-check"><DCheck /></span>
+                  </button>
+                )
+              })}
             </div>
             {active && (
               <>

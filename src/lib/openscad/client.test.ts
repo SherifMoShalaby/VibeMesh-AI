@@ -95,6 +95,37 @@ describe('OpenScadEngine', () => {
     await expect(b1).resolves.toMatchObject({ ok: true })
   })
 
+  it('per-chat lanes: a render in chat B does NOT supersede chat A\'s queued render', async () => {
+    const e = new OpenScadEngine()
+    const a0 = e.compile('a0') // active id 1
+    const a1 = e.compile('a1', [], 60_000, { projectId: 'A' }) // queued in lane A (id 2)
+    const b1 = e.compile('b1', [], 60_000, { projectId: 'B' }) // queued in lane B (id 3) — must NOT touch A
+    const w = currentWorker()
+
+    let aSuperseded = false
+    void a1.then((r) => { if (r.error === 'superseded') aSuperseded = true })
+    await Promise.resolve()
+    expect(aSuperseded).toBe(false) // B's render did not supersede A's
+
+    w.onmessage!(okMsg(1)); await a0
+    expect(codes(w)).toEqual(['a0', 'a1']) // both lanes drain, oldest-first (A then B)
+    w.onmessage!(okMsg(2)); await a1
+    expect(codes(w)).toEqual(['a0', 'a1', 'b1'])
+    w.onmessage!(okMsg(3)); await expect(b1).resolves.toMatchObject({ ok: true })
+  })
+
+  it('the foreground lane drains before other lanes', async () => {
+    const e = new OpenScadEngine()
+    const a0 = e.compile('a0') // active id 1
+    void e.compile('bg-lane', [], 60_000, { projectId: 'B' }) // queued lane B first (id 2)
+    void e.compile('fg-lane', [], 60_000, { projectId: 'A' }) // queued lane A (id 3)
+    e.setForeground('A')
+    const w = currentWorker()
+
+    w.onmessage!(okMsg(1)); await a0
+    expect(codes(w)).toEqual(['a0', 'fg-lane']) // A (foreground) jumps ahead of the earlier-queued B
+  })
+
   it('times out, respawns the worker, and resolves with a timeout error', async () => {
     vi.useFakeTimers()
     const e = new OpenScadEngine()

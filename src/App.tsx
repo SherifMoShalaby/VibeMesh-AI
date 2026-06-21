@@ -78,6 +78,8 @@ function Resizer({ side }: { side: 'left' | 'right' }) {
 export default function App() {
   const init = useStore((s) => s.init)
   const generating = useStore((s) => s.generating)
+  // how many chats are generating right now (incl. background ones) — drives the tab-title count
+  const genCount = useStore((s) => Object.values(s.sessions).filter((x) => x.generating).length)
   const compileStatus = useStore((s) => s.compileStatus)
   const slicing = useStore((s) => s.slicing)
   const activeId = useStore((s) => s.activeId)
@@ -152,8 +154,10 @@ export default function App() {
 
   // surface long-running work in the tab title (AI runs can take minutes)
   useEffect(() => {
-    document.title = generating ? '⌛ AI drafting… · Vibemesh-AI' : compileStatus === 'compiling' ? '⚙ Rendering… · Vibemesh-AI' : IDLE_TITLE
-  }, [generating, compileStatus])
+    document.title = genCount > 0
+      ? `⌛ ${genCount > 1 ? `${genCount} drafting…` : 'AI drafting…'} · Vibemesh-AI`
+      : compileStatus === 'compiling' ? '⚙ Rendering… · Vibemesh-AI' : IDLE_TITLE
+  }, [genCount, compileStatus])
 
   // low-power / reduced-transparency probe → body.perf-lite drops backdrop-blur on the glass
   // surfaces (cheap, opaque fallback). Runs once; .perf-lite is also the manual rollback flag.

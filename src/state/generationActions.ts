@@ -1,5 +1,5 @@
 import type { StoreApi } from 'zustand'
-import type { VibeState } from './store'
+import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
 import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type SkillIssue } from '../lib/api'
@@ -24,17 +24,29 @@ import { newId } from '../lib/storage'
  * `h` so the compile lifecycle they also belong to stays in the store core.
  */
 interface GenerationHelpers {
-  activeChat: () => ChatMessage[]
-  setChat: (chat: ChatMessage[]) => void
-  setChatAndFuture: (chat: ChatMessage[], chatFuture: ChatMessage[]) => void
-  adoptCode: (code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }) => Promise<CompileResult>
-  persist: (partial?: Partial<Project>) => void
+  // projectId-BOUND helpers: a generation captures its pid once and routes EVERY write through these,
+  // so the streamed reply + adopted code always land on the project it started for — even once
+  // switching mid-generation is allowed (concurrent chats, Phase 5).
+  activeChatFor: (pid: string) => ChatMessage[]
+  setChatFor: (pid: string, chat: ChatMessage[]) => void
+  setChatAndFutureFor: (pid: string, chat: ChatMessage[], chatFuture: ChatMessage[]) => void
+  adoptCodeFor: (pid: string, code: string, carryFrom?: { params: ScadParameter[]; values: ParamValues }) => Promise<CompileResult>
+  persistFor: (pid: string, partial?: Partial<Project>) => void
   qualityArgsFor: (preset: (typeof QUALITY_PRESETS)[number]) => string[]
+  /** per-project generation-runtime write funnel (mirrors to the top-level projection for the active project) */
+  writeSession: (pid: string, patch: Partial<Session> | ((cur: Session) => Partial<Session>)) => void
+  /** read a project's generation runtime (blank if none) */
+  genSession: (pid: string) => Session
 }
 
-// gen-only module state, moved out of store.ts with the functions below
-let abortController: AbortController | null = null
-const GEN_TIMEOUT = 1_200_000 // 20 min — absolute anti-hang cap on the stream (see runGeneration)
+// Client-side anti-hang backstop. Derived PER RUN from the server's configured generation timeout
+// (health.genTimeoutMs ← VIBEMESH_GEN_TIMEOUT_MS) plus a buffer, so the server's own timeout — with
+// its clearer message — fires first and this only catches a truly hung stream (notably the
+// claude-code Agent SDK path, which has no server-side timeout). Raising VIBEMESH_GEN_TIMEOUT_MS now
+// extends BOTH bounds, so Opus at high effort can be given as long as it needs. The fallback is used
+// only before /api/health has loaded.
+const GEN_TIMEOUT_FALLBACK_MS = 60 * 60_000
+const GEN_TIMEOUT_BUFFER_MS = 60_000
 const MAX_AUTO_FIX = 2 // shared budget across the contract re-ask + render/structural auto-fix
 const MAX_AUTO_REFINE = 2 // total auto-refine passes per project
 const autoRefinePass = new Map<string, number>()
@@ -50,6 +62,7 @@ export function createGenerationActions(
    *  interleaved token streams); each compiles once through the bounded BACKGROUND queue under a
    *  shared per-request budget, so the N compiles can't blow the single worker's watchdog. */
   async function runBestOfN(
+    pid: string,
     engine: string,
     messages: ReturnType<typeof toApiMessages>,
     baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'>,
@@ -59,11 +72,11 @@ export function createGenerationActions(
     const reports = Array.from({ length: n }, () => ({ skillIds: [] as string[], dropped: [] as string[], report: [] as SkillIssue[] }))
     const stopReasons: (string | undefined)[] = Array.from({ length: n }, () => undefined)
     let done = 0
-    set({ streamText: `Generating ${n} candidates, keeping the best…` })
+    h.writeSession(pid, { streamText: `Generating ${n} candidates, keeping the best…` })
     const fulls = await Promise.all(
       Array.from({ length: n }, (_, i) =>
         streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info }, onDone: (info) => { stopReasons[i] = info.stopReason } })
-          .then((text) => { set({ streamText: `Generated ${++done}/${n} candidates…` }); return text })
+          .then((text) => { h.writeSession(pid, { streamText: `Generated ${++done}/${n} candidates…` }); return text })
           // A user Stop aborts every candidate's shared signal — let AbortError propagate (rejecting
           // Promise.all) so runGeneration's catch handles it as a Stop, instead of swallowing it to
           // '' which reads as a contract violation and silently restarts the whole generation.
@@ -101,7 +114,7 @@ export function createGenerationActions(
       signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
-    set({ streamText: '' })
+    h.writeSession(pid, { streamText: '' })
     // carry the WINNING candidate's stop reason so a truncated winner is caught downstream
     // (same max_tokens handling as the single-stream path), not fed half a program to the parser
     return { full: fulls[best], skillReport: reports[best].report, appliedSkillIds: reports[best].skillIds, dropped: reports[best].dropped, stopReason: stopReasons[best] }
@@ -109,30 +122,37 @@ export function createGenerationActions(
 
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
   async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0, opts: { skillIds?: string[] } = {}) {
-    set({ generating: true, streamText: '', streamHasCode: false })
-    abortController = new AbortController()
-    const ctrl = abortController
+    // capture the project this run is FOR once, and never read get().activeId again — every write
+    // below routes through *For(pid)/writeSession(pid), so a mid-run project switch can't land this
+    // reply on a different chat. (While blockSwitchWhileGenerating stands, pid is always activeId.)
+    const pid = get().activeId
+    if (!pid) return
+    const ctrl = new AbortController()
+    h.writeSession(pid, { generating: true, streamText: '', streamHasCode: false, genStartedAt: Date.now(), abortController: ctrl })
     let genTimedOut = false
     let genTimer: ReturnType<typeof setTimeout> | undefined
+    // effective anti-hang cap = the server's configured generation timeout + a buffer (see consts)
+    let genCapMs = GEN_TIMEOUT_FALLBACK_MS + GEN_TIMEOUT_BUFFER_MS
     try {
       const engine = get().engine
       if (!engine) throw new Error('No AI engine is available — connect one (see the engine menu next to Send).')
       // bind history to the active engine's context window (token budget), not a fixed count
       const provider = get().health?.providers.find((p) => p.id === engine)
       const budgetTokens = historyBudgetTokens(provider, get().health?.systemTokens)
-      const messages = toApiMessages(h.activeChat(), { budgetTokens, maxImages: imageBudgetFor(provider) })
+      const messages = toApiMessages(h.activeChatFor(pid), { budgetTokens, maxImages: imageBudgetFor(provider) })
       const bed = resolveBed(get().bedId, get().customBed)
-      // anti-hang: abort a truly-stalled stream after GEN_TIMEOUT. Guards ONLY the
+      // anti-hang: abort a truly-stalled stream after the configured cap. Guards ONLY the
       // network stream and is cleared the instant it resolves, so it can never fire
       // during the downstream compile / auto-fix recursion (which awaits child runs).
-      genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, GEN_TIMEOUT)
+      genCapMs = (get().health?.genTimeoutMs ?? GEN_TIMEOUT_FALLBACK_MS) + GEN_TIMEOUT_BUFFER_MS
+      genTimer = setTimeout(() => { genTimedOut = true; ctrl.abort() }, genCapMs)
       // carry the PRIOR turn's intent forward so a follow-up that drops the mechanism
       // keyword ("make it bigger") still retrieves the same skill (server prefers its
       // domainTags over the regex). First turn → none → server-side selectSkills from prompt.
-      const priorIntent = [...h.activeChat()].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
+      const priorIntent = [...h.activeChatFor(pid)].reverse().find((m) => m.role === 'assistant' && m.intent)?.intent
       // coarse first-turn source hint from the latest user turn's image roles (tiles →
       // multiview, ≥2 globals → multiobject); the model's own sourceType takes over after.
-      const latestImgs = [...h.activeChat()].reverse().find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)?.images ?? []
+      const latestImgs = [...h.activeChatFor(pid)].reverse().find((m) => m.role === 'user' && (m.images?.length ?? 0) > 0)?.images ?? []
       const sourceHint = latestImgs.some((im) => im.role === 'tile')
         ? ('multiview' as const)
         : latestImgs.filter((im) => (im.role ?? 'global') === 'global').length >= 2
@@ -147,7 +167,9 @@ export function createGenerationActions(
       const baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'> = {
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
-        effort: engine === 'claude-code' || engine === 'anthropic' ? get().claudeEffort : undefined,
+        // effort is capability-driven now (engines that declare reasoning levels), not a hardcoded
+        // engine list — so a future effort-capable provider gets it with no code change here.
+        effort: provider?.efforts?.length ? get().claudeEffort : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: isKit, intent: priorIntent, skillIds: opts.skillIds, sourceHint },
       }
       // A2 — verifier-guided best-of-N: only on the FIRST attempt of a hard request (kit or image),
@@ -158,7 +180,7 @@ export function createGenerationActions(
       let stopReason: string | undefined
       if (useBestOfN) {
         const stated = clampStatedDimensions(priorIntent?.statedDimensions).dimensions
-        const winner = await runBestOfN(engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated })
+        const winner = await runBestOfN(pid, engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated })
         full = winner.full
         skillReport = winner.skillReport
         appliedSkillIds = winner.appliedSkillIds
@@ -168,10 +190,12 @@ export function createGenerationActions(
         full = await streamGenerate(engine, messages, {
           ...baseOpts,
           onDelta: (delta) =>
-            set((s) => ({
-              streamText: s.streamText + delta,
+            // route this run's tokens into ITS OWN session (writeSession mirrors to the top-level
+            // projection only when pid is active) — two concurrent streams can't interleave buffers
+            h.writeSession(pid, (cur) => ({
+              streamText: cur.streamText + delta,
               // flip-once: stop scanning the moment the first fence appears (|| short-circuits)
-              streamHasCode: s.streamHasCode || (s.streamText + delta).includes('```'),
+              streamHasCode: cur.streamHasCode || (cur.streamText + delta).includes('```'),
             })),
           onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
           onDone: (info) => { stopReason = info.stopReason },
@@ -192,8 +216,8 @@ export function createGenerationActions(
       // certainly cut off mid-block. Surface a recoverable message instead of feeding half a program
       // into the contract re-ask / auto-fix spiral (most likely on the 4096-token local + Kimi paths).
       if (stopReason === 'max_tokens') {
-        h.setChat([
-          ...h.activeChat(),
+        h.setChatFor(pid, [
+          ...h.activeChatFor(pid),
           {
             id: newId(),
             createdAt: Date.now(),
@@ -212,12 +236,12 @@ export function createGenerationActions(
       // local engines (which can't reliably honor the format anyway).
       const contractViolated = code === null || blockCount > 1
       if (contractViolated && attempt < MAX_AUTO_FIX && engine && !engine.startsWith('local:')) {
-        h.setChat([...h.activeChat(), { id: newId(), createdAt: Date.now(), role: 'assistant', text: prose || 'Returning the program again.' }])
+        h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'assistant', text: prose || 'Returning the program again.' }])
         const nudge =
           code === null
             ? 'Your last reply contained no OpenSCAD code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program, per the response format.'
             : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
-        h.setChat([...h.activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text: nudge, action: 'Fix format' }])
+        h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text: nudge, action: 'Fix format' }])
         await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1, opts)
         return
       }
@@ -227,8 +251,8 @@ export function createGenerationActions(
       // model. Both cloud engines have been seen to plan correctly but omit the block.
       if (code === null) {
         const tries = engine && !engine.startsWith('local:') ? ` after ${MAX_AUTO_FIX + 1} attempts` : ''
-        h.setChat([
-          ...h.activeChat(),
+        h.setChatFor(pid, [
+          ...h.activeChatFor(pid),
           {
             id: newId(),
             createdAt: Date.now(),
@@ -240,7 +264,7 @@ export function createGenerationActions(
         return
       }
 
-      const isFirstModel = code !== null && !h.activeChat().some((m) => m.code)
+      const isFirstModel = code !== null && !h.activeChatFor(pid).some((m) => m.code)
       // advisory: surface the retrieved skills' mechanism check (verified-skill validators)
       // next to the model — never blocks, just flags printability issues the model slipped.
       // Kept off `text` so it does NOT re-enter the model's next-turn history.
@@ -258,7 +282,7 @@ export function createGenerationActions(
         droppedSkillIds: droppedSkillIds.length ? droppedSkillIds : undefined,
         intent: intent ?? undefined,
       }
-      h.setChat([...h.activeChat(), assistantMsg])
+      h.setChatFor(pid, [...h.activeChatFor(pid), assistantMsg])
       // local skill-health signal: count this application (paired with chip removals below)
       if (appliedSkillIds.length) {
         const ns = recordUses(get().skillStats, appliedSkillIds)
@@ -267,8 +291,8 @@ export function createGenerationActions(
       }
       // teach the loop once per project (UX-AUDIT F9): point at sliders / chat / export
       if (isFirstModel) {
-        h.setChat([
-          ...h.activeChat(),
+        h.setChatFor(pid, [
+          ...h.activeChatFor(pid),
           {
             id: newId(),
             createdAt: Date.now(),
@@ -278,16 +302,18 @@ export function createGenerationActions(
         ])
       }
       if (code) {
-        // carry the user's still-valid slider tweaks across the iteration
-        const compileResult = await h.adoptCode(code, { params: get().params, values: get().paramValues })
-        h.persist()
+        // carry THIS project's still-valid slider tweaks across the iteration (its session, not the
+        // active project's top-level — they differ once a background generation is running)
+        const prevSession = h.genSession(pid)
+        const compileResult = await h.adoptCodeFor(pid, code, { params: prevSession.params, values: prevSession.paramValues })
+        h.persistFor(pid)
         // auto-name the project: prefer the user's words; for app-initiated
         // image-only sends use the AI's description instead of canned text
-        const project = get().projects.find((p) => p.id === get().activeId)
+        const project = get().projects.find((p) => p.id === pid)
         if (project && project.name === 'Untitled part') {
           const source = nameSource.action && prose ? prose : nameSource.text
           const name = source.replace(/\s+/g, ' ').trim()
-          h.persist({ name: name.length > 42 ? name.slice(0, 39) + '…' : name || 'Untitled part' })
+          h.persistFor(pid, { name: name.length > 42 ? name.slice(0, 39) + '…' : name || 'Untitled part' })
         }
 
         // ── Recovery loop. Repair not only hard render errors but clean-but-WRONG
@@ -299,14 +325,17 @@ export function createGenerationActions(
         const canRepair = attempt < MAX_AUTO_FIX && useUi.getState().autoRepair && !!eng && !eng.startsWith('local:')
         if (canRepair && !compileResult.ok && compileResult.error && compileResult.error !== 'superseded' && compileResult.error !== 'empty') {
           const fixText = buildAutoFixPrompt(compileResult.error)
-          h.setChat([...h.activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
+          h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
           await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
         } else if (compileResult.ok) {
-          const params = get().params
+          // read THIS project's just-compiled geometry from its session (top-level is the active
+          // project, which may be a different chat once a background generation is running)
+          const sess = h.genSession(pid)
+          const params = sess.params
           const isMultiPart = params.some((p) => p.name === 'part' && p.kind === 'enum')
           // is the currently-rendered view the ASSEMBLED all-view of a kit (not a per-piece view, and
           // not deliberately exploded)? Then, like a single part, it should rest flat on the bed.
-          const pv = get().paramValues
+          const pv = sess.paramValues
           const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
           const explodeParam = params.find((p) => p.name === 'explode')
           const isAssembledAllView =
@@ -314,7 +343,7 @@ export function createGenerationActions(
             (pv['part'] ?? partParam?.defaultValue) === 'all' &&
             !Number(explodeParam ? (pv['explode'] ?? explodeParam.defaultValue) : 0)
           const bed = resolveBed(get().bedId, get().customBed)
-          const dims = get().modelDims
+          const dims = sess.modelDims
           const degenerate = degenerateReason(dims, bed, !isMultiPart)
           // assembly/mechanism faults = cheap client structural checks PLUS the retrieved
           // skills' validators (server-side, received via skillReport). The advisory
@@ -340,21 +369,25 @@ export function createGenerationActions(
             if (assembly.length)
               parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly/mechanism problems, then return the corrected complete program:\n${assembly.map((i) => `- ${i}`).join('\n')}`)
             const fixText = parts.join('\n\n')
-            h.setChat([...h.activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
+            h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
             await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
           } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
             // off-bed single part → deterministic drop-to-bed (no AI turn). The export
             // bakes meshTransform, so the exported/printed part sits flat on z=0. This also
             // catches the case where the auto-fix budget is exhausted with assembly/skill
             // issues still unfixed — the part still gets dropped onto the bed.
-            get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
-            set({ compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
+            const drop1: { position: [number, number, number]; rotation: [number, number, number] } = { position: [0, 0, -dims.minZ], rotation: [0, 0, 0] }
+            if (pid === get().activeId) get().setMeshTransform(drop1)
+            else h.writeSession(pid, { meshTransform: drop1 })
+            h.writeSession(pid, { compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
           } else if (isAssembledAllView && dims && Math.abs(dims.minZ) > 0.5) {
             // assembled kit preview sunk below / floating above the bed → drop onto z=0 so the all-view
             // reads as sitting on the plate and a single-STL export of it prints flat. A per-piece view
             // recompiles (meshTransform resets to null), and a deliberate explode (>0) is never fought.
-            get().setMeshTransform({ position: [0, 0, -dims.minZ], rotation: [0, 0, 0] })
-            set({ compileNote: `Assembly rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for preview/export.` })
+            const drop2: { position: [number, number, number]; rotation: [number, number, number] } = { position: [0, 0, -dims.minZ], rotation: [0, 0, 0] }
+            if (pid === get().activeId) get().setMeshTransform(drop2)
+            else h.writeSession(pid, { meshTransform: drop2 })
+            h.writeSession(pid, { compileNote: `Assembly rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for preview/export.` })
           }
         }
 
@@ -366,15 +399,15 @@ export function createGenerationActions(
         // differs), so error-repair turns never burn a refine pass. ChatPanel consumes
         // the flag once the canvas has painted; consumeAutoRefine increments the count.
         if (compileResult.ok && (isFirstModel || nameSource.action === 'Refine pass')) {
-          const triggerImages = [...h.activeChat()].reverse().find((m) => m.role === 'user')?.images
+          const triggerImages = [...h.activeChatFor(pid)].reverse().find((m) => m.role === 'user')?.images
           const provider = get().health?.providers.find((p) => p.id === eng)
-          const aid = get().activeId
+          const aid = pid
           // proxy-gated convergence: when the model read off stated dimensions, auto-refine ONLY
           // while the model-INDEPENDENT dimension check still flags a mismatch — stop the moment the
           // render matches the read-off dims (don't burn fixed passes). No stated dims → the proxy
           // has nothing to check, so keep the visual-fidelity refine.
           const stated = clampStatedDimensions(intent?.statedDimensions).dimensions
-          const proxyWantsRefine = stated.length === 0 || dimDiscrepancies(get().modelDims, stated).length > 0
+          const proxyWantsRefine = stated.length === 0 || dimDiscrepancies(h.genSession(pid).modelDims, stated).length > 0
           if (
             triggerImages?.length &&
             provider?.vision &&
@@ -394,25 +427,29 @@ export function createGenerationActions(
         // Distinguish a timeout-abort from a user Stop: the timeout surfaces a
         // recoverable error; a user Stop stays silent.
         if (genTimedOut) {
-          h.setChat([
-            ...h.activeChat(),
+          h.setChatFor(pid, [
+            ...h.activeChatFor(pid),
             {
               id: newId(),
               createdAt: Date.now(),
               role: 'assistant',
-              text: `Generation timed out after ${Math.round(GEN_TIMEOUT / 60000)} min — the engine may be overloaded or unreachable. Try again, or switch to a faster engine / lower effort.`,
+              text: `Generation timed out after ${Math.round(genCapMs / 60000)} min — the engine may be overloaded or unreachable. To wait longer (Opus at high effort can need it), raise VIBEMESH_GEN_TIMEOUT_MS in .env; otherwise try again or lower the effort.`,
               error: true,
             },
           ])
         }
       } else {
         const message = err instanceof Error ? err.message : String(err)
-        h.setChat([...h.activeChat(), { id: newId(), createdAt: Date.now(), role: 'assistant', text: message, error: true }])
+        h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'assistant', text: message, error: true }])
       }
     } finally {
       if (genTimer) clearTimeout(genTimer)
-      abortController = null
-      set({ generating: false, streamText: '', streamHasCode: false })
+      // clear ONLY if this run still owns the session's controller — a nested auto-fix run (or, later,
+      // a concurrent retry) may have replaced it, and it owns the teardown. Prevents one run nulling
+      // another's handle (the bug the old module-level singleton had).
+      if (h.genSession(pid).abortController === ctrl) {
+        h.writeSession(pid, { generating: false, streamText: '', streamHasCode: false, abortController: null, genStartedAt: null })
+      }
     }
   }
 
@@ -423,29 +460,35 @@ export function createGenerationActions(
       if (!state.activeId) {
         get().newProject()
       }
+      const pid = get().activeId
+      if (!pid) return
       const userMsg: ChatMessage = { id: newId(), createdAt: Date.now(), role: 'user', text, images, action }
       // a new prompt commits to the current (possibly rolled-back) version: the stashed
       // tail is now a genuinely abandoned branch, so clear the redo stack as we append.
-      h.setChatAndFuture([...h.activeChat(), userMsg], [])
+      h.setChatAndFutureFor(pid, [...h.activeChatFor(pid), userMsg], [])
       await runGeneration({ text, action })
     },
 
     retryLast: async () => {
       if (get().generating) return
-      const chat = h.activeChat()
+      const pid = get().activeId
+      if (!pid) return
+      const chat = h.activeChatFor(pid)
       // drop trailing FAILED assistant replies only — successful versions stay restorable
       let end = chat.length
       while (end > 0 && chat[end - 1].role === 'assistant' && chat[end - 1].error) end--
       if (end === 0 || chat[end - 1].role !== 'user') return
       const lastUser = chat[end - 1]
-      h.setChat(chat.slice(0, end))
+      h.setChatFor(pid, chat.slice(0, end))
       await runGeneration({ text: lastUser.text, action: lastUser.action })
     },
 
     regenerateWithSkills: async (msgId, skillIds) => {
       if (get().generating) return
+      const pid = get().activeId
+      if (!pid) return
       // health signal: skills the user just REMOVED from this message's chip are a wrong-fit vote
-      const edited = h.activeChat().find((m) => m.id === msgId)
+      const edited = h.activeChatFor(pid).find((m) => m.id === msgId)
       const removed = (edited?.appliedSkillIds ?? []).filter((id) => !skillIds.includes(id))
       if (removed.length) {
         const ns = recordRemovals(get().skillStats, removed)
@@ -459,12 +502,13 @@ export function createGenerationActions(
       // a marker user turn (chip shows an 'Adjust patterns' tag), then generate with the
       // corrected skillIds OVERRIDING retrieval for this turn. Shares the generating guard +
       // abortController via runGeneration; the new version carries the corrected appliedSkillIds.
-      h.setChatAndFuture([...h.activeChat(), { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Adjust patterns' }], [])
+      h.setChatAndFutureFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Adjust patterns' }], [])
       await runGeneration({ text, action: 'Adjust patterns' }, 0, { skillIds })
     },
 
-    abortGeneration: () => {
-      abortController?.abort()
+    abortGeneration: (pid?: string) => {
+      const target = pid ?? get().activeId
+      if (target) h.genSession(target).abortController?.abort()
     },
 
     consumeAutoRefine: () => {
