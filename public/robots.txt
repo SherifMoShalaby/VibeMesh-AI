@@ -1,0 +1,3 @@
+# Vibemesh-AI — the public demo is meant to be found.
+User-agent: *
+Allow: /
