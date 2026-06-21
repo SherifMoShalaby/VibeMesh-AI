@@ -5,7 +5,8 @@ import { buildDefines, parseParameters } from '../lib/params'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, type HealthInfo } from '../lib/api'
-import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects } from '../lib/storage'
+import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects, setOnExternalChange } from '../lib/storage'
+import { mergeExternalProjects } from '../lib/storeDecisions'
 import { parseShareFile, shareFileToProject } from '../lib/shareFile'
 import { loadSkillStats, type SkillStats } from '../lib/skillStats'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
@@ -188,6 +189,9 @@ export interface VibeState {
   sendPrompt: (text: string, images?: ChatMessage['images'], action?: string) => Promise<void>
   /** re-run the last user prompt after a failed generation (drops the trailing error reply) */
   retryLast: () => Promise<void>
+  /** re-roll the current model: generate a different version of the same request, APPENDED as a
+   *  sibling after the current one so both stay switchable via the version chips (nothing discarded) */
+  rerollLast: () => Promise<void>
   /** correct the applied-patterns chip: regenerate the current design with skill retrieval
    *  OVERRIDDEN by `skillIds` (selectSkills skipped for that turn). Advisory — never blocks. */
   regenerateWithSkills: (msgId: string, skillIds: string[]) => Promise<void>
@@ -643,6 +647,16 @@ export const useStore = create<VibeState>((set, get) => {
         setChatHash(project.id, { replace: true })
         saveLastChatId(project.id)
       }
+
+      // cross-tab convergence: when ANOTHER tab persists, storage re-reads the durable record and
+      // hands us the reconciled projects. Refresh inactive/background projects from it, but leave the
+      // ACTIVE project's live editor untouched (never yank the chat/model the user is working in), and
+      // keep the active project alive even if it was deleted in the other tab. We mutate state only —
+      // never saveProjects here, so a refresh can't rebroadcast.
+      setOnExternalChange((incoming) => {
+        set({ projects: mergeExternalProjects(incoming, get().projects, get().activeId) })
+      })
+
       await get().refreshHealth()
     },
 

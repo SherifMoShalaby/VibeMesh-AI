@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { useStore } from '../state/store'
+import { useUi } from '../state/ui'
 import { EXAMPLES, PROMPT_IDEAS, SKILL_STARTERS } from '../lib/examples'
 import ModelMenu from './ModelMenu'
 import type { ChatImage } from '../types'
@@ -10,16 +11,30 @@ import { DSpark, DImage, DSparkFill, DArrowRight, DBox, DCamera, DGrid, DCylinde
 const CHIP_ICONS = [DBox, DCamera, DGrid, DCylinder]
 const MAX_IMAGES = 10
 const IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/
+/** a dropped/picked .vibemesh share file — matched by name (its MIME is often empty/octet-stream) */
+const isShareFile = (f: File) => /\.vibemesh$/i.test(f.name) || f.type === 'application/json'
 
 export default function EmptyState() {
   const loadExample = useStore((s) => s.loadExample)
   const sendPrompt = useStore((s) => s.sendPrompt)
+  const importShareFile = useStore((s) => s.importShareFile)
   const engine = useStore((s) => s.engine)
   const health = useStore((s) => s.health)
+  const pushToast = useUi((s) => s.pushToast)
   const [text, setText] = useState('')
   const [images, setImages] = useState<ChatImage[]>([])
   const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const shareRef = useRef<HTMLInputElement>(null)
+
+  // open a received .vibemesh part as a fresh editable project (the store does parse/validate/compile;
+  // it toasts on an invalid file). Needs no AI, so this works on a keyless first run.
+  const importVibemeshFile = (file: File) => {
+    file
+      .text()
+      .then((t) => importShareFile(t))
+      .catch((err) => pushToast(`Could not read the file: ${err instanceof Error ? err.message : String(err)}`, 'error'))
+  }
 
   // mirror ChatPanel's vision guard: the active engine may not accept images (e.g. a local model)
   const activeProvider = health?.providers.find((p) => p.id === engine)
@@ -56,8 +71,13 @@ export default function EmptyState() {
     <div
       className="empty"
       onDragOver={(e) => {
-        // mirror ChatPanel: arm the drop overlay only when an image is being dragged
-        if (canAttach && Array.from(e.dataTransfer.items).some((it) => IMAGE_TYPES.test(it.type))) {
+        // arm the drop overlay for an image (attach as reference) OR a .vibemesh file (import). A
+        // dragover item exposes only .type, not the filename, so accept the empty/json MIME a
+        // dragged .vibemesh reports in addition to the image types.
+        const items = Array.from(e.dataTransfer.items)
+        const hasImage = canAttach && items.some((it) => IMAGE_TYPES.test(it.type))
+        const hasShare = items.some((it) => it.kind === 'file' && (it.type === 'application/json' || it.type === ''))
+        if (hasImage || hasShare) {
           e.preventDefault()
           setDragging(true)
         }
@@ -71,10 +91,17 @@ export default function EmptyState() {
           onDrop={(e) => {
             e.preventDefault()
             setDragging(false)
-            void attachFiles(e.dataTransfer.files)
+            const files = Array.from(e.dataTransfer.files)
+            const imgs = files.filter((f) => IMAGE_TYPES.test(f.type))
+            // image wins when both are dropped (attach as reference); else import a share file
+            if (imgs.length) void attachFiles(imgs)
+            else {
+              const share = files.find(isShareFile)
+              if (share) importVibemeshFile(share)
+            }
           }}
         >
-          <span><DImage /> Drop a photo or sketch</span>
+          <span><DImage /> Drop a photo, sketch, or .vibemesh file</span>
         </div>
       )}
       <div className="empty-badge"><span className="spark"><DSpark /></span> Text &amp; image → CAD</div>
@@ -128,6 +155,22 @@ export default function EmptyState() {
             onClick={() => fileRef.current?.click()}
           >
             <DImage />
+          </button>
+          <input
+            ref={shareRef}
+            type="file"
+            accept=".vibemesh,application/json"
+            hidden
+            onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ''; if (f) importVibemeshFile(f) }}
+          />
+          <button
+            className="chip-btn"
+            type="button"
+            aria-label="Open a shared .vibemesh part"
+            title="Open someone's shared .vibemesh part as a new editable project — no AI needed"
+            onClick={() => shareRef.current?.click()}
+          >
+            <DBox /> Import .vibemesh
           </button>
           <ModelMenu />
           <span className="spacer" />

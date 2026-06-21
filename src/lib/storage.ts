@@ -300,12 +300,14 @@ async function flushToDb(): Promise<void> {
   writing = true
   try {
     await idbWrite(db, { schemaVersion: SCHEMA_VERSION, projects: cache })
+    postSaved() // tell other tabs to re-read the now-durable record (cross-tab convergence)
   } catch (err) {
     // durable fallback if a write fails mid-session — surface it so a silent degrade is visible,
     // and switch to localStorage-only for the rest of the session rather than thrashing a broken DB.
     console.warn('[storage] IndexedDB write failed; switching to localStorage for this session', err)
     db = null
     writeLocal(cache)
+    postSaved()
   }
   writing = false
   if (pending) {
@@ -318,7 +320,10 @@ export function saveProjects(projects: Project[]): void {
   cache = projects
   if (readOnly) return // newer-build data — keep the session usable but never persist over it
   if (db) void flushToDb()
-  else writeLocal(projects)
+  else {
+    writeLocal(projects)
+    postSaved() // localStorage-only mode: notify other tabs synchronously after the write
+  }
 }
 
 /**
@@ -340,6 +345,62 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (document.visibilityState === 'hidden') flushStorageOnHide()
   })
   window.addEventListener('pagehide', flushStorageOnHide)
+}
+
+/* ── cross-tab sync ──
+ * IndexedDB (and the localStorage backup) are shared by every tab on this origin, but each tab holds
+ * its own in-memory `cache`. Without coordination, a second tab's STALE boot snapshot silently
+ * clobbers the first tab's saves on its next write (whole-record last-writer-wins) — real, silent
+ * data loss in the app's only durable store. A BroadcastChannel turns that into convergence: every
+ * durable write announces itself; other tabs re-read the durable record and reconcile (newest
+ * `updatedAt` wins, reusing reconcileRecord), so a passive tab never persists a stale snapshot.
+ * Feedback-loop guards: only originating SAVES post (never hydrate/receive); a tab ignores its own
+ * echo (TAB_ID); the receiver updates state but does NOT re-save, so a refresh can't rebroadcast. */
+const TAB_ID = newId()
+let bc: BroadcastChannel | null = null
+let externalChangeCb: ((projects: Project[]) => void) | null = null
+
+/** subscribe to durable changes made by ANOTHER tab; the store re-projects them (see store.init). */
+export function setOnExternalChange(cb: ((projects: Project[]) => void) | null): void {
+  externalChangeCb = cb
+}
+
+function postSaved(): void {
+  try {
+    bc?.postMessage({ type: 'projects-saved', tabId: TAB_ID })
+  } catch {
+    /* channel closed — ignore */
+  }
+}
+
+/** Re-read the durable store after another tab wrote it, reconcile against our cache (our own
+ *  not-yet-flushed newer edits still win), and hand the result to the store. Never re-saves. */
+async function refreshFromDurable(): Promise<void> {
+  if (readOnly) return
+  try {
+    const durable = db
+      ? migrateRecord(await idbRead(db)).projects
+      : migrateRecord({ projects: readLocal() }).projects
+    const merged = reconcileRecord(durable, cache)
+    if (merged === cache) return // our cache already at least as fresh — nothing changed
+    cache = merged
+    externalChangeCb?.(merged)
+  } catch (err) {
+    console.warn('[storage] cross-tab refresh failed', err)
+  }
+}
+
+if (typeof BroadcastChannel !== 'undefined') {
+  try {
+    bc = new BroadcastChannel('vibemesh-storage')
+    bc.onmessage = (ev: MessageEvent) => {
+      const msg = ev.data as { type?: string; tabId?: string } | null
+      if (!msg || msg.type !== 'projects-saved' || msg.tabId === TAB_ID) return
+      void refreshFromDurable()
+    }
+  } catch {
+    bc = null
+  }
 }
 
 const LAST_CHAT_KEY = 'vibemesh.lastChat.v1'

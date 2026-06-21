@@ -653,6 +653,9 @@ input[type='checkbox']:focus-visible,
 .code-chip:not(:disabled):hover .cc-restore { color: var(--text); border-color: var(--accent-line); background: var(--accent-soft); }
 .code-chip .cc-restore svg { width: 12px; height: 12px; }
 .code-chip.current { opacity: 0.85; }
+/* re-roll a successful version into a sibling — a quieter, neutral variant of the code chip */
+.code-chip.reroll { background: linear-gradient(180deg, var(--raised), transparent); border-color: var(--line-strong); }
+.code-chip.reroll:hover { border-color: var(--accent-line); background: var(--accent-soft); }
 
 /* action chips (refine pass / fix request) */
 .tag {
@@ -1401,6 +1404,14 @@ input[type='checkbox']:focus-visible,
 .menu.align-right { right: 0; }
 .menu.align-left { left: 0; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+.menu-search {
+  width: 100%; box-sizing: border-box; margin: 2px 0 6px; padding: 7px 10px;
+  font: inherit; font-size: var(--fs-small); color: var(--text);
+  background: var(--raised); border: 1px solid var(--line-strong); border-radius: var(--r-sm); outline: none;
+}
+.menu-search::placeholder { color: var(--text-faint); }
+.menu-search:focus { border-color: var(--accent-line); background: var(--accent-soft); }
+.menu-empty { padding: 10px; font-size: var(--fs-small); color: var(--text-faint); text-align: center; }
 .menu-label { padding: 7px 10px 5px; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-faint); }
 .menu-item {
   display: flex; align-items: center; gap: 10px; width: 100%;

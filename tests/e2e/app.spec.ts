@@ -51,8 +51,32 @@ test.describe('home / empty state', () => {
   })
 
   test('attaching a reference image via the file picker shows a thumbnail', async ({ page }) => {
-    await page.locator('.empty-composer input[type=file]').setInputFiles(REF_IMAGE)
+    // scope to the image picker — the foot also holds a separate .vibemesh import input
+    await page.locator('.empty-composer input[type=file][accept*="image"]').setInputFiles(REF_IMAGE)
     await expect(page.locator('.empty-thumb img').first()).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('importing a .vibemesh share file from the empty state opens it as a project', async ({ page }) => {
+    // make something to export: load a built-in example (no AI key needed)
+    await page.locator('.example-card').first().click()
+    await expect(page.locator('.empty')).toBeHidden({ timeout: 20_000 })
+
+    // export a .vibemesh share file and capture the download
+    await page.locator('#topbar-export').click()
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('menuitem', { name: /Share file/i }).click(),
+    ])
+    const filePath = await download.path()
+
+    // back to the empty state, import via the new affordance (image input is a separate one)
+    await page.getByRole('button', { name: /new chat/i }).click()
+    await expect(page.locator('.empty')).toBeVisible({ timeout: 20_000 })
+    await page.locator('.empty-composer input[type=file][accept*="vibemesh"]').setInputFiles(filePath)
+
+    // it opens as a fresh editable project: empty state gone, a code-bearing version present
+    await expect(page.locator('.empty')).toBeHidden({ timeout: 20_000 })
+    await expect(page.locator('.code-chip').first()).toBeVisible({ timeout: 20_000 })
   })
 })
 
