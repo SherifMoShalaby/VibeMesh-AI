@@ -264,7 +264,8 @@ export function createGenerationActions(
         return
       }
 
-      const isFirstModel = code !== null && !h.activeChatFor(pid).some((m) => m.code)
+      // `code` is already narrowed to non-null above (the contract-violation path returned)
+      const isFirstModel = !h.activeChatFor(pid).some((m) => m.code)
       // advisory: surface the retrieved skills' mechanism check (verified-skill validators)
       // next to the model — never blocks, just flags printability issues the model slipped.
       // Kept off `text` so it does NOT re-enter the model's next-turn history.

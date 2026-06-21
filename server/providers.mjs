@@ -7,7 +7,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT } from './prompt.mjs'
 import { SKILLS, selectSkills, selectSkillsDetailed, composePlan } from './skills.mjs'
 import { billOfMaterials } from './hardware.mjs'
-import { getConnection, listConnections, catalogEntry } from './connections.mjs'
+import { getConnection, listConnections, catalogEntry, validateFetchUrl } from './connections.mjs'
 
 const ENV_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env')
 
@@ -455,6 +455,8 @@ export async function testEngine(engine) {
       // a marketplace connection: 1-token ping via the same adapter protocol it generates through.
       const desc = resolveEngineDescriptor(engine)
       if (!desc) return { ok: false, message: 'Connection not found.' }
+      // http(s)-only + metadata/link-local blocked before any outbound request
+      try { if (desc.baseURL) validateFetchUrl(desc.baseURL) } catch { return { ok: false, message: 'That base URL is not allowed.' } }
       if (desc.protocol === 'anthropic') {
         if (!desc.auth?.secret) return { ok: false, message: 'No API key saved yet.' }
         const client = new Anthropic({ baseURL: desc.baseURL, apiKey: desc.auth.secret })
@@ -974,9 +976,18 @@ function collectImages(content) {
  *  `https://api.openai.com/v1`, OpenRouter `…/api/v1`, Gemini's OpenAI shim `…/v1beta/openai`) OR
  *  WITHOUT one (bare hosts: Ollama `http://localhost:11434`, `https://api.deepseek.com`). Prevents a
  *  double `/v1` on hosted providers while still adding `/v1` for bare hosts. */
+/** Strip trailing slashes without a regex (avoids the ReDoS a `/\/+$/` over attacker-controlled
+ *  input would carry). */
+function trimTrailingSlashes(s) {
+  let i = String(s).length
+  while (i > 0 && s[i - 1] === '/') i--
+  return String(s).slice(0, i)
+}
 function openAiApiUrl(baseURL, apiPath) {
-  const b = String(baseURL).replace(/\/+$/, '')
-  return /\/v\d+\w*(\/openai)?$/.test(b) ? `${b}/${apiPath}` : `${b}/v1/${apiPath}`
+  const b = trimTrailingSlashes(baseURL)
+  // `\d\w*` (single digit + word chars), NOT `\d+\w*` — the latter has two adjacent quantifiers over
+  // overlapping classes (\d ⊂ \w), which backtracks polynomially on a crafted host (ReDoS).
+  return /\/v\d\w*(\/openai)?$/.test(b) ? `${b}/${apiPath}` : `${b}/v1/${apiPath}`
 }
 export function chatCompletionsUrl(baseURL) {
   return openAiApiUrl(baseURL, 'chat/completions')
@@ -988,8 +999,11 @@ export function chatCompletionsUrl(baseURL) {
 export async function discoverModels({ protocol, baseUrl, secret }) {
   if (!baseUrl) return null
   try {
+    // re-validate at the fetch site (defense-in-depth beyond the route guard): http(s)-only,
+    // cloud-metadata + link-local blocked. Throws on a bad/blocked host → caught → null.
+    validateFetchUrl(baseUrl)
     if (protocol === 'anthropic') {
-      const url = `${String(baseUrl).replace(/\/+$/, '')}/v1/models`
+      const url = `${trimTrailingSlashes(baseUrl)}/v1/models`
       const res = await fetch(url, { headers: { 'x-api-key': secret || '', 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(6000) })
       if (!res.ok) return null
       const body = await res.json()
@@ -1009,6 +1023,9 @@ export async function discoverModels({ protocol, baseUrl, secret }) {
 async function streamOpenAiProtocol({ desc, messages, ctx, onDelta, signal }) {
   const baseURL = desc.baseURL
   const who = desc.who
+  // http(s)-only + cloud-metadata/link-local blocked (localhost IS allowed — local LLMs live there).
+  // Connections are pre-validated on save; this guards the fetch site itself.
+  try { validateFetchUrl(baseURL) } catch { throw new UserFacingError(`Invalid base URL for ${who}.`) }
   // Bound the whole request by the same generation timeout as the SDK engines, combined with the
   // caller's abort (client disconnect). AbortSignal.timeout fires a TimeoutError we translate; the
   // merged signal also aborts mid-stream if the model stalls past the budget.
