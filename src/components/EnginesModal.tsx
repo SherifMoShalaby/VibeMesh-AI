@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { connectEngine, testEngine, fetchCatalog, saveConnection, removeConnection, discoverModels, type ProviderInfo, type CatalogEntry } from '../lib/api'
-import { deriveCards, type EngineRowData, type UnifiedProvider } from './engineCards'
+import { deriveCards, type CardMethod, type EngineRowData, type UnifiedProvider } from './engineCards'
 import { useFocusTrap } from '../lib/useFocusTrap'
-import { IconX, IconRefresh, DChip, DPlus } from './icons'
+import { IconX, IconRefresh, DChip, DPlus, DSearch } from './icons'
 
 /** Compact token formatter for the specs line: 1000000 → "1M", 200000 → "200k", 128000 → "128k". */
 function fmtTokens(n: number): string {
@@ -20,11 +20,13 @@ function initials(label: string): string {
   return (words[0] ?? '?').slice(0, 2).toUpperCase()
 }
 
-// the three connection methods, used for the one-line caption (Phase 1) and the sidebar rail (Phase 2)
-const SECTIONS: Array<{ key: NonNullable<ProviderInfo['group']>; title: string; hint: string }> = [
-  { key: 'cli', title: 'Subscription · CLI login', hint: 'Use an app you already pay for — no key to paste.' },
-  { key: 'apikey', title: 'API key', hint: 'Connect with a key from the provider console.' },
-  { key: 'local', title: 'Local', hint: 'Run a model on your own machine — set the server URL.' },
+// the connection-method rail (left sidebar). Each row carries the teaching hint as a tooltip, so the
+// method guidance the panel used to print as section headers isn't lost.
+const METHODS: Array<{ key: CardMethod; label: string; hint: string }> = [
+  { key: 'cli', label: 'Subscription · CLI', hint: 'Use an app you already pay for — no key to paste.' },
+  { key: 'apikey', label: 'API key', hint: 'Connect with a key from the provider console.' },
+  { key: 'local', label: 'Local', hint: 'Run a model on your own machine — set the server URL.' },
+  { key: 'custom', label: 'Custom', hint: 'Bring your own OpenAI- or Anthropic-compatible endpoint.' },
 ]
 
 export default function EnginesModal() {
@@ -72,37 +74,137 @@ export default function EnginesModal() {
   // (Add/Remove) unmounting mid-handler, which can make a bubbled click fall through to the scrim
   return (
     <div className="scrim" onClick={(e) => { if (e.target === e.currentTarget) setEnginesOpen(false) }}>
-      <div ref={dialogRef} tabIndex={-1} className="modal" role="dialog" aria-modal="true" aria-label="AI engines" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} tabIndex={-1} className="modal modal-wide" role="dialog" aria-modal="true" aria-label="AI engines" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span className="mh-icon"><DChip /></span>
           <div className="mh-text">
             <h2>AI engines</h2>
-            <p>The assistant that designs parts for you.</p>
+            <p>Connect whichever you have — examples, sliders and exports all work without one.</p>
           </div>
           <button className="icon-btn-sm" onClick={() => setEnginesOpen(false)} aria-label="Close">
             <IconX />
           </button>
         </div>
 
-        <div className="modal-body">
-          <p className="modal-intro">
-            An AI engine is the assistant that designs parts for you. Connect whichever you have — everything else in
-            the app (examples, sliders, exports) works without one.
-          </p>
-          <p className="dir-methods">
-            {SECTIONS.map((s) => s.title.replace(/ · /g, ' ')).join(' · ')} — three ways to connect.
-          </p>
-          <EngineCardGrid cards={cards} onChanged={refreshHealth} />
+        <div className="modal-body dir-body">
+          <DirectoryShell cards={cards} onChanged={refreshHealth} onRescan={rescan} scanning={scanning} />
         </div>
 
         <div className="modal-foot">
           <span className="modal-hint">Keys are saved on this computer only — they never leave it.</span>
-          <button className="btn btn-ghost" onClick={() => void rescan()} disabled={scanning}>
-            {scanning ? 'Looking…' : <><IconRefresh /> Look again</>}
-          </button>
         </div>
       </div>
     </div>
+  )
+}
+
+/** The 2-pane Directory body: a method-nav rail + a search/sort toolbar over the card grid. Owns the
+ *  ephemeral view state (query / active method / sort) — kept local so it never leaks across opens. */
+function DirectoryShell({ cards, onChanged, onRescan, scanning }: {
+  cards: UnifiedProvider[]
+  onChanged: (providers?: ProviderInfo[]) => Promise<void>
+  onRescan: () => Promise<void>
+  scanning: boolean
+}) {
+  const [query, setQuery] = useState('')
+  const [activeMethod, setActiveMethod] = useState<'all' | CardMethod>('all')
+  const [sortKey, setSortKey] = useState<'status' | 'az'>('status')
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {}
+    for (const card of cards) c[card.method] = (c[card.method] ?? 0) + 1
+    return c
+  }, [cards])
+
+  // if the active method empties out (e.g. its only provider got connected/removed), fall back to All
+  // — derived (not stored) so it self-corrects without a setState-in-effect
+  const effectiveMethod = activeMethod !== 'all' && !counts[activeMethod] ? 'all' : activeMethod
+
+  const visible = useMemo(() => {
+    let list = effectiveMethod === 'all' ? cards : cards.filter((c) => c.method === effectiveMethod)
+    const q = query.trim().toLowerCase()
+    if (q) {
+      list = list.filter((c) => {
+        const hay = `${c.label} ${c.subtitle} ${c.detail} ${c.catalogEntry?.id ?? c.provider?.id ?? ''}`.toLowerCase()
+        return hay.includes(q)
+      })
+    }
+    // deriveCards already returns status order; only re-sort for A–Z
+    return sortKey === 'az' ? [...list].sort((a, b) => a.label.localeCompare(b.label)) : list
+  }, [cards, effectiveMethod, query, sortKey])
+
+  // if a filter removes whatever held focus, the focus trap would orphan it on <body> — pull focus
+  // back to the search box so keyboard users keep their place
+  useEffect(() => {
+    if (document.activeElement === document.body) searchRef.current?.focus()
+  }, [visible])
+
+  const filtering = query.trim().length > 0 || effectiveMethod !== 'all'
+
+  return (
+    <>
+      <nav className="dir-nav" aria-label="Connection method">
+        <button className={`dir-nav-item${effectiveMethod === 'all' ? ' on' : ''}`} aria-current={effectiveMethod === 'all'} onClick={() => setActiveMethod('all')}>
+          <span className="dnav-label">All</span>
+          <span className="dnav-ct">{cards.length}</span>
+        </button>
+        {METHODS.filter((m) => counts[m.key]).map((m) => (
+          <button
+            key={m.key}
+            className={`dir-nav-item${effectiveMethod === m.key ? ' on' : ''}`}
+            aria-current={effectiveMethod === m.key}
+            title={m.hint}
+            onClick={() => setActiveMethod(m.key)}
+          >
+            <span className="dnav-label">{m.label}</span>
+            <span className="dnav-ct">{counts[m.key]}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="dir-main">
+        <div className="dir-toolbar">
+          <div className="dir-search">
+            <DSearch />
+            <input
+              ref={searchRef}
+              type="text"
+              aria-label="Search engines"
+              placeholder="Search engines"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button className="dir-search-x" aria-label="Clear search" onClick={() => setQuery('')}>
+                <IconX />
+              </button>
+            )}
+          </div>
+          <span className="dir-count" role="status" aria-live="polite">{filtering ? `${visible.length} of ${cards.length}` : ''}</span>
+          <button className="btn btn-ghost sm dir-sort" onClick={() => setSortKey((k) => (k === 'status' ? 'az' : 'status'))} title="Change sort order">
+            Sort: {sortKey === 'status' ? 'Status' : 'A–Z'}
+          </button>
+          <button className="icon-btn-sm dir-refresh" onClick={() => void onRescan()} disabled={scanning} aria-label="Look again" title="Re-scan for engines">
+            <IconRefresh />
+          </button>
+        </div>
+
+        {visible.length === 0 ? (
+          <div className="dir-empty" role="status">
+            {query.trim() ? (
+              <>No engines match “{query.trim()}”. <button className="link-btn" onClick={() => { setQuery(''); setActiveMethod('all') }}>Clear</button></>
+            ) : cards.length === 0 ? (
+              'No engines detected — try “Look again”.'
+            ) : (
+              'No engines in this category.'
+            )}
+          </div>
+        ) : (
+          <EngineCardGrid cards={visible} onChanged={onChanged} />
+        )}
+      </div>
+    </>
   )
 }
 
@@ -111,14 +213,6 @@ export default function EnginesModal() {
 function EngineCardGrid({ cards, onChanged }: { cards: UnifiedProvider[]; onChanged: (providers?: ProviderInfo[]) => Promise<void> }) {
   const [openKey, setOpenKey] = useState<string | null>(null)
   const toggle = (key: string) => setOpenKey((prev) => (prev === key ? null : key))
-
-  if (cards.length === 0) {
-    return (
-      <div className="dir-empty" role="status">
-        No engines detected. Connect a provider or use “Look again” below.
-      </div>
-    )
-  }
 
   return (
     <div className="engine-grid">

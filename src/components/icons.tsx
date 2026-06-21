@@ -125,6 +125,7 @@ export const DPrinter = () => (<D><path d="M6 9V3h12v6" /><rect x="4" y="9" widt
 export const DMove = () => (<D><path d="M12 3v18M3 12h18M8 6l4-3 4 3M8 18l4 3 4-3M6 8l-3 4 3 4M18 8l3 4-3 4" /></D>)
 export const DRotate = () => (<D><path d="M3.5 9a9 9 0 1 1-.6 5" /><path d="M3 4v5h5" /></D>)
 export const DZoom = () => (<D><circle cx="11" cy="11" r="7" /><path d="M16 16l4 4M9 11h4M11 9v4" /></D>)
+export const DSearch = () => (<D><circle cx="11" cy="11" r="7" /><path d="M16 16l4 4" /></D>)
 export const DRuler = () => (<D><path d="M3 16h18M6 16v-3M10 16v-5M14 16v-3M18 16v-5" /></D>)
 export const DShading = () => (<D><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" /></D>)
 export const DGrid = () =>(<D><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></D>)
