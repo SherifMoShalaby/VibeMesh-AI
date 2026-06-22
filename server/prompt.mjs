@@ -139,6 +139,21 @@ When the reference shows a repeating SURFACE pattern — honeycomb/hex grip mesh
   HONESTY: when primitive booleans can't sculpt an organic subject, a stylized heraldic RELIEF (a thick carved silhouette plate raised on the base) is a permitted floor — a clean heraldic read beats a lumpy failed 3D sculpt.
 Cap the cell/segment count at a sane number and expose it, but reproduce a RECOGNIZABLE pattern — a real mesh, not 5 dots.
 
+# Trace the defining outline (reference images)
+
+When working FROM A REFERENCE IMAGE and the subject's defining outline is NON-CANONICAL — a shape your generic prior would otherwise approximate (a turned chess piece, a domed/clamshell organic shell, a trussed/cut-out frame) — FIRST trace that outline off the actual pixels as an inert constant, THEN build the body ONLY from the traced polygon. Read it corner-by-corner from the reference, not from a template. Pick the channel that matches the form:
+- TURNED / FIGURATIVE piece (chess bishop/king/queen/pawn, a finial, a vase) → trace an \`[r,z]\` revolve profile and \`rotate_extrude(polygon(prof))\`.
+- DOMED / ORGANIC-PRISMATIC form (the clamshell crown of an organizer, a rounded shell) → trace the front SECTION curve, \`rotate_extrude(polygon(prof))\`, then scale/squash (or loft) it to the real footprint — not a generic hemisphere.
+- FUNCTIONAL FRAME / TRUSS (a laptop-stand leg, a cut-out bracket arm) → trace the SILHOUETTE polygon and \`linear_extrude(width)\`. (This is the same idiom as the stepped/zig-zag and organic-silhouette routes above — unified here as one trace family.)
+
+PLACEMENT IS A HARD RULE: emit each traced polygon as a SINGLE-LINE constant (e.g. \`bishop_prof = [[0,0],[12.5,0],[12.5,4],...];\`) placed BELOW the Customizer parameter block, in the geometry/module region — NEVER inside the parameter block and NEVER wrapped across multiple lines. A multi-line \`prof = [\` inside the param block silently truncates the slider parser and DELETES every parameter under it. If a profile is genuinely too long to read on one line, place it under a \`/* [Hidden] */\` group header (the parser stops scanning at [Hidden], so nothing below it can ever truncate the sliders) — but the single-line-below-the-block form is preferred. Never a multi-line array inside the visible parameter block.
+
+This TRACE decision is ORTHOGONAL to the FACET VERDICT below: tracing improves fidelity on FUNCTIONAL parts too (the truss leg, the machined dome) and must NOT make them faceted. Trace shapes the OUTLINE; the FACET VERDICT alone decides the SURFACE and is the ONLY thing that may set a low \`$fn\`. A traced dome on an organizer stays SMOOTH/MACHINED (no \`$fn\`, the quality preset smooths it); only a GENUINELY-FACETED reference gets a low \`$fn\`.
+
+GRACEFUL FALLBACK: if you cannot read a CLEAN, monotonic, non-self-intersecting profile off the reference, do NOT ship a garbled trace — fall back to the canonical prior (ordinary primitives / a plain revolve) for that feature. A clean canonical shape beats a broken traced one.
+
+MOAT — trace ONLY a non-canonical outline. A functional part WHOSE FORM IS ALREADY CANONICAL (a rectangular bracket, a round knob, a 608 bearing, a standard enclosure, a gear) does NOT get traced — build it from ordinary smooth primitives as the SCOPE GATE requires. Trace is for outlines your prior would get WRONG, never decoration on a part it already gets right.
+
 # Hard-surface / faceted / low-poly styling
 
 When the reference reads STYLIZED (sci-fi / mechanical / armored / low-poly figurine) — NOT a plain functional part — commit TWO plain prose lines (in the PLAN section ABOVE the code block, never as comments inside it), BOTH required — an ARCHETYPE line AND a FACET VERDICT line:
@@ -204,6 +219,7 @@ When a message includes a render screenshot of the current model to compare agai
 10. If working from a reference image: every FEATURE INVENTORY item is present and recognizable in the geometry (a real hex mesh, the stepped edge, the curved arm — not stand-in round holes), and the reference's intentional asymmetry / per-region variation is preserved, not normalized toward a symmetric or regular form.
 11. If multi-part: the \`part=="all"\` view places every piece in its assembled mating position (joints touching), NOT spread apart, and an \`explode\` parameter fans the pieces along their real fit axes.
 12. No per-call \`$fn\` on any body / dome / neck / base tier / silhouette — those stay smooth so the quality presets apply — UNLESS the reference's FACET VERDICT is GENUINELY-FACETED/LOW-POLY, where a deliberate low \`$fn\` (6-12, exposed as a \`facets\` parameter) on the stylized mass IS the intended geometry (structural necks/stems/bores still stay smooth). Otherwise per-call \`$fn\` only on discrete-count geometry (hex socket) or a small deliberately-faceted accent region intersected onto a smooth body. A machined hard-surface piece gets its read from chamfers + recessed panel lines, never from polygonizing the body. If the reference is a recognizable object or family member, its identifying SIGNATURE feature is present and not collapsed into a generic prior — its distinctive top / head / profile reads as that specific object rather than its category average, and the members of a set stay distinct from one another.
+13. If working from a reference image whose defining outline is NON-CANONICAL: the body is built from a traced \`[r,z]\`/section/silhouette polygon read off the pixels, and EVERY such traced constant is a SINGLE LINE placed BELOW the parameter block (or under a \`/* [Hidden] */\` group) — never multi-line inside the visible param block, which truncates the slider parser. Tracing set no \`$fn\` (only the FACET VERDICT does), so a traced functional part stays smooth. A canonical functional part (bracket, knob, bearing, gear, enclosure) is NOT traced. If a clean monotonic profile could not be read, the canonical prior was used instead.
 
 # Iteration
 
