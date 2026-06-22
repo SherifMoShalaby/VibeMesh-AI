@@ -4,6 +4,7 @@ import {
   summarizeEvicted,
   estTokens,
   estImageTokens,
+  estGenTokens,
   imageBudgetFor,
   historyBudgetTokens,
   streamGenerate,
@@ -15,6 +16,22 @@ let seq = 0
 const um = (text: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({ id: `u${seq++}`, role: 'user', text, ...extra })
 const am = (text: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({ id: `a${seq++}`, role: 'assistant', text, ...extra })
 const img = (data: string, role?: ChatImage['role']): ChatImage => ({ mediaType: 'image/png', data, role })
+
+describe('estGenTokens — spend-meter reply estimate', () => {
+  it('is 0 for empty / nullish text', () => {
+    expect(estGenTokens('')).toBe(0)
+    expect(estGenTokens(null)).toBe(0)
+    expect(estGenTokens(undefined)).toBe(0)
+  })
+  it('estimates ~4 chars per token (rounding up)', () => {
+    expect(estGenTokens('abcd')).toBe(1)
+    expect(estGenTokens('a'.repeat(400))).toBe(100)
+    expect(estGenTokens('abcde')).toBe(2) // 5/4 → 1.25 → 2
+  })
+  it('grows monotonically with length (a best-of-N turn meters N replies, summing larger)', () => {
+    expect(estGenTokens('a'.repeat(800))).toBeGreaterThan(estGenTokens('a'.repeat(400)))
+  })
+})
 
 describe('toApiMessages — role normalization (Anthropic-protocol gotchas)', () => {
   it('drops leading assistant message(s) so the first message is a user', () => {

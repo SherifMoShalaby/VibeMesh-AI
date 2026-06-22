@@ -61,6 +61,11 @@ export interface Session {
   slicing: boolean
   slicingToken: number
   slicerFailed: string[]
+  /** session spend meter (Task 0.0): exact count of generation calls made this session for THIS
+   *  project (a best-of-N turn counts N, a single turn 1) + a rough estimate of generated tokens.
+   *  Runtime-only (not persisted) — lets the user SEE spend before opting into any quota multiplier. */
+  genCalls: number
+  genTokens: number
 }
 
 /** Session fields that MIRROR a top-level store field (everything except the session-only
@@ -72,6 +77,7 @@ const SESSION_PROJECTED = [
   'compileStatus', 'compileError', 'compileLog', 'compileMs', 'compileNote', 'degradedToDraft',
   'modelDims', 'stl', 'stlVersion', 'fitVersion', 'meshTransform', 'modelRemoved', 'vpPast', 'vpFuture',
   'viewMode', 'pieces', 'slicing', 'slicingToken', 'slicerFailed',
+  'genCalls', 'genTokens',
 ] as const satisfies ReadonlyArray<keyof Session>
 const SESSION_PROJECTED_SET: ReadonlySet<string> = new Set(SESSION_PROJECTED)
 
@@ -82,6 +88,7 @@ function blankSession(): Session {
     compileStatus: 'idle', compileError: null, compileLog: null, compileMs: null, compileNote: null, degradedToDraft: false,
     modelDims: null, stl: null, stlVersion: 0, fitVersion: 0, meshTransform: null, modelRemoved: false, vpPast: [], vpFuture: [],
     viewMode: 'single', pieces: null, slicing: false, slicingToken: 0, slicerFailed: [],
+    genCalls: 0, genTokens: 0,
   }
 }
 
@@ -165,6 +172,9 @@ export interface VibeState {
   /** true once the streaming reply has emitted its first ```fence — a flip-once flag the
    *  parameter panel subscribes to (instead of raw streamText) so it doesn't re-render per token */
   streamHasCode: boolean
+  /** active project's session spend meter (projection of sessions[activeId].genCalls/genTokens) */
+  genCalls: number
+  genTokens: number
   /** project id awaiting its one auto-refine pass (set when the first image-grounded
    *  model renders) → ChatPanel fires only when it matches the active project, so a
    *  lingering flag can never misfire on a different project */
@@ -583,6 +593,8 @@ export const useStore = create<VibeState>((set, get) => {
     generating: false,
     streamText: '',
     streamHasCode: false,
+    genCalls: 0,
+    genTokens: 0,
     pendingAutoRefineFor: null,
     sessions: {},
     bedId: localStorage.getItem(BED_KEY) ?? PRINTER_BEDS[0].id,

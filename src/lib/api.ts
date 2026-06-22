@@ -209,6 +209,14 @@ export function estHistoryTokens(chat: ChatMessage[]): number {
   return clean.reduce((sum, m) => sum + msgTokens(m, (m.images?.length ?? 0) > 0 && !(m.role === 'user' && m.action === 'Refine pass' && m !== lastRefine)), 0)
 }
 
+/** Rough token estimate for ONE generated reply (the spend meter, Task 0.0). Deliberately simple:
+ *  ~4 chars/token over the produced text — we don't get real usage off the stream, so this is an
+ *  honest order-of-magnitude figure, not a billing number. Pure; '' / non-string → 0. */
+export function estGenTokens(text: string | null | undefined): number {
+  if (!text) return 0
+  return Math.ceil(text.length / 4)
+}
+
 /** Choose a contiguous suffix of recent messages whose estimated tokens fit `budget`,
  *  always keeping the latest message and reserving the pinned reference image's cost so
  *  prepending it later can't blow the budget. Mirrors the assembler's keep-images rule. */

@@ -2,7 +2,7 @@ import type { StoreApi } from 'zustand'
 import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
-import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type SkillIssue } from '../lib/api'
+import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, estGenTokens, type SkillIssue } from '../lib/api'
 import { clampStatedDimensions, dimDiscrepancies, geometryConverged } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
@@ -80,7 +80,8 @@ export function createGenerationActions(
     const fulls = await Promise.all(
       Array.from({ length: n }, (_, i) =>
         streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info }, onDone: (info) => { stopReasons[i] = info.stopReason } })
-          .then((text) => { h.writeSession(pid, { streamText: `Generated ${++done}/${n} candidates…` }); return text })
+          // each candidate is a full paid call — meter it (a best-of-N turn shows N, not 1)
+          .then((text) => { h.writeSession(pid, (cur) => ({ streamText: `Generated ${++done}/${n} candidates…`, genCalls: cur.genCalls + 1, genTokens: cur.genTokens + estGenTokens(text) })); return text })
           // A user Stop aborts every candidate's shared signal — let AbortError propagate (rejecting
           // Promise.all) so runGeneration's catch handles it as a Stop, instead of swallowing it to
           // '' which reads as a contract violation and silently restarts the whole generation.
@@ -209,6 +210,8 @@ export function createGenerationActions(
           onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
           onDone: (info) => { stopReason = info.stopReason },
         })
+        // meter the single paid call (best-of-N meters its own N candidates above)
+        h.writeSession(pid, (cur) => ({ genCalls: cur.genCalls + 1, genTokens: cur.genTokens + estGenTokens(full) }))
       }
       clearTimeout(genTimer)
       genTimer = undefined

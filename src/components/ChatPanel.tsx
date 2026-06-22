@@ -45,6 +45,8 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const activeId = useStore((s) => s.activeId)
   const generating = useStore((s) => s.generating)
   const streamText = useStore((s) => s.streamText)
+  const genCalls = useStore((s) => s.genCalls)
+  const genTokens = useStore((s) => s.genTokens)
   const genTimeoutMs = useStore((s) => s.health?.genTimeoutMs)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const regenerateWithSkills = useStore((s) => s.regenerateWithSkills)
@@ -347,6 +349,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
       <div className="pane-head">
         <span className="eyebrow">Conversation</span>
         <ContextChip chat={chat} provider={activeProvider} systemTokens={health?.systemTokens} />
+        <SpendChip calls={genCalls} tokens={genTokens} />
         <button className="icon-btn-sm" title="New part" aria-label="New part" onClick={() => newProject()}>
           <DPlus />
         </button>
@@ -710,6 +713,23 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
  *  using the SAME token estimators the assembler uses (no drift), and turns amber once
  *  the conversation exceeds the budget and older turns start dropping (the reference image
  *  is always pinned, so it survives regardless). */
+/** Session spend meter (Task 0.0): exact generation-call count for this project + a rough token
+ *  estimate, so the user can SEE spend before opting into any quota multiplier (e.g. best-of-N's 3×).
+ *  Hidden until the first call. */
+function SpendChip({ calls, tokens }: { calls: number; tokens: number }) {
+  if (!calls) return null
+  const kb = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`)
+  const title = `This session has made ${calls} generation call${calls === 1 ? '' : 's'} on this part (≈${tokens.toLocaleString()} generated tokens, rough estimate). A best-of-N turn counts as N calls — this is how you see the cost of any quota multiplier before turning it on.`
+  return (
+    <span className="ctx-chip" title={title} role="status" aria-label={`${calls} generation calls this session`}>
+      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" className="ctx-track" />
+      </svg>
+      <span className="ctx-num">{calls}× · ≈{kb(tokens)}</span>
+    </span>
+  )
+}
+
 function ContextChip({ chat, provider, systemTokens }: { chat: ChatMessage[]; provider?: ProviderInfo; systemTokens?: number }) {
   const nonError = chat.filter((m) => !m.error).length
   if (nonError === 0) return null
