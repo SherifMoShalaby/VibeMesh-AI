@@ -8,7 +8,6 @@
  *
  *   node bench/clarify.selftest.mjs   → exit 0 (all pass) / 1 (a guard tripped)
  */
-import assert from 'node:assert/strict'
 import { SYSTEM_PROMPT } from '../server/prompt.mjs'
 
 const P = SYSTEM_PROMPT
