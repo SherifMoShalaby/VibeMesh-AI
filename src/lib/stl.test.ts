@@ -33,7 +33,8 @@ const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 describe('stlBBox', () => {
   it('computes the bounding box of a known triangle', () => {
     const bb = stlBBox(makeStl([[[0, 0, 0], [10, 0, 0], [0, 20, 5]]]))
-    expect(bb).toEqual({ x: 10, y: 20, z: 5, minZ: 0 })
+    // a single triangle with a vertex at the origin encloses zero volume (a·(b×c)=0 when a=0)
+    expect(bb).toEqual({ x: 10, y: 20, z: 5, minZ: 0, volume: 0, triangles: 1 })
   })
 
   it('returns null for a too-short buffer', () => {
@@ -49,14 +50,14 @@ describe('transformStl', () => {
   it('is a no-op under the identity matrix', () => {
     const src = makeStl([[[0, 0, 0], [10, 0, 0], [0, 20, 5]]])
     const out = transformStl(src, IDENTITY)
-    expect(stlBBox(out)).toEqual({ x: 10, y: 20, z: 5, minZ: 0 })
+    expect(stlBBox(out)).toMatchObject({ x: 10, y: 20, z: 5, minZ: 0 })
   })
 
   it('applies a scale (column-major m[0]=2 doubles the X span)', () => {
     const m = [...IDENTITY]
     m[0] = 2
     const out = transformStl(makeStl([[[0, 0, 0], [10, 0, 0], [0, 20, 5]]]), m)
-    expect(stlBBox(out)).toEqual({ x: 20, y: 20, z: 5, minZ: 0 })
+    expect(stlBBox(out)).toMatchObject({ x: 20, y: 20, z: 5, minZ: 0 })
   })
 
   it('applies a translation (m[14]=3 lifts every vertex in Z)', () => {

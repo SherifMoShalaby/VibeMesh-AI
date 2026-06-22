@@ -3,7 +3,7 @@ import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
 import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type SkillIssue } from '../lib/api'
-import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
+import { clampStatedDimensions, dimDiscrepancies, geometryConverged } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
 import { ComputeBudget } from '../lib/openscad/budget'
@@ -50,6 +50,10 @@ const GEN_TIMEOUT_BUFFER_MS = 60_000
 const MAX_AUTO_FIX = 2 // shared budget across the contract re-ask + render/structural auto-fix
 const MAX_AUTO_REFINE = 2 // total auto-refine passes per project
 const autoRefinePass = new Map<string, number>()
+// Previous refine-eligible compile's geometry CONTENT (volume + triangle count) per project — the
+// baseline the SELF-RELATIVE convergence stop compares the current pass against. Lifetime-scoped like
+// autoRefinePass; only read/written inside a refine sequence, which the lifetime cap bounds anyway.
+const refinePrevGeom = new Map<string, { volume: number; triangles: number }>()
 
 export function createGenerationActions(
   set: StoreApi<VibeState>['setState'],
@@ -403,12 +407,23 @@ export function createGenerationActions(
           const triggerImages = [...h.activeChatFor(pid)].reverse().find((m) => m.role === 'user')?.images
           const provider = get().health?.providers.find((p) => p.id === eng)
           const aid = pid
-          // proxy-gated convergence: when the model read off stated dimensions, auto-refine ONLY
-          // while the model-INDEPENDENT dimension check still flags a mismatch — stop the moment the
-          // render matches the read-off dims (don't burn fixed passes). No stated dims → the proxy
-          // has nothing to check, so keep the visual-fidelity refine.
+          // Proxy-gated convergence — two REFERENCE-FREE signals, never the model self-grading:
+          //  (a) DIMENSIONS: when the reference labeled dimensions, keep refining while the
+          //      model-INDEPENDENT bbox check still flags a mismatch.
+          //  (b) SELF-RELATIVE CONVERGENCE: otherwise (or once dims match), keep refining only while
+          //      the model is still MEANINGFULLY RESHAPING the geometry (volume/tri changed >3% vs the
+          //      previous pass), and STOP once it has settled. Replaces the old "no stated dims =>
+          //      burn the whole pass budget blind" gate, which re-asked the same model to self-grade
+          //      after it had stopped changing anything (self-correction regresses without an external
+          //      oracle). Thin-part-safe: a flat part converges on pass 1 and stops; it only ever
+          //      stops EARLIER — MAX_AUTO_REFINE below is still the hard ceiling.
+          const md = h.genSession(pid).modelDims
           const stated = clampStatedDimensions(intent?.statedDimensions).dimensions
-          const proxyWantsRefine = stated.length === 0 || dimDiscrepancies(h.genSession(pid).modelDims, stated).length > 0
+          const dimMismatch = stated.length > 0 && dimDiscrepancies(md, stated).length > 0
+          const curGeom = md ? { volume: md.volume, triangles: md.triangles } : null
+          const stillReshaping = !geometryConverged(refinePrevGeom.get(aid), curGeom)
+          const proxyWantsRefine = dimMismatch || stillReshaping
+          if (curGeom) refinePrevGeom.set(aid, curGeom)
           if (
             triggerImages?.length &&
             provider?.vision &&
