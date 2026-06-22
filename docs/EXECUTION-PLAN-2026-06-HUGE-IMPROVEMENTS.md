@@ -88,6 +88,20 @@ One seam at a time, never a rewrite. The board's central finding stands: the liv
 - **Effort.** S · **Risk.** Low; the live risk is adding temperature to a thinking request (API 400) — mitigated by gating on `desc.thinking === false`. · **Quota.** none (one Kimi smoke run). · **Maps to.** leftovers #1b.
 
 #### Task 0.4 — More figurative + composed exemplars (leftovers #1c; seeds board #7 corpus)
+> **STATUS (2026-06-22): DEFERRED — the only Phase 0 item not safely completable autonomously.**
+> Three blockers surfaced on inspection, all real: **(1)** `bench/composition.selftest.mjs` iterates every
+> `COMPOSED` entry (good — a new one IS compiled + interference-checked), but its CONTROL mutations are
+> **hardcoded to axle-snap's variable names** (`pocket_h = wall - 0.8;`, `pin_len`, lines 56-58), so a new
+> exemplar fails control (3) unless the selftest is first refactored to **per-fixture control mutations**.
+> **(2)** The figurative/revolve-profile half has **no existing injection seam** — `server/exemplars.mjs`
+> only holds `KIT_EXEMPLAR`; this is a new fragment + `contextText` wiring + retrieval, i.e. a feature, not
+> "add a string." **(3)** Decisively: the *value* of any new few-shot exemplar (better generation) is
+> **unverifiable without a live API key** (`npm run bench`), and a subtly-wrong exemplar actively *degrades*
+> output because the model imitates it. Shipping blind geometry contradicts the verified-before-claimed bar
+> the rest of this plan holds. **Do this in a live-bench session:** first refactor the selftest to per-fixture
+> controls (safe, testable on the existing axle-snap), then author ONE composed mechanism, compile + probe it
+> via the selftest, then `npm run bench` to confirm a quality lift before committing. Board #7's RAG (Task 4.1)
+> does not hard-depend on this — it can seed from the existing kit/composed exemplars + the 18 bench tasks.
 - **Goal.** Fix thin composition coverage (one exemplar today) and pre-stock the RAG corpus with 2-3 figurative/revolve-profile + composed-mechanism exemplars.
 - **Files & verified anchors.** `server/composed.mjs` — `COMPOSED` map (`composed.mjs:66`) has exactly **one** entry, `axle-snap` (`:67`). Each composed exemplar doubles as its composition/interference probe fixture (CLAUDE.md), so editing one re-baselines `bench/composition.selftest.mjs` + `bench/interference.selftest.mjs`.
 - **Concrete change.** Author 2-3 new compile-verified exemplars: at least one composed-mechanism (e.g. hinge+detent, or geared pair) into `COMPOSED`, and 1-2 figurative revolve-profile exemplars in the appropriate fragment file. Each must compile standalone under `--backend=Manifold`, obey the contract (Customizer-first, no global `$fn`, ≥1.2mm walls, flat on z=0), and carry the `_debug` probe contract where it gates interference. Update the composition `SKILL_PORTS` graph entry if a new mechanism pair is introduced.
@@ -108,7 +122,18 @@ One seam at a time, never a rewrite. The board's central finding stands: the liv
 - **Validation.** vitest unit — extend `src/lib/shareFile.test.ts`: assert `parentId`/`rootId` survive `buildShareFile → serialize → parse → shareFileToProject`, and that a missing-lineage legacy blob imports as its own root (tolerant parse). CI e2e — import still creates a fresh code-bearing project. **Not the server bench.**
 - **Effort.** S · **Risk.** Very low (additive optional fields, tolerant parse). · **Quota.** none. · **Maps to.** board #4a; record shape for #7.
 
-> **Phase 0 exit:** 0.1-0.6 land green (lint / vitest / e2e / `bench:selftests` for the server-touching 0.3+0.4); the tree carries the reference-free shape term in `CandidateSignals`, the always-on refine metric, the budget split + Kimi temp, the seed exemplars, the render cache, and lineage. No quota spent. No spike needed.
+> **Phase 0 exit — SHIPPED 2026-06-22 (6 of 7 tasks; 0.4 deferred above).** All on branch
+> `feat/phase0-safe-scorer-refine`, six commits, every gate green (lint / 214 vitest / build / 22 e2e /
+> full `bench:selftests`):
+> - **0.0** spend meter — `genCalls`/`genTokens` through the session projection + `SpendChip` (commit `1f5f6d8`)
+> - **0.1** refine hollow-fill advisory `fillRatioNote()` (commit `cdd62b5`, with 0.2)
+> - **0.2** best-of-N reference-free solidity tiebreak in `scoreCandidate` (commit `cdd62b5`)
+> - **0.3** split auto-fix budget (`MAX_CONTRACT_REASK`/`MAX_GEOM_FIX`) + Kimi-only temperature (commit `7b2766c`)
+> - **0.5** content-addressed render cache (architecture-reviewer approved) (commit `fbc49c1`)
+> - **0.6** remix lineage DAG on `.vibemesh` + `Project` (commit `ca07d77`)
+> The tree now carries the reference-free shape term in `CandidateSignals`, the always-on refine metric, the
+> budget split + Kimi temp, the render cache, lineage, and the spend meter. No quota spent. No spike needed.
+> Outstanding for a live-bench session: 0.4 exemplars; the Kimi-temperature quality smoke.
 
 ---
 
