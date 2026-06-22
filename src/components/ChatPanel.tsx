@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { CAPTURE_VIEW_NAMES, captureViews } from '../lib/capture'
-import { clampStatedDimensions, dimDiscrepancies } from '../lib/refineProxy'
+import { clampStatedDimensions, dimDiscrepancies, fillRatioNote } from '../lib/refineProxy'
 import { estHistoryTokens, historyBudgetTokens, imageBudgetFor, type ProviderInfo } from '../lib/api'
 import { tileReference } from '../lib/tile'
 import { flaggedSkillIds } from '../lib/skillStats'
@@ -142,8 +142,12 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     const geoBlock = geo.length
       ? `GEOMETRIC CHECK — an independent measurement of the current render against your reference's stated dimensions. These are facts, not opinions; FIX THEM FIRST:\n${geo.map((g) => `- ${g}`).join('\n')}\n\n`
       : ''
+    // ADVISORY self-relative solidity hint (after the hard dimension facts): a suspiciously hollow
+    // fill-ratio lets the model self-diagnose an unintended shell. Never a gate — phrased as a question.
+    const fillNote = fillRatioNote(modelDims)
+    const fillBlock = fillNote ? `${fillNote}\n\n` : ''
     void sendPrompt(
-      `${geoBlock}${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. ${geo.length ? 'After the geometric fixes above, list' : 'First list'} the most important remaining discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
+      `${geoBlock}${fillBlock}${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. ${geo.length ? 'After the geometric fixes above, list' : 'First list'} the most important remaining discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
       views,
       'Refine pass',
     )

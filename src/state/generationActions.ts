@@ -101,6 +101,7 @@ export function createGenerationActions(
       let compiled = false
       let degenerate = false
       let dimMismatches = 0
+      let fillRatio: number | undefined
       if (budget.canSpend()) {
         compileAttempted = true
         // compile with the SAME root-scope quality defines the real render uses (Draft here — fast
@@ -113,9 +114,13 @@ export function createGenerationActions(
           const dims = stlBBox(r.stl)
           degenerate = degenerateReason(dims, ctx.bed, !isMultiPart) !== null
           dimMismatches = ctx.stated.length ? dimDiscrepancies(dims, ctx.stated).length : 0
+          // self-relative solidity: mesh volume / bbox volume (the already-computed dims carry both).
+          // Feeds the below-everything hollow tiebreak in scoreCandidate; undefined when unmeasurable.
+          const bboxVol = dims ? dims.x * dims.y * dims.z : 0
+          if (dims && bboxVol > 0) fillRatio = dims.volume / bboxVol
         }
       }
-      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
+      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches, fillRatio })
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
     h.writeSession(pid, { streamText: '' })

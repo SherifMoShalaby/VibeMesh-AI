@@ -49,6 +49,40 @@ describe('scoreCandidate — reference-free priority', () => {
   })
 })
 
+describe('scoreCandidate — hollow fill-ratio tiebreak (below every harder signal)', () => {
+  it('breaks an otherwise-exact tie toward the more plausibly-solid candidate', () => {
+    const solid = scoreCandidate(sig({ fillRatio: 0.4 }))
+    const hollow = scoreCandidate(sig({ fillRatio: 0.02 }))
+    expect(solid).toBeGreaterThan(hollow)
+  })
+
+  it('a plausibly-solid candidate (fill ≥ threshold) is scored identically to one with no fill signal', () => {
+    expect(scoreCandidate(sig({ fillRatio: 0.5 }))).toBe(scoreCandidate(sig({ fillRatio: undefined })))
+    // and an absent/degenerate fill signal is never penalized (non-best-of-N candidates untouched)
+    expect(scoreCandidate(sig({ fillRatio: 0 }))).toBe(scoreCandidate(sig({ fillRatio: undefined })))
+    expect(scoreCandidate(sig({ fillRatio: NaN }))).toBe(scoreCandidate(sig({ fillRatio: undefined })))
+  })
+
+  it('NEVER reorders a harder signal: even the hollowest candidate beats one with one more dim mismatch', () => {
+    const hollowButCloser = scoreCandidate(sig({ fillRatio: 0.001, dimMismatches: 0 }))
+    const solidButFarther = scoreCandidate(sig({ fillRatio: 0.9, dimMismatches: 1 }))
+    expect(hollowButCloser).toBeGreaterThan(solidButFarther) // dimMismatch (100) dominates the ≤50 tiebreak
+  })
+
+  it('a hollow but compiling candidate still beats a non-compiling / degenerate one', () => {
+    const hollowClean = scoreCandidate(sig({ compiled: true, degenerate: false, fillRatio: 0.001 }))
+    expect(hollowClean).toBeGreaterThan(scoreCandidate(sig({ compiled: false })))
+    expect(hollowClean).toBeGreaterThan(scoreCandidate(sig({ compiled: true, degenerate: true, fillRatio: 0.9 })))
+  })
+
+  it('the tiebreak is bounded under one dim mismatch (penalty magnitude < 100)', () => {
+    const clean = scoreCandidate(sig({ fillRatio: 0.5 }))
+    const hollowest = scoreCandidate(sig({ fillRatio: 1e-6 }))
+    expect(clean - hollowest).toBeLessThan(100)
+    expect(clean - hollowest).toBeGreaterThan(0)
+  })
+})
+
 describe('pickBestIndex', () => {
   it('picks the highest score', () => {
     expect(pickBestIndex([1, 5, 3])).toBe(1)
