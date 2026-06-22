@@ -28,34 +28,85 @@ const BED_CONFIG: Record<string, BedEntry> = {
   'qidi-q1-pro':     { preset: 'Qidi Q1 Pro 0.4 nozzle',               flavor: 'klipper'  },
 }
 
-// Single color for the single-part display (first entry of threeMF.ts PART_PALETTE)
-const SINGLE_PART_COLOR = '#4F8FBAFF'
+/** Per-part display palette — duplicated from threeMF.ts PART_PALETTE so orcaProject.ts
+ *  has no runtime import from threeMF (different bundle path). Must stay in sync. */
+export const ORCA_PART_PALETTE = [
+  '#4F8FBAFF', // blue
+  '#E8A33DFF', // amber
+  '#3DAE8BFF', // teal
+  '#D45D5DFF', // red
+  '#7E6BC4FF', // purple
+  '#9CB04AFF', // olive
+  '#D98AB5FF', // pink
+  '#6B7280FF', // slate
+]
 
 export interface OrcaProjectOptions {
   bed: PrinterBed
+  thumbnailPng?: Uint8Array // best-effort canvas PNG; omit to skip thumbnail
 }
 
 /**
- * Build a slice-ready OrcaSlicer/BambuStudio .3mf from a single STL part.
- * The 5-file zip opens with printer, filament, and process pre-selected —
- * the Slice button is live immediately. Recognition gate: Application=BambuStudio-<version>.
+ * Build a slice-ready OrcaSlicer/BambuStudio .3mf from one or more STL parts.
+ * The zip opens with printer, filament, and process pre-selected — the Slice
+ * button is live immediately. Recognition gate: Application=BambuStudio-<version>.
  *
- * Single-part only in P1; multi-part comes in P3.
+ * Each part becomes a named <object> in the 3D model. When `part.place` is
+ * provided the packer's bed-local placement (including rot=90 CCW bake) is
+ * applied; otherwise the mesh's own coordinates are preserved (single-piece
+ * export path where placement is already baked into the STL by exportActions).
+ *
+ * When `thumbnailPng` is provided it is stored as `Metadata/plate_1.png` and
+ * wired into Content_Types + _rels. When absent the zip stays at 5 files.
  */
 export function buildOrcaProject(
-  parts: Array<{ name: string; stl: ArrayBuffer }>,
-  { bed }: OrcaProjectOptions,
+  parts: Array<{ name: string; stl: ArrayBuffer; place?: { x: number; y: number; rot?: 0 | 90 } }>,
+  { bed, thumbnailPng }: OrcaProjectOptions,
 ): Uint8Array<ArrayBuffer> {
-  // P1 single-part: use first part only
-  const part = parts[0]
-  const { vertices, triangles, bbox } = indexMesh(part.stl)
-  const id = 1
-  const materialId = 2 // basematerials sits after object id 1
+  const materialId = parts.length + 1 // basematerials group id — sits after every object id (1..N)
+  const objects: string[] = []
+  const items: string[] = []
+  const bases: string[] = []
+  const modelInstances: string[] = []
 
-  // Preserve mesh coordinates — placement is already baked into the STL by exportActions
-  const tz = -bbox.minZ
-  const tx = -bbox.minX
-  const ty = -bbox.minY
+  parts.forEach((part, index) => {
+    const { vertices, triangles, bbox } = indexMesh(part.stl)
+    const id = index + 1
+    const color = ORCA_PART_PALETTE[index % ORCA_PART_PALETTE.length]
+    bases.push(`<base name="${escapeXml(part.name)}" displaycolor="${color}"/>`)
+    objects.push(
+      `<object id="${id}" name="${escapeXml(part.name)}" type="model" pid="${materialId}" pindex="${index}">` +
+      `<mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh>` +
+      `</object>`,
+    )
+    const tz = -bbox.minZ
+    if (part.place) {
+      // explicit packed placement: drop the piece's min corner onto the packer's bed-local (x,y)
+      // and seat it on z=0, matching the on-screen slicer pack.
+      if (part.place.rot === 90) {
+        // 90° CCW about Z (p → (−y, x)); seat the ROTATED bbox min (−maxY, minX) to the corner
+        const tx = part.place.x + bbox.maxY
+        const ty = part.place.y - bbox.minX
+        items.push(`<item objectid="${id}" transform="0 1 0 -1 0 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+      } else {
+        const tx = part.place.x - bbox.minX
+        const ty = part.place.y - bbox.minY
+        items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+      }
+    } else {
+      // preserve mesh coordinates — placement is already baked into the STL by exportActions
+      const tx = -bbox.minX
+      const ty = -bbox.minY
+      items.push(`<item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/>`)
+    }
+    modelInstances.push(
+      `<model_instance>` +
+      `<metadata key="object_id" value="${id}"/>` +
+      `<metadata key="instance_id" value="0"/>` +
+      `<metadata key="loaded" value="1"/>` +
+      `</model_instance>`,
+    )
+  })
 
   const model =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -63,12 +114,10 @@ export function buildOrcaProject(
     `<metadata name="Application">BambuStudio-${ORCA_BAMBU_VERSION}</metadata>` +
     `<metadata name="BambuStudio:3mfVersion">1</metadata>` +
     `<resources>` +
-    `<basematerials id="${materialId}"><base name="${escapeXml(part.name)}" displaycolor="${SINGLE_PART_COLOR}"/></basematerials>` +
-    `<object id="${id}" name="${escapeXml(part.name)}" type="model" pid="${materialId}" pindex="0">` +
-    `<mesh><vertices>${vertices}</vertices><triangles>${triangles}</triangles></mesh>` +
-    `</object>` +
+    `<basematerials id="${materialId}">${bases.join('')}</basematerials>` +
+    `${objects.join('')}` +
     `</resources>` +
-    `<build><item objectid="${id}" transform="1 0 0 0 1 0 0 0 1 ${fmt(tx)} ${fmt(ty)} ${fmt(tz)}"/></build>` +
+    `<build>${items.join('')}</build>` +
     `</model>`
 
   const contentTypes =
@@ -76,12 +125,16 @@ export function buildOrcaProject(
     `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>` +
+    (thumbnailPng ? `<Default Extension="png" ContentType="image/png"/>` : ``) +
     `</Types>`
 
   const rels =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
     `<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>` +
+    (thumbnailPng
+      ? `<Relationship Target="/Metadata/plate_1.png" Id="rel-2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>`
+      : ``) +
     `</Relationships>`
 
   const bedConfig = BED_CONFIG[bed.id]
@@ -138,24 +191,22 @@ export function buildOrcaProject(
     `<plate>` +
     `<metadata key="plater_id" value="1"/>` +
     `<metadata key="plater_name" value="Plate 1"/>` +
-    `<model_instance>` +
-    `<metadata key="object_id" value="1"/>` +
-    `<metadata key="instance_id" value="0"/>` +
-    `<metadata key="loaded" value="1"/>` +
-    `</model_instance>` +
+    `${modelInstances.join('')}` +
     `</plate>` +
     `</config>`
 
-  const zipped = zipSync(
-    {
-      '[Content_Types].xml': strToU8(contentTypes),
-      '_rels/.rels': strToU8(rels),
-      '3D/3dmodel.model': strToU8(model),
-      'Metadata/project_settings.config': strToU8(JSON.stringify(projectSettings, null, 2)),
-      'Metadata/model_settings.config': strToU8(modelSettings),
-    },
-    { level: 6 },
-  )
+  const zipEntries: Record<string, Uint8Array> = {
+    '[Content_Types].xml': strToU8(contentTypes),
+    '_rels/.rels': strToU8(rels),
+    '3D/3dmodel.model': strToU8(model),
+    'Metadata/project_settings.config': strToU8(JSON.stringify(projectSettings, null, 2)),
+    'Metadata/model_settings.config': strToU8(modelSettings),
+  }
+  if (thumbnailPng) {
+    zipEntries['Metadata/plate_1.png'] = thumbnailPng
+  }
+
+  const zipped = zipSync(zipEntries, { level: 6 })
   // copy into a plain ArrayBuffer-backed view (Blob typing rejects ArrayBufferLike)
   const out = new Uint8Array(new ArrayBuffer(zipped.byteLength))
   out.set(zipped)

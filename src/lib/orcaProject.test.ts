@@ -126,3 +126,61 @@ describe('buildOrcaProject', () => {
     expect(parsed.gcode_flavor).toBe('bambu')
   })
 })
+
+describe('buildOrcaProject — P3 multi-object + thumbnails', () => {
+  const stl = makeStl([tri])
+  const bed = resolveBed('ender3', null)
+
+  it('multi-object zip has 5 files when no thumbnail provided', () => {
+    const out = buildOrcaProject([{ name: 'body', stl }, { name: 'cap', stl }], { bed })
+    const files = unzipProject(out)
+    expect(Object.keys(files)).toHaveLength(5)
+    expect(Object.keys(files)).not.toContain('Metadata/plate_1.png')
+  })
+
+  it('3D/3dmodel.model contains one <object> per part with correct ids', () => {
+    const out = buildOrcaProject([{ name: 'body', stl }, { name: 'cap', stl }], { bed })
+    const xml = getText(unzipProject(out), '3D/3dmodel.model')
+    expect(xml).toContain('<object id="1"')
+    expect(xml).toContain('<object id="2"')
+  })
+
+  it('model_settings.config has one <model_instance> per part', () => {
+    const out = buildOrcaProject([{ name: 'body', stl }, { name: 'cap', stl }], { bed })
+    const xml = getText(unzipProject(out), 'Metadata/model_settings.config')
+    // count occurrences of <model_instance>
+    const matches = xml.match(/<model_instance>/g) ?? []
+    expect(matches).toHaveLength(2)
+  })
+
+  it('object_id in model_settings matches object ids in 3dmodel.model and build items', () => {
+    const out = buildOrcaProject([{ name: 'body', stl }, { name: 'cap', stl }], { bed })
+    const files = unzipProject(out)
+    const modelXml = getText(files, '3D/3dmodel.model')
+    const settingsXml = getText(files, 'Metadata/model_settings.config')
+    // both <item objectid="1"> and <item objectid="2"> in build section
+    expect(modelXml).toContain('objectid="1"')
+    expect(modelXml).toContain('objectid="2"')
+    // model_settings references the same ids
+    expect(settingsXml).toContain('"object_id" value="1"')
+    expect(settingsXml).toContain('"object_id" value="2"')
+  })
+
+  it('thumbnail: zip has 6 files, Metadata/plate_1.png present, Content_Types has png, _rels/.rels has plate_1.png', () => {
+    const thumbnailPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d]) // 5 fake bytes
+    const out = buildOrcaProject([{ name: 'body', stl }], { bed, thumbnailPng })
+    const files = unzipProject(out)
+    expect(Object.keys(files)).toHaveLength(6)
+    expect(Object.keys(files)).toContain('Metadata/plate_1.png')
+    const ct = getText(files, '[Content_Types].xml')
+    expect(ct).toContain('png')
+    const rels = getText(files, '_rels/.rels')
+    expect(rels).toContain('plate_1.png')
+  })
+
+  it('no thumbnail: zip does NOT contain Metadata/plate_1.png', () => {
+    const out = buildOrcaProject([{ name: 'body', stl }], { bed })
+    const files = unzipProject(out)
+    expect(Object.keys(files)).not.toContain('Metadata/plate_1.png')
+  })
+})
