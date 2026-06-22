@@ -918,9 +918,13 @@ function agentPromptFromMessages(messages) {
   // refine actually compares — and the iso/front/top order the prompt promises),
   // then backfill earlier reference images oldest-first up to the cap, so a
   // multi-reference history can't starve the renders. De-duped by payload.
+  // CAP matches the claude-code maxImages advertised by providerStatus (10), so this server-side
+  // flatten does NOT re-truncate the client's already role-ranked (global > view > tile) selection.
+  // At CAP=4 a 4-render refine filled the cap with the latest render snapshots and DROPPED the
+  // earlier global reference photo — the very ground truth the refine compares against.
   const images = []
   const seen = new Set()
-  const CAP = 4
+  const CAP = 10
   const add = (m) => {
     if (!m) return
     for (const img of collectImages(m.content)) {
