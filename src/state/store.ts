@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BedSize, ChatMessage, CompileResult, ParamValue, ParamValues, Project, ScadParameter } from '../types'
+import type { BedSize, ChatMessage, CompileResult, OrcaMaterial, ParamValue, ParamValues, Project, ScadParameter } from '../types'
 import { PRINTER_BEDS, QUALITY_PRESETS } from '../types'
 import { buildDefines, parseParameters } from '../lib/params'
 import { useUi } from './ui'
@@ -219,6 +219,10 @@ export interface VibeState {
   exportStlSmart: (fileBase: string) => Promise<void>
   /** export one .3mf with every part as a named object (slicer-ready plate) */
   export3mf: (fileBase: string) => Promise<void>
+  /** export an OrcaSlicer/BambuStudio slice-ready .orca.3mf (single-part, P1) */
+  exportOrcaProject: (fileBase: string) => Promise<void>
+  orcaMaterial: OrcaMaterial
+  setOrcaMaterial: (m: OrcaMaterial) => void
   /** export a re-editable .vibemesh share file (code + sliders + intent + skills + thumbnail) */
   exportShareFile: (fileBase: string) => void
   /** import a .vibemesh share file as a new project and switch to it */
@@ -241,6 +245,7 @@ const KIMI_MODEL_KEY = 'vibemesh.kimiModel.v1'
 const QUALITY_KEY = 'vibemesh.quality.v1'
 const BED_KEY = 'vibemesh.bed.v1'
 const CUSTOM_BED_KEY = 'vibemesh.customBed.v1'
+const ORCA_MATERIAL_KEY = 'vibemesh.orcaMaterial.v1'
 
 function loadCustomBed(): BedSize | null {
   try {
@@ -589,6 +594,7 @@ export const useStore = create<VibeState>((set, get) => {
     customBed: loadCustomBed(),
     quality: localStorage.getItem(QUALITY_KEY) ?? 'standard',
     exportingPlates: false,
+    orcaMaterial: (localStorage.getItem(ORCA_MATERIAL_KEY) ?? 'PLA') as OrcaMaterial,
     modelRemoved: false,
     vpPast: [],
     vpFuture: [],
@@ -736,7 +742,7 @@ export const useStore = create<VibeState>((set, get) => {
       if (project.code.trim()) void compile(project.code, buildDefines(params, paramValues))
     },
 
-    // export slice (exportPlates / exportPlates3mf / export3mf / exportStlSmart / exportShareFile)
+    // export slice (exportPlates / exportPlates3mf / export3mf / exportOrcaProject / exportStlSmart / exportShareFile)
     // lives in ./exportActions — leaf actions, split out of this god-store (shared helpers passed in).
     ...createExportActions(set, get, { qualityArgsFor, exportQuality, composeMatrix, RENDER_TIMEOUT_EXPORT, RENDER_TIMEOUT_DRAFT }),
 
@@ -971,6 +977,11 @@ export const useStore = create<VibeState>((set, get) => {
 
     // viewport-placement slice (move/rotate/delete + undo/redo) lives in ./placementActions
     ...createPlacementActions(set, get, { clearParamTimer }),
+
+    setOrcaMaterial: (m) => {
+      set({ orcaMaterial: m })
+      localStorage.setItem(ORCA_MATERIAL_KEY, m)
+    },
 
     setQuality: (id) => {
       set({ quality: id })

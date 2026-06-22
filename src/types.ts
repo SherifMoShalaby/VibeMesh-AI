@@ -164,3 +164,5 @@ export function resolveBed(bedId: string, custom: BedSize | null): PrinterBed {
   }
   return PRINTER_BEDS.find((b) => b.id === bedId) ?? PRINTER_BEDS[0]
 }
+
+export type OrcaMaterial = 'PLA' | 'PETG' | 'ABS' | 'TPU'
