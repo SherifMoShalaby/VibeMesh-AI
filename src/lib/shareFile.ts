@@ -24,6 +24,12 @@ export interface ShareFile {
   appliedSkillIds?: string[]
   /** small data-URL PNG preview (optional; for galleries — import re-renders from code) */
   thumbnail?: string
+  /** Lineage (Task 0.6): the EXPORTING project's identity, so an import can point back to it.
+   *  parentId = exporter id, rootId = exporter's fork-root, lineageDepth = exporter's depth (import
+   *  increments). Absent on a legacy file → the import becomes its own root. */
+  parentId?: string
+  rootId?: string
+  lineageDepth?: number
 }
 
 export interface ShareSource {
@@ -33,6 +39,10 @@ export interface ShareSource {
   intent?: DesignIntent
   appliedSkillIds?: string[]
   thumbnail?: string
+  /** the exporting project's id + its own lineage, stamped into the file as the child's parent */
+  id?: string
+  rootId?: string
+  lineageDepth?: number
 }
 
 /** Build the share-file object. `exportedAt` is injected (kept pure/testable). */
@@ -48,6 +58,12 @@ export function buildShareFile(src: ShareSource, exportedAt: number): ShareFile 
   if (src.intent) file.intent = src.intent
   if (src.appliedSkillIds?.length) file.appliedSkillIds = src.appliedSkillIds
   if (typeof src.thumbnail === 'string' && src.thumbnail.startsWith('data:image/')) file.thumbnail = src.thumbnail
+  // lineage: the exporter becomes the imported child's parent; carry the exporter's root + depth.
+  if (src.id) {
+    file.parentId = src.id
+    file.rootId = src.rootId ?? src.id // an original exporter is its own root
+    if (typeof src.lineageDepth === 'number') file.lineageDepth = src.lineageDepth
+  }
   return file
 }
 
@@ -82,6 +98,9 @@ export function parseShareFile(text: string): ShareFile | null {
   if (o.intent && typeof o.intent === 'object') file.intent = o.intent as DesignIntent
   if (Array.isArray(o.appliedSkillIds)) file.appliedSkillIds = o.appliedSkillIds.filter((x): x is string => typeof x === 'string')
   if (typeof o.thumbnail === 'string' && o.thumbnail.startsWith('data:image/')) file.thumbnail = o.thumbnail
+  if (typeof o.parentId === 'string') file.parentId = o.parentId
+  if (typeof o.rootId === 'string') file.rootId = o.rootId
+  if (typeof o.lineageDepth === 'number' && Number.isFinite(o.lineageDepth)) file.lineageDepth = o.lineageDepth
   return file
 }
 
@@ -99,12 +118,18 @@ export function shareFileToProject(file: ShareFile, id: string = newId(), now = 
     intent: file.intent,
     appliedSkillIds: file.appliedSkillIds?.length ? file.appliedSkillIds : undefined,
   }
+  // lineage: a file that carries a parent makes this import a remix node (points back, shares the
+  // root, depth+1); a legacy / no-lineage file makes the import a fresh ROOT (its own id, depth 0).
+  const hasLineage = typeof file.parentId === 'string'
   return {
     id,
     name: file.name || 'Shared part',
     code: file.code,
     paramValues: file.paramValues ?? {},
     chat: [msg],
+    parentId: hasLineage ? file.parentId : undefined,
+    rootId: hasLineage ? (file.rootId ?? file.parentId) : id,
+    lineageDepth: hasLineage ? (typeof file.lineageDepth === 'number' ? file.lineageDepth : 0) + 1 : 0,
     createdAt: now,
     updatedAt: now,
   }

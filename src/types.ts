@@ -99,6 +99,12 @@ export interface Project {
    *  restored message), kept so a rollback is reversible (redo) until the user
    *  diverges by sending a new prompt, which clears it. Chronological — newest last. */
   chatFuture?: ChatMessage[]
+  /** Remix lineage (Task 0.6): `parentId` = the project this was imported/forked from; `rootId` =
+   *  the origin of the whole fork DAG (its own id for an original); `lineageDepth` = forks from root.
+   *  All optional — a part created from scratch carries none (treated as its own root by absence). */
+  parentId?: string
+  rootId?: string
+  lineageDepth?: number
   createdAt: number
   updatedAt: number
 }

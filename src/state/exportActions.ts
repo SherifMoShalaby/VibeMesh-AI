@@ -57,8 +57,12 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       } catch {
         /* canvas tainted / unavailable — ship without a thumbnail */
       }
+      const proj = projects.find((p) => p.id === activeId)
       const file = buildShareFile(
-        { name, code, paramValues, intent: last?.intent, appliedSkillIds: last?.appliedSkillIds, thumbnail },
+        {
+          name, code, paramValues, intent: last?.intent, appliedSkillIds: last?.appliedSkillIds, thumbnail,
+          id: proj?.id, rootId: proj?.rootId, lineageDepth: proj?.lineageDepth,
+        },
         Date.now(),
       )
       downloadBlob(serializeShareFile(file), `${fileBase}.vibemesh`, 'application/json')
