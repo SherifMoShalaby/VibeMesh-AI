@@ -146,3 +146,35 @@ export function renderViews(stlBytes) {
     pngBase64: encodePng(renderPose(tris, center, radius, pose)).toString('base64'),
   }))
 }
+
+/**
+ * Foreground SILHOUETTE masks (1 = part, 0 = background) per pose — the shape signal the refine
+ * loop and bench lack (refineProxy is bbox-only; voxel-IoU needs a 3D gold). Each model is framed to
+ * its OWN bbox (same as renderViews), so a mask comparison is placement- and scale-normalized: it
+ * answers "is this the same SHAPE?" (a bishop vs a featureless spike), not "is it the same size?".
+ * @returns Record<poseName, Uint8Array(SIZE*SIZE)>  (empty {} for empty/unparseable STL)
+ */
+export function renderMasks(stlBytes) {
+  let tris
+  try { tris = parseStl(stlBytes) } catch { return {} } // malformed/too-short STL → no masks (empty-safe)
+  if (!tris.length) return {}
+  let min = [Infinity, Infinity, Infinity]
+  let max = [-Infinity, -Infinity, -Infinity]
+  for (let i = 0; i < tris.length; i += 3) {
+    for (let a = 0; a < 3; a++) {
+      const v = tris[i + a]
+      if (v < min[a]) min[a] = v
+      if (v > max[a]) max[a] = v
+    }
+  }
+  const center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]
+  const radius = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2
+  const out = {}
+  for (const [name, pose] of Object.entries(POSES)) {
+    const img = renderPose(tris, center, radius, pose)
+    const mask = new Uint8Array(img.length)
+    for (let i = 0; i < img.length; i++) mask[i] = img[i] > BG ? 1 : 0
+    out[name] = mask
+  }
+  return out
+}
