@@ -130,6 +130,12 @@ export function anthropicMaxTokens(model) {
 }
 
 const KIMI_MAX_TOKENS = 16000
+// Kimi (non-thinking path) accepts a sampling temperature; a moderate default keeps code generation
+// focused. Env-overridable like the other knobs; clamped to a sane range, ignored if unparseable.
+const KIMI_TEMPERATURE = (() => {
+  const t = Number(process.env.KIMI_TEMPERATURE)
+  return Number.isFinite(t) && t >= 0 && t <= 2 ? t : 0.4
+})()
 // claude-code runs through the Agent SDK (no max_tokens literal) — reserve a conservative output budget.
 const CLAUDE_CODE_OUTPUT_RESERVE = 32000
 // local (Ollama/LM Studio): num_ctx is the WHOLE window (input+output) and is RAM/latency-linear, so keep
@@ -662,7 +668,7 @@ export function resolveEngineDescriptor(engine, model) {
   }
   if (engine === 'kimi') {
     // Anthropic-compatible endpoint, payload kept portable: no thinking, no cache_control.
-    return { protocol: 'anthropic', who: 'Kimi', model: model && model !== 'default' ? model : kimiModel(), baseURL: kimiBaseUrl(), auth: { kind: 'kimi' }, maxTokens: KIMI_MAX_TOKENS, thinking: false, caching: false, effort: false }
+    return { protocol: 'anthropic', who: 'Kimi', model: model && model !== 'default' ? model : kimiModel(), baseURL: kimiBaseUrl(), auth: { kind: 'kimi' }, maxTokens: KIMI_MAX_TOKENS, thinking: false, caching: false, effort: false, temperature: KIMI_TEMPERATURE }
   }
   if (engine === 'claude-code') {
     return { protocol: 'cli', who: 'Claude Code', model }
@@ -750,6 +756,10 @@ async function streamAnthropicProtocol({ desc, messages, ctx, onDelta, signal, e
     // table-driven output ceiling (anthropicMaxTokens); for Kimi/compat it's the descriptor's cap.
     max_tokens: desc.maxTokens,
     ...(desc.thinking ? { thinking: { type: 'adaptive' } } : {}),
+    // temperature is ONLY valid on the non-thinking path: Opus 4.8 + adaptive thinking REJECTS it
+    // (API 400). So it's gated strictly on !desc.thinking and read from the descriptor — only Kimi
+    // sets desc.temperature today, so first-party Claude is untouched and the contract stays portable.
+    ...(!desc.thinking && typeof desc.temperature === 'number' ? { temperature: desc.temperature } : {}),
     // effort is GA on Opus 4.8 (no beta header) and coexists with adaptive thinking; falls back to
     // DEFAULT_EFFORT (VIBEMESH_EFFORT or xhigh) when unset. Only sent for effort-capable engines.
     ...(desc.effort ? { output_config: { effort: resolveEffort(effort) } } : {}),
