@@ -260,7 +260,7 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
         const buffer = meshTransform ? transformStl(source, h.composeMatrix(meshTransform.position, meshTransform.rotation)) : source
         const bed = resolveBed(get().bedId, get().customBed)
         // arrange:false equivalent — mesh coords already carry placement; no re-centering
-        downloadBlob(buildOrcaProject([{ name: fileBase, stl: buffer }], { bed }), `${fileBase}.orca.3mf`, 'model/3mf')
+        downloadBlob(buildOrcaProject([{ name: fileBase, stl: buffer }], { bed, material: get().orcaMaterial }), `${fileBase}.orca.3mf`, 'model/3mf')
         return
       }
 
@@ -325,7 +325,7 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
           })
           .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number; rot: 0 | 90 } } => p !== null)
         if (plateParts.length) {
-          downloadBlob(buildOrcaProject(plateParts, { bed, thumbnailPng }), `${fileBase}-plate${pi + 1}.orca.3mf`, 'model/3mf')
+          downloadBlob(buildOrcaProject(plateParts, { bed, thumbnailPng, material: get().orcaMaterial }), `${fileBase}-plate${pi + 1}.orca.3mf`, 'model/3mf')
           written++
         }
       })

@@ -1,6 +1,6 @@
 import { zipSync, strToU8 } from 'fflate'
 import { indexMesh, fmt, escapeXml } from './threeMFCore'
-import type { PrinterBed } from '../types'
+import type { OrcaMaterial, PrinterBed } from '../types'
 
 export const ORCA_BAMBU_VERSION = '01.09.05.51' // pinned low-major; confirmed safe in Bambu 02.07 + Orca 2.4
 
@@ -28,6 +28,26 @@ const BED_CONFIG: Record<string, BedEntry> = {
   'qidi-q1-pro':     { preset: 'Qidi Q1 Pro 0.4 nozzle',               flavor: 'klipper'  },
 }
 
+interface MaterialEntry {
+  nozzle: number
+  bed: number
+  colour: string
+  filamentSettingsId: string
+}
+const MATERIAL_CONFIG: Record<OrcaMaterial, MaterialEntry> = {
+  PLA:  { nozzle: 220, bed: 65,  colour: '#4CAF50FF', filamentSettingsId: 'Bambu PLA Basic @BBL A1M'       },
+  PETG: { nozzle: 240, bed: 80,  colour: '#2196F3FF', filamentSettingsId: 'Bambu PETG Basic @BBL A1M'      },
+  ABS:  { nozzle: 250, bed: 105, colour: '#FF5722FF', filamentSettingsId: 'Bambu ABS Basic @BBL A1M'       },
+  TPU:  { nozzle: 220, bed: 40,  colour: '#9C27B0FF', filamentSettingsId: 'Bambu TPU for AMS @BBL A1M'     },
+}
+
+// Minimal authored Marlin/Marlin2 start+end G-code.
+// Uses OrcaSlicer placeholder syntax: [variable].
+// Klipper and Bambu flavors are left absent (their presets provide macros; wrong G-code is
+// worse than absent, especially Klipper PRINT_START/END which varies per machine config).
+const MARLIN_START_GCODE = 'G28\nM190 S[bed_temperature_initial_layer_single]\nM109 S[nozzle_temperature_initial_layer]\nG92 E0'
+const MARLIN_END_GCODE = 'M104 S0\nM140 S0\nG91\nG1 E-2 F1800\nG28 X Y\nM84'
+
 /** Per-part display palette — duplicated from threeMF.ts PART_PALETTE so orcaProject.ts
  *  has no runtime import from threeMF (different bundle path). Must stay in sync. */
 export const ORCA_PART_PALETTE = [
@@ -44,6 +64,7 @@ export const ORCA_PART_PALETTE = [
 export interface OrcaProjectOptions {
   bed: PrinterBed
   thumbnailPng?: Uint8Array // best-effort canvas PNG; omit to skip thumbnail
+  material?: OrcaMaterial
 }
 
 /**
@@ -61,7 +82,7 @@ export interface OrcaProjectOptions {
  */
 export function buildOrcaProject(
   parts: Array<{ name: string; stl: ArrayBuffer; place?: { x: number; y: number; rot?: 0 | 90 } }>,
-  { bed, thumbnailPng }: OrcaProjectOptions,
+  { bed, thumbnailPng, material = 'PLA' }: OrcaProjectOptions,
 ): Uint8Array<ArrayBuffer> {
   const materialId = parts.length + 1 // basematerials group id — sits after every object id (1..N)
   const objects: string[] = []
@@ -149,6 +170,8 @@ export function buildOrcaProject(
     `0x${bed.y}`,
   ]
 
+  const mat = MATERIAL_CONFIG[material]
+
   const projectSettings: Record<string, unknown> = {
     version: ORCA_BAMBU_VERSION,
     name: 'project_settings',
@@ -164,25 +187,34 @@ export function buildOrcaProject(
     support_type: 'normal(auto)',
     brim_type: 'no_brim',
     brim_width: '0',
-    filament_type: ['PLA'],
-    filament_colour: ['#4CAF50FF'],
-    nozzle_temperature: ['220'],
-    nozzle_temperature_initial_layer: ['220'],
-    bed_temperature: ['65'],
-    bed_temperature_initial_layer: ['65'],
-    hot_plate_temp: ['65'],
-    hot_plate_temp_initial_layer: ['65'],
+    filament_type: [material],
+    filament_colour: [mat.colour],
+    nozzle_temperature: [String(mat.nozzle)],
+    nozzle_temperature_initial_layer: [String(mat.nozzle)],
+    bed_temperature: [String(mat.bed)],
+    bed_temperature_initial_layer: [String(mat.bed)],
+    hot_plate_temp: [String(mat.bed)],
+    hot_plate_temp_initial_layer: [String(mat.bed)],
     nozzle_diameter: ['0.4'],
     printable_area: printableArea,
     printable_height: String(bed.z),
     gcode_flavor: flavor,
     print_settings_id: '0.20mm Standard @BBL',
-    filament_settings_id: ['Bambu PLA Basic @BBL A1M'],
+    filament_settings_id: [mat.filamentSettingsId],
   }
 
   // only include printer_settings_id when we have a known preset (not custom)
   if (printerPreset) {
     projectSettings.printer_settings_id = printerPreset
+  }
+
+  // Marlin/Marlin2 only: inject minimal authored start+end G-code.
+  // Klipper and Bambu flavors are intentionally excluded — their presets supply machine macros;
+  // injecting wrong G-code (especially Klipper's PRINT_START which varies per config) is worse
+  // than absent.
+  if (flavor === 'marlin' || flavor === 'marlin2') {
+    projectSettings.machine_start_gcode = MARLIN_START_GCODE
+    projectSettings.machine_end_gcode = MARLIN_END_GCODE
   }
 
   const modelSettings =

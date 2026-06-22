@@ -184,3 +184,40 @@ describe('buildOrcaProject — P3 multi-object + thumbnails', () => {
     expect(Object.keys(files)).not.toContain('Metadata/plate_1.png')
   })
 })
+
+describe('buildOrcaProject — P4 material temps + gcode', () => {
+  const stl = makeStl([tri])
+
+  it('PETG: nozzle_temperature is 240', () => {
+    const out = buildOrcaProject([{ name: 'p', stl }], { bed: resolveBed('ender3', null), material: 'PETG' })
+    const parsed = JSON.parse(getText(unzipProject(out), 'Metadata/project_settings.config'))
+    expect(parsed.nozzle_temperature).toEqual(['240'])
+  })
+
+  it('ABS: bed_temperature is 105', () => {
+    const out = buildOrcaProject([{ name: 'p', stl }], { bed: resolveBed('ender3', null), material: 'ABS' })
+    const parsed = JSON.parse(getText(unzipProject(out), 'Metadata/project_settings.config'))
+    expect(parsed.bed_temperature).toEqual(['105'])
+  })
+
+  it('PLA filament_type is [PLA], PETG filament_type is [PETG]', () => {
+    const outPLA = buildOrcaProject([{ name: 'p', stl }], { bed: resolveBed('ender3', null) })
+    const outPETG = buildOrcaProject([{ name: 'p', stl }], { bed: resolveBed('ender3', null), material: 'PETG' })
+    expect(JSON.parse(getText(unzipProject(outPLA), 'Metadata/project_settings.config')).filament_type).toEqual(['PLA'])
+    expect(JSON.parse(getText(unzipProject(outPETG), 'Metadata/project_settings.config')).filament_type).toEqual(['PETG'])
+  })
+
+  it('marlin bed (ender3) has machine_start_gcode and machine_end_gcode', () => {
+    const out = buildOrcaProject([{ name: 'p', stl }], { bed: resolveBed('ender3', null), material: 'PLA' })
+    const parsed = JSON.parse(getText(unzipProject(out), 'Metadata/project_settings.config'))
+    expect(typeof parsed.machine_start_gcode).toBe('string')
+    expect(parsed.machine_start_gcode.length).toBeGreaterThan(0)
+    expect(typeof parsed.machine_end_gcode).toBe('string')
+  })
+
+  it('bambu bed (bambu-a1) does NOT have machine_start_gcode', () => {
+    const out = buildOrcaProject([{ name: 'p', stl }], { bed: resolveBed('bambu-a1', null), material: 'PLA' })
+    const parsed = JSON.parse(getText(unzipProject(out), 'Metadata/project_settings.config'))
+    expect(parsed.machine_start_gcode).toBeUndefined()
+  })
+})
