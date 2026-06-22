@@ -293,7 +293,7 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
           >
             <span className="mi-icon"><DLayers /></span>
             <span className="mi-text">
-              <span className="mi-title">OrcaSlicer project <span className="ext">.3mf</span></span>
+              <span className="mi-title">OrcaSlicer / Bambu project <span className="ext">.3mf</span></span>
               <span className="mi-sub">Slice-ready — printer, filament &amp; process pre-selected{bedId === 'bambu-h2d' || bedId === CUSTOM_BED_ID ? ' (unavailable for this bed)' : ''}</span>
             </span>
             <span className="mi-check"><DArrowRight /></span>
