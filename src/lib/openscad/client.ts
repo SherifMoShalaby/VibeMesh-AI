@@ -1,4 +1,5 @@
 import type { CompileResult } from '../../types'
+import { RenderCache, cacheKey } from './renderCache'
 
 // Per-call watchdog. The interactive default is far below the old flat 90s so a
 // hung render surfaces fast; the store passes a tighter budget for the Draft
@@ -13,6 +14,9 @@ interface PendingJob {
   projectId: string
   code: string
   defines: string[]
+  /** content-addressed cache key (code + sorted defines + engine build) — its result is cached on a
+   *  clean finish so an identical later render resolves instantly without the worker. */
+  key: string
   timeoutMs: number
   background: boolean
   resolve: (result: CompileResult) => void
@@ -47,6 +51,9 @@ export class OpenScadEngine {
   private bgQueue: PendingJob[] = [] // FIFO of BACKGROUND jobs — never coalesced/superseded
   private foreground: string | null = null // the active project's lane is drained first
   private timer: ReturnType<typeof setTimeout> | null = null
+  // content-addressed cache of clean renders: an identical (code, defines, engine build) resolves
+  // instantly, never touching the worker (slider revisit, version restore, best-of-N re-roll, probe).
+  private cache = new RenderCache()
 
   /** Tell the engine which project is in the foreground so its interactive lane jumps the queue.
    *  Called on every project switch; the engine never imports the store. */
@@ -62,7 +69,15 @@ export class OpenScadEngine {
   ): Promise<CompileResult> {
     return new Promise((resolve) => {
       const pid = opts.projectId ?? DEFAULT_LANE
-      const job: PendingJob = { id: this.nextId++, projectId: pid, code, defines, timeoutMs, background: !!opts.background, resolve }
+      const key = cacheKey(code, defines)
+      // content cache: an identical render we've already produced resolves immediately, with no
+      // worker round-trip and no effect on the coalescing/FIFO lanes (background or interactive).
+      const cached = this.cache.get(key)
+      if (cached) {
+        resolve(cached)
+        return
+      }
+      const job: PendingJob = { id: this.nextId++, projectId: pid, code, defines, key, timeoutMs, background: !!opts.background, resolve }
       if (!this.active) {
         this.run(job)
       } else if (job.background) {
@@ -115,6 +130,10 @@ export class OpenScadEngine {
     this.timer = null
     const job = this.active
     this.active = null
+    // cache a CLONE of a clean render keyed on its content; the consumer gets the original result,
+    // the cache its own isolated copy. Guard here too (defence-in-depth) so a timeout/crash result
+    // never reaches the cache even if set()'s own guard were ever loosened.
+    if (job && result.ok && result.stl) this.cache.set(job.key, result)
     job?.resolve(result)
     const next = this.pickNext()
     if (next) this.run(next)
