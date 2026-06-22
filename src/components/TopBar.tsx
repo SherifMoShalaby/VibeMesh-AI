@@ -5,7 +5,7 @@ import { applyValuesToCode } from '../lib/params'
 import { downloadBlob } from '../lib/stl'
 import { useHardwareCatalog, detectBom, formatBomText } from '../lib/bom'
 import { useClickOutside } from '../lib/useClickOutside'
-import { QUALITY_PRESETS } from '../types'
+import { QUALITY_PRESETS, CUSTOM_BED_ID } from '../types'
 import { ConfirmDialog } from './Dialogs'
 import {
   DLogo,
@@ -205,6 +205,8 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const exportPlates3mf = useStore((s) => s.exportPlates3mf)
   const exportStlSmart = useStore((s) => s.exportStlSmart)
   const export3mf = useStore((s) => s.export3mf)
+  const exportOrcaProject = useStore((s) => s.exportOrcaProject)
+  const bedId = useStore((s) => s.bedId)
   const exportShareFile = useStore((s) => s.exportShareFile)
   const importShareFile = useStore((s) => s.importShareFile)
   const pushToast = useUi((s) => s.pushToast)
@@ -259,6 +261,19 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
             <span className="mi-text">
               <span className="mi-title">3MF <span className="ext">.3mf</span></span>
               <span className="mi-sub">Recommended — parts + colors + metadata{hasPlates ? ', all parts included' : ''}</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
+          </button>
+          <button
+            className="menu-item"
+            role="menuitem"
+            disabled={!stl || hasPlates || bedId === 'bambu-h2d' || bedId === CUSTOM_BED_ID}
+            onClick={run(() => exportOrcaProject(fileBase))}
+          >
+            <span className="mi-icon"><DLayers /></span>
+            <span className="mi-text">
+              <span className="mi-title">OrcaSlicer project <span className="ext">.3mf</span></span>
+              <span className="mi-sub">Slice-ready — printer, filament &amp; process pre-selected{bedId === 'bambu-h2d' || bedId === CUSTOM_BED_ID ? ' (unavailable for this bed)' : ''}</span>
             </span>
             <span className="mi-check"><DArrowRight /></span>
           </button>

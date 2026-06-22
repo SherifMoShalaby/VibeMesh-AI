@@ -219,6 +219,8 @@ export interface VibeState {
   exportStlSmart: (fileBase: string) => Promise<void>
   /** export one .3mf with every part as a named object (slicer-ready plate) */
   export3mf: (fileBase: string) => Promise<void>
+  /** export an OrcaSlicer/BambuStudio slice-ready .orca.3mf (single-part, P1) */
+  exportOrcaProject: (fileBase: string) => Promise<void>
   /** export a re-editable .vibemesh share file (code + sliders + intent + skills + thumbnail) */
   exportShareFile: (fileBase: string) => void
   /** import a .vibemesh share file as a new project and switch to it */
@@ -736,7 +738,7 @@ export const useStore = create<VibeState>((set, get) => {
       if (project.code.trim()) void compile(project.code, buildDefines(params, paramValues))
     },
 
-    // export slice (exportPlates / exportPlates3mf / export3mf / exportStlSmart / exportShareFile)
+    // export slice (exportPlates / exportPlates3mf / export3mf / exportOrcaProject / exportStlSmart / exportShareFile)
     // lives in ./exportActions — leaf actions, split out of this god-store (shared helpers passed in).
     ...createExportActions(set, get, { qualityArgsFor, exportQuality, composeMatrix, RENDER_TIMEOUT_EXPORT, RENDER_TIMEOUT_DRAFT }),
 

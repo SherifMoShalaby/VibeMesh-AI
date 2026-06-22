@@ -5,6 +5,7 @@ import { buildDefines } from '../lib/params'
 import { openscad } from '../lib/openscad/client'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
 import { buildThreeMF } from '../lib/threeMF'
+import { buildOrcaProject } from '../lib/orcaProject'
 import { packPlates } from '../lib/packPlates'
 import { buildShareFile, serializeShareFile } from '../lib/shareFile'
 import { useUi } from './ui'
@@ -19,7 +20,7 @@ export interface ExportHelpers {
   RENDER_TIMEOUT_DRAFT: number
 }
 
-type ExportActions = Pick<VibeState, 'exportPlates' | 'exportPlates3mf' | 'export3mf' | 'exportStlSmart' | 'exportShareFile'>
+type ExportActions = Pick<VibeState, 'exportPlates' | 'exportPlates3mf' | 'export3mf' | 'exportOrcaProject' | 'exportStlSmart' | 'exportShareFile'>
 
 /**
  * The export slice of the store, extracted from store.ts (god-module split). These are LEAF actions —
@@ -228,6 +229,39 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
         set({ compileNote: `parts ${degraded.join(', ')} were too heavy for ${preset.label} — exported at Draft` })
       }
       downloadBlob(buildThreeMF(collected), `${fileBase}.3mf`, 'model/3mf')
+    },
+
+    exportOrcaProject: async (fileBase) => {
+      const { code, params, paramValues, quality, stl, meshTransform } = get()
+      if (get().exportingPlates) return
+      const preset = h.exportQuality()
+      const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
+
+      // single-piece only in P1 — bail out for multi-part designs
+      if (partParam) return
+      if (!stl) return
+
+      // re-render at Fine for a smooth printed part (the Standard preview is coarse);
+      // ask first, since .3mf should reflect what the user is exporting.
+      let source = stl
+      const belowFine = quality !== 'fine' && quality !== 'ultra'
+      if (belowFine) {
+        const upgrade = await useUi.getState().requestConfirm({
+          title: 'Re-render at Fine quality for export?',
+          body: 'The preview caps curve smoothness; Fine prints noticeably smoother curves. Re-rendering may take a while.',
+          confirmLabel: 'Re-render at Fine',
+        })
+        if (upgrade) {
+          const defines = buildDefines(params, paramValues)
+          const result = await openscad.compile(code, [...defines, ...h.qualityArgsFor(preset)], h.RENDER_TIMEOUT_EXPORT)
+          if (result.ok && result.stl) source = result.stl
+          else useUi.getState().pushToast('Fine-quality render failed (model too heavy) — exporting the preview as-is.', 'error')
+        }
+      }
+      const buffer = meshTransform ? transformStl(source, h.composeMatrix(meshTransform.position, meshTransform.rotation)) : source
+      const bed = resolveBed(get().bedId, get().customBed)
+      // arrange:false equivalent — mesh coords already carry placement; no re-centering
+      downloadBlob(buildOrcaProject([{ name: fileBase, stl: buffer }], { bed }), `${fileBase}.orca.3mf`, 'model/3mf')
     },
 
     exportStlSmart: async (fileBase) => {
