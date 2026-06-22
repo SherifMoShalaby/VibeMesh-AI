@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { dimDiscrepancies, clampStatedDimensions } from './refineProxy'
+import { dimDiscrepancies, clampStatedDimensions, geometryConverged } from './refineProxy'
 import type { StlBBox } from './stl'
 
-const bbox = (x: number, y: number, z: number): StlBBox => ({ x, y, z, minZ: 0 })
+const bbox = (x: number, y: number, z: number): StlBBox => ({ x, y, z, minZ: 0, volume: 0, triangles: 0 })
 
 describe('dimDiscrepancies', () => {
   it('returns [] with no dims or no stated dimensions', () => {
@@ -104,5 +104,33 @@ describe('clampStatedDimensions', () => {
   it('converts units before clamping (2m → 2000mm → clamped to 1000mm)', () => {
     const out = clampStatedDimensions([{ value: 2, unit: 'm', feature: 'span' }])
     expect(out.dimensions[0].value).toBe(1000)
+  })
+})
+
+describe('geometryConverged — self-relative refine convergence', () => {
+  it('returns false when there is no previous baseline (first pass) — keep refining', () => {
+    expect(geometryConverged(undefined, { volume: 100, triangles: 500 })).toBe(false)
+    expect(geometryConverged(null, { volume: 100, triangles: 500 })).toBe(false)
+    expect(geometryConverged({ volume: 100, triangles: 500 }, null)).toBe(false)
+  })
+
+  it('converged when volume AND tri-count are both within 3% (the model stopped reshaping → stop)', () => {
+    expect(geometryConverged({ volume: 1000, triangles: 800 }, { volume: 1010, triangles: 805 })).toBe(true)
+    expect(geometryConverged({ volume: 1000, triangles: 800 }, { volume: 1000, triangles: 800 })).toBe(true)
+  })
+
+  it('NOT converged when the model is still meaningfully reshaping (volume OR tris move >3%)', () => {
+    expect(geometryConverged({ volume: 1000, triangles: 800 }, { volume: 1300, triangles: 805 })).toBe(false) // +30% volume
+    expect(geometryConverged({ volume: 1000, triangles: 800 }, { volume: 1010, triangles: 1200 })).toBe(false) // +50% tris
+  })
+
+  it('is thin-part SAFE: a flat part that converges immediately stops (nothing punished for being thin)', () => {
+    // a 1.6mm bracket: tiny volume, but pass 2 ≈ pass 1 → converged → stop, no thrash
+    expect(geometryConverged({ volume: 24, triangles: 120 }, { volume: 24.3, triangles: 120 })).toBe(true)
+  })
+
+  it('guards divide-by-zero on a zero-volume baseline', () => {
+    expect(geometryConverged({ volume: 0, triangles: 100 }, { volume: 0, triangles: 100 })).toBe(true)
+    expect(geometryConverged({ volume: 0, triangles: 100 }, { volume: 5, triangles: 100 })).toBe(false)
   })
 })

@@ -71,9 +71,15 @@ export interface StlBBox {
   y: number
   z: number
   minZ: number
+  /** Mesh volume in mm³ (absolute value of the signed-tetrahedron sum) and triangle count —
+   *  reference-free geometry-CONTENT signals beyond the bounding box. The refine loop uses them to
+   *  detect SELF-RELATIVE convergence (the model has stopped reshaping) and "false convergence"
+   *  (right bbox, hollow/thin shape). Computed in the same single byte pass as the bbox, so cheap. */
+  volume: number
+  triangles: number
 }
 
-/** Lightweight binary-STL bounding box (no three.js geometry allocation). */
+/** Lightweight binary-STL bounding box + volume + triangle count (no three.js geometry allocation). */
 export function stlBBox(buffer: ArrayBuffer): StlBBox | null {
   if (buffer.byteLength < 84) return null
   const view = new DataView(buffer)
@@ -81,18 +87,36 @@ export function stlBBox(buffer: ArrayBuffer): StlBBox | null {
   if (buffer.byteLength < 84 + count * 50) return null
   const min = [Infinity, Infinity, Infinity]
   const max = [-Infinity, -Infinity, -Infinity]
+  let vol6 = 0 // 6× the signed mesh volume: Σ a·(b×c); divided by 6 at the end
   for (let i = 0; i < count; i++) {
     const base = 84 + i * 50 + 12
-    for (let v = 0; v < 3; v++) {
-      for (let a = 0; a < 3; a++) {
-        const val = view.getFloat32(base + v * 12 + a * 4, true)
-        if (val < min[a]) min[a] = val
-        if (val > max[a]) max[a] = val
-      }
-    }
+    const ax = view.getFloat32(base, true)
+    const ay = view.getFloat32(base + 4, true)
+    const az = view.getFloat32(base + 8, true)
+    const bx = view.getFloat32(base + 12, true)
+    const by = view.getFloat32(base + 16, true)
+    const bz = view.getFloat32(base + 20, true)
+    const cx = view.getFloat32(base + 24, true)
+    const cy = view.getFloat32(base + 28, true)
+    const cz = view.getFloat32(base + 32, true)
+    min[0] = Math.min(min[0], ax, bx, cx)
+    max[0] = Math.max(max[0], ax, bx, cx)
+    min[1] = Math.min(min[1], ay, by, cy)
+    max[1] = Math.max(max[1], ay, by, cy)
+    min[2] = Math.min(min[2], az, bz, cz)
+    max[2] = Math.max(max[2], az, bz, cz)
+    // signed tetrahedron volume × 6 = a · (b × c)
+    vol6 += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)
   }
   const r = (n: number) => Math.round(n * 100) / 100
-  return { x: r(max[0] - min[0]), y: r(max[1] - min[1]), z: r(max[2] - min[2]), minZ: r(min[2]) }
+  return {
+    x: r(max[0] - min[0]),
+    y: r(max[1] - min[1]),
+    z: r(max[2] - min[2]),
+    minZ: r(min[2]),
+    volume: r(Math.abs(vol6) / 6),
+    triangles: count,
+  }
 }
 
 /**

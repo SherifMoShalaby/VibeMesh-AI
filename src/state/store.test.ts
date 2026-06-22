@@ -3,7 +3,7 @@ import { degenerateReason, detectKitIntent } from '../lib/storeDecisions'
 import type { StlBBox } from '../lib/stl'
 
 const bed = { x: 256, y: 256, z: 256 }
-const bbox = (x: number, y: number, z: number, minZ = 0): StlBBox => ({ x, y, z, minZ })
+const bbox = (x: number, y: number, z: number, minZ = 0): StlBBox => ({ x, y, z, minZ, volume: 0, triangles: 0 })
 
 describe('degenerateReason — the compile-result usability gate', () => {
   it('flags an empty / no-geometry render', () => {

@@ -98,3 +98,27 @@ export function dimDiscrepancies(
   }
   return issues
 }
+
+/**
+ * SELF-RELATIVE convergence check for the auto-refine loop. Returns true when two consecutive refine
+ * passes produced essentially the SAME geometry — both the mesh volume AND the triangle count within
+ * `tol` (default 3%). Pure + deterministic.
+ *
+ * The refine gate was bbox-only: with no stated dimensions it had nothing to check, so it burned its
+ * fixed pass budget BLIND, re-asking the same model to self-grade (which regresses without an external
+ * oracle — Huang et al. ICLR'24) even after the model had stopped meaningfully changing the shape.
+ * This gives it a directional stop: keep refining while the geometry is still being reshaped, stop
+ * once it has settled. It is thin-part-SAFE by construction — a flat bracket converges on the first
+ * pass and stops; nothing is punished for being thin, only for NOT CHANGING. It can only ever stop
+ * EARLIER; the MAX_AUTO_REFINE cap remains the hard ceiling.
+ */
+export function geometryConverged(
+  prev: { volume: number; triangles: number } | null | undefined,
+  cur: { volume: number; triangles: number } | null | undefined,
+  tol = 0.03,
+): boolean {
+  if (!prev || !cur) return false // no baseline yet (first pass) — NOT converged, keep refining
+  const dVol = Math.abs(cur.volume - prev.volume) / Math.max(Math.abs(prev.volume), 1e-6)
+  const dTri = Math.abs(cur.triangles - prev.triangles) / Math.max(prev.triangles, 1)
+  return dVol < tol && dTri < tol
+}
