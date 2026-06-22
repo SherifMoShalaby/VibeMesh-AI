@@ -221,3 +221,37 @@ describe('buildOrcaProject — P4 material temps + gcode', () => {
     expect(parsed.machine_start_gcode).toBeUndefined()
   })
 })
+
+describe('buildOrcaProject — P2 all supported beds (table-driven)', () => {
+  const stl = makeStl([tri])
+
+  // All 14 supported beds with expected gcode_flavor from BED_CONFIG.
+  // bambu-h2d is intentionally absent (dual-nozzle, no single-nozzle preset — excluded by UI too).
+  const BEDS: Array<[bedId: string, flavor: string]> = [
+    ['ender3',          'marlin'],
+    ['k1',              'klipper'],
+    ['k1-max',          'klipper'],
+    ['a1-mini',         'bambu'],
+    ['bambu-a1',        'bambu'],
+    ['bambu-p1',        'bambu'],
+    ['prusa-mini',      'marlin2'],
+    ['prusa-mk4',       'marlin2'],
+    ['prusa-core-one',  'marlin2'],
+    ['prusa-xl',        'marlin2'],
+    ['neptune4-pro',    'klipper'],
+    ['centauri-carbon', 'klipper'],
+    ['adventurer-5m',   'klipper'],
+    ['qidi-q1-pro',     'klipper'],
+  ]
+
+  for (const [bedId, expectedFlavor] of BEDS) {
+    it(`${bedId}: printable_area / printable_height / gcode_flavor`, () => {
+      const bed = resolveBed(bedId, null)
+      const out = buildOrcaProject([{ name: 'p', stl }], { bed })
+      const parsed = JSON.parse(getText(unzipProject(out), 'Metadata/project_settings.config'))
+      expect(parsed.printable_area).toEqual(['0x0', `${bed.x}x0`, `${bed.x}x${bed.y}`, `0x${bed.y}`])
+      expect(parsed.printable_height).toBe(String(bed.z))
+      expect(parsed.gcode_flavor).toBe(expectedFlavor)
+    })
+  }
+})
