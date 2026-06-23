@@ -27,11 +27,21 @@ const CORPUS = [
   ['a peg and socket press-fit joint', ['fit-pair']],
   ['a bistable snap-through clicker', ['bistable']],
   ['a push button with a spring return', ['button-return']],
+  // stylized / decorative skills (crown-coronet, hollow-crenellation, open-prong-cradle) — these
+  // were absent from the quantitative ratchet, so a trigger edit could silently break their routing
+  ['a decorative crown for a trophy topper', ['crown-coronet']],
+  ['a chess rook with a crenellated battlement rim', ['hollow-crenellation']],
+  ['a holder with open prongs cradling a marble', ['open-prong-cradle']],
+  // homographs — the gear/nut mechanism sense must BEAT the stylized sense (lookahead suppression),
+  // so a stylized over-fire here surfaces as a precision drop, not only a binary selftest fail
+  ['a crown gear for a hand drill', ['spur-gear']],
+  ['a castle nut for an M6 bolt', ['threaded-fastener-seat']],
   // negatives — a plain shape must fire NOTHING (expected empty set)
   ['a rectangular box 40 x 20 x 10 mm', []],
   ['a hexagonal coaster', []],
   ['a simple desk nameplate', []],
   ['a spring water bottle holder', []],
+  ['a turret enclosure for a raspberry pi', []],
 ]
 
 const RECALL_FLOOR = 0.85

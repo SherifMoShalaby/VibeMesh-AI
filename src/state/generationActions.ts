@@ -67,7 +67,7 @@ export function createGenerationActions(
   set: StoreApi<VibeState>['setState'],
   get: StoreApi<VibeState>['getState'],
   h: GenerationHelpers,
-): Pick<VibeState, 'sendPrompt' | 'retryLast' | 'regenerateWithSkills' | 'abortGeneration' | 'consumeAutoRefine'> {
+): Pick<VibeState, 'sendPrompt' | 'retryLast' | 'rerollLast' | 'regenerateWithSkills' | 'abortGeneration' | 'consumeAutoRefine'> {
   /** A2 — verifier-guided best-of-N. Fan out N generations, compile + score each on REFERENCE-FREE
    *  signals (compile-clean dominates, then degenerate, then structural/dim issue counts), and return
    *  the winner's reply text + skill report. Candidates stream SILENTLY (one status line, not N
@@ -513,6 +513,23 @@ export function createGenerationActions(
       const lastUser = chat[end - 1]
       h.setChatFor(pid, chat.slice(0, end))
       await runGeneration({ text: lastUser.text, action: lastUser.action })
+    },
+
+    rerollLast: async () => {
+      if (get().generating) return
+      const pid = get().activeId
+      if (!pid) return
+      const chat = h.activeChatFor(pid)
+      // a re-roll only makes sense once there IS a model — a code-bearing assistant version to vary
+      if (!chat.some((m) => m.role === 'assistant' && m.code)) return
+      const text =
+        'Generate a different version of the current model for the same request — keep the original intent and any stated dimensions, but try a fresh approach. Return the complete program.'
+      // Append-a-sibling: a marker user turn (chip shows a 'Regenerate' tag), then a fresh
+      // generation. The new version appends AFTER the current one, so BOTH stay in the lineage and
+      // remain switchable via the version chips (Restore / redo) — neither is discarded. Like a
+      // diverging send, the redo stash is cleared (this is a new branch).
+      h.setChatAndFutureFor(pid, [...chat, { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Regenerate' }], [])
+      await runGeneration({ text, action: 'Regenerate' })
     },
 
     regenerateWithSkills: async (msgId, skillIds) => {

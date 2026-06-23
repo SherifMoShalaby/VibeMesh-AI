@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
@@ -60,6 +60,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const restoreVersion = useStore((s) => s.restoreVersion)
   const restoreNewer = useStore((s) => s.restoreNewer)
   const retryLast = useStore((s) => s.retryLast)
+  const rerollLast = useStore((s) => s.rerollLast)
   const currentCode = useStore((s) => s.code)
   const newProject = useStore((s) => s.newProject)
 
@@ -206,7 +207,12 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     return () => window.removeEventListener('keydown', onKey)
   }, [lightbox])
 
-  const promptHistory = chat.filter((m) => m.role === 'user' && !m.action && m.text.trim()).map((m) => m.text)
+  // chat identity is stable mid-stream (streaming mutates only the projected streamText, not the chat
+  // array), so these memos hold across the whole token stream instead of rebuilding every token.
+  const promptHistory = useMemo(
+    () => chat.filter((m) => m.role === 'user' && !m.action && m.text.trim()).map((m) => m.text),
+    [chat],
+  )
 
   const onInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -295,11 +301,12 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const genElapsedClock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
 
   // number restorable versions so history reads as history (UX-AUDIT F17)
-  const versionOf = new Map<string, number>()
-  {
+  const versionOf = useMemo(() => {
+    const map = new Map<string, number>()
     let v = 0
-    for (const m of chat) if (m.code) versionOf.set(m.id, ++v)
-  }
+    for (const m of chat) if (m.code) map.set(m.id, ++v)
+    return map
+  }, [chat])
 
   const now = () => {
     const d = new Date()
@@ -573,6 +580,19 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                   <span className="cc-text"><span className="cc-title">Retry</span></span>
                 </button>
               )}
+              {msg.code && isCurrent && !generating && (
+                <button
+                  className="code-chip reroll"
+                  title="Generate a different version of this model — both are kept; switch between them with the version chips"
+                  onClick={() => void rerollLast()}
+                >
+                  <span className="cc-icon"><DRefresh /></span>
+                  <span className="cc-text">
+                    <span className="cc-title">Regenerate</span>
+                    <span className="cc-meta">a different take · keeps this version</span>
+                  </span>
+                </button>
+              )}
             </motion.div>
           )
         })}
@@ -730,7 +750,7 @@ function SpendChip({ calls, tokens }: { calls: number; tokens: number }) {
   )
 }
 
-function ContextChip({ chat, provider, systemTokens }: { chat: ChatMessage[]; provider?: ProviderInfo; systemTokens?: number }) {
+const ContextChip = memo(function ContextChip({ chat, provider, systemTokens }: { chat: ChatMessage[]; provider?: ProviderInfo; systemTokens?: number }) {
   const nonError = chat.filter((m) => !m.error).length
   if (nonError === 0) return null
   const used = estHistoryTokens(chat)
@@ -761,4 +781,4 @@ function ContextChip({ chat, provider, systemTokens }: { chat: ChatMessage[]; pr
       <span className="ctx-num">{Math.round(Math.min(frac, 9.99) * 100)}%</span>
     </span>
   )
-}
+})
