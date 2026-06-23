@@ -61,7 +61,9 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
     const fresh = groupNames.filter((n) => !seeded.current.has(n))
     if (fresh.length === 0) return
     fresh.forEach((n) => seeded.current.add(n))
-    setCollapsed((prev) => new Set([...prev, ...fresh]))
+    // groupNames[0] is the first group in the SCAD file — leave it expanded by default
+    const toCollapse = fresh.filter((n) => n !== groupNames[0])
+    setCollapsed((prev) => new Set([...prev, ...toCollapse]))
   }, [groupNames])
 
   const toggle = (group: string) =>

@@ -82,7 +82,7 @@ async function listKimiModels() {
 function kimiModelChoices(discovered) {
   const envExtra = (process.env.KIMI_MODELS || '').split(',').map((s) => s.trim()).filter(Boolean)
   const known = ['kimi-k2.7-code'] // pinnable specific versions the alias endpoint may not list
-  const out = [{ id: 'default', label: `default (${kimiModel()})` }]
+  const out = [{ id: 'default', label: `Default · ${kimiModel()}` }]
   const seen = new Set(['default'])
   for (const id of [...(discovered ?? []), ...envExtra, ...known]) {
     if (id && !seen.has(id)) {
@@ -316,7 +316,7 @@ export async function providerStatus() {
       vision: true,
       maxImages: 10, // a global + up to 9 region tiles (the tiler degrades resolution before dropping tiles)
       models: [
-        { id: 'default', label: claudeCliDefaultModel() ? `default (${claudeCliDefaultModel()})` : 'default' },
+        { id: 'default', label: claudeCliDefaultModel() ? `Default · ${claudeCliDefaultModel()}` : 'Default (from ~/.claude/settings.json)' },
         { id: 'opus', label: 'opus — best quality' },
         { id: 'sonnet', label: 'sonnet — fast' },
         { id: 'haiku', label: 'haiku — fastest' },
