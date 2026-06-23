@@ -117,6 +117,8 @@ export function metricsOf(row) {
     intentEmittedRate: typeof row.intentEmittedRate === 'number' ? row.intentEmittedRate : null,
     // advisory LLM-judge — displayed for visibility, never gated (nondeterministic)
     judgeScore: row.judge && !row.judge.error && typeof row.judge.score === 'number' ? row.judge.score : null,
+    // advisory VLM-vision fidelity (Phase 3 Gemini judge) — shown, never hard-gates (tol: Infinity)
+    visionFidelity: row.visionJudge && !row.visionJudge.error && typeof row.visionJudge.overallFidelity === 'number' ? row.visionJudge.overallFidelity : null,
   }
 }
 
@@ -140,6 +142,7 @@ export const NUMERIC = [
   { key: 'assembledScore', label: 'asm', tol: 0.25 }, // stepped 0/0.5/1 → tolerate one step
   { key: 'interferenceScore', label: 'intf', tol: 0.1 }, // cutter-vs-structure overlap on generated parts (advisory until baselined)
   { key: 'skillScore', label: 'skill', tol: 0.5 }, // per-skill validator on live output; binary + noisy → wide tol until repeat-sampling
+  { key: 'visionFidelity', label: 'vis', tol: Infinity }, // Phase-3 VLM vision fidelity — shown for visibility, never hard-gates
 ]
 
 /** Deterministic geometry scorers that MUST be present on any compiled run of the task they apply to.
@@ -200,7 +203,7 @@ export function evaluate(baseline, current, opts = {}) {
       // an entire baseline engine absent from the run = partial matrix, not a verdict.
       const msg = `engine "${engine}" is in the baseline but ABSENT from this run (${baseTasks.size} task(s) uncovered) — partial matrix`
       cfg.push(advisory ? `${msg} [advisory — ignored]` : msg)
-      for (const task of baseTasks.keys()) tableRows.push([`${engine} ▸ ${task}`, advisory ? '∅adv' : '∅', '', '', '', '', ''])
+      for (const task of baseTasks.keys()) tableRows.push([`${engine} ▸ ${task}`, advisory ? '∅adv' : '∅', '', '', '', '', '', ''])
       continue
     }
 
@@ -209,7 +212,7 @@ export function evaluate(baseline, current, opts = {}) {
       const cm = currTasks.get(task)
       if (!cm) {
         reg.push(`${id}: MISSING from current run (was in baseline)`)
-        tableRows.push([id, 'MISSING', '', '', '', '', ''])
+        tableRows.push([id, 'MISSING', '', '', '', '', '', ''])
         continue
       }
       compared++
@@ -218,7 +221,7 @@ export function evaluate(baseline, current, opts = {}) {
       const n = cm.samples ?? 1
       if (n < minSamples) {
         cfg.push(`${id}: ran with ${n} sample(s); gate requires ≥${minSamples} (set BENCH_SAMPLES=${Math.max(3, minSamples)}, or pass --allow-single-sample for local iteration)`)
-        tableRows.push([id, `n=${n}?`, '', '', '', '', ''])
+        tableRows.push([id, `n=${n}?`, '', '', '', '', '', ''])
         continue
       }
 
@@ -226,7 +229,7 @@ export function evaluate(baseline, current, opts = {}) {
       // environmental — not a pass and not a regression. Surface and force a re-run.
       if (cm.errorClass === 'transport' && cm.compiled == null) {
         inc.push(`${id}: INCONCLUSIVE — all ${n} sample(s) hit transport errors (rate-limit/5xx/timeout); re-run`)
-        tableRows.push([id, 'transp', '', '', '', '', ''])
+        tableRows.push([id, 'transp', '', '', '', '', '', ''])
         continue
       }
 
@@ -263,6 +266,7 @@ export function evaluate(baseline, current, opts = {}) {
         cell(bm.placementScore, cm.placementScore, 0.1),
         cell(bm.buildabilityScore, cm.buildabilityScore, 0.05),
         cell(bm.judgeScore, cm.judgeScore, Infinity), // advisory — shown, never gated
+        cell(bm.visionFidelity, cm.visionFidelity, Infinity), // Phase-3 VLM — advisory, never gated
       ])
     }
   }
@@ -334,11 +338,12 @@ function main() {
   const pad = (s, w) => String(s).padEnd(w)
   const W0 = Math.max(18, ...v.tableRows.map((r) => r[0].length)) + 2
   console.log('\nBench gate — current vs baseline (▲ better, ▼ worse, = within tolerance)\n')
-  console.log(pad('engine ▸ task', W0) + pad('compiled', 10) + pad('dim', 14) + pad('IoU', 16) + pad('place', 14) + pad('kit', 14) + 'judge*')
+  console.log(pad('engine ▸ task', W0) + pad('compiled', 10) + pad('dim', 14) + pad('IoU', 16) + pad('place', 14) + pad('kit', 14) + pad('judge*', 14) + 'vis**')
   for (const r of v.tableRows) {
-    console.log(pad(r[0], W0) + pad(r[1], 10) + pad(r[2], 14) + pad(r[3], 16) + pad(r[4], 14) + pad(r[5], 14) + r[6])
+    console.log(pad(r[0], W0) + pad(r[1], 10) + pad(r[2], 14) + pad(r[3], 16) + pad(r[4], 14) + pad(r[5], 14) + pad(r[6], 14) + r[7])
   }
   console.log(`\n* judge = advisory LLM score, shown for visibility — never gated.`)
+  console.log(`** vis = advisory Phase-3 VLM vision fidelity (Gemini), shown for visibility — never gated.`)
   console.log(`  coverage: compared ${v.compared} / baselined ${v.baselined} task row(s); min-samples=${minSamples}; advisory engines: ${[...advisoryEngines].join(', ') || 'none'}.`)
 
   if (v.improvements.length) {
