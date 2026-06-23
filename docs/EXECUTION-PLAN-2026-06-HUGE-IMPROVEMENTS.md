@@ -4,6 +4,8 @@
 
 This turns the board's Now/Next/Bet roadmap into a dependency-sequenced, bench-gated build plan and folds in the prior lead's leftover sequence as the cheap NOW beachhead. Every `file:line` anchor below was re-verified against this branch (the source docs had drifted by tens of lines). It is a build sheet, not a survey: concrete first steps, named functions, the invariant each must preserve.
 
+> **⚠️ AUDIT-VERIFIED 2026-06-23.** A senior-engineering audit board (50 claims, opus adversarial recheck) graded this plan **substantively accurate but anchor-rotted**: every ship / stranded / deferred / not-started *status* holds, but the `file:line` anchors predate the PR #125 deploy/auth merge and have drifted, and **two open-work claims were wrong — both *understating*** (Task 1.1 and Task 0.4 blocker 2, corrected inline below). **Trust the status column; treat inline `file:line` anchors as approximate** and use **§ Corrections (2026-06-23 audit)** at the end for the exact re-anchored locations and the drift the plan never accounted for.
+
 ---
 
 ## 1. Overall approach
@@ -93,9 +95,12 @@ One seam at a time, never a rewrite. The board's central finding stands: the liv
 > `COMPOSED` entry (good — a new one IS compiled + interference-checked), but its CONTROL mutations are
 > **hardcoded to axle-snap's variable names** (`pocket_h = wall - 0.8;`, `pin_len`, lines 56-58), so a new
 > exemplar fails control (3) unless the selftest is first refactored to **per-fixture control mutations**.
-> **(2)** The figurative/revolve-profile half has **no existing injection seam** — `server/exemplars.mjs`
-> only holds `KIT_EXEMPLAR`; this is a new fragment + `contextText` wiring + retrieval, i.e. a feature, not
-> "add a string." **(3)** Decisively: the *value* of any new few-shot exemplar (better generation) is
+> **(2) ~~no existing injection seam~~ — CORRECTED 2026-06-23 (audit found this WRONG).** The figurative
+> injection seam ALREADY EXISTS: `server/skills.mjs` ships figurative exemplars (CROWN / CRENELLATION /
+> PRONG-ORB, ~L616/638/659) as registered skills with fragments + `validate` + regex triggers, flowing
+> through `providers.mjs` `contextText` and gated by `bench/skills.selftest.mjs`. Adding a figurative
+> exemplar is a **registry-entry add, not a new feature** — so 0.4's *figurative* half is unblocked today;
+> only blockers (1) and (3) survive. **(3)** Decisively: the *value* of any new few-shot exemplar (better generation) is
 > **unverifiable without a live API key** (`npm run bench`), and a subtly-wrong exemplar actively *degrades*
 > output because the model imitates it. Shipping blind geometry contradicts the verified-before-claimed bar
 > the rest of this plan holds. **Do this in a live-bench session:** first refactor the selftest to per-fixture
@@ -142,6 +147,7 @@ One seam at a time, never a rewrite. The board's central finding stands: the liv
 **Rationale.** This is the fork point. Board #1, #5, and #12 all stand or fall on the same question: *does silhouette-IoU between a candidate's canonical pose and a real hand-held photo's contour correlate with fidelity?* Nothing that consumes a reference contour ships until this passes. And no fidelity *number* is trustworthy until multi-sample is the standard run mode.
 
 #### Task 1.1 — Multi-sample bench discipline as the standard mode
+> **STATUS (2026-06-23): DONE — audit reclassified this from "open".** The discipline is already standard: `bench/run.mjs` defaults `BENCH_SAMPLES=3`, `bench/gate.mjs` enforces `minSamples=2`, and `bench/baseline.json` was re-seeded under k=3 (commits `ebdcdc2`/`a20f2d6`), documented in CLAUDE.md. The "concrete change" (re-seed + write the rule) is complete. **Remove from the Phase 1 open list** — only Tasks 1.2 (spike) and 1.3 (browser port) remain.
 - **Goal.** Make `BENCH_SAMPLES≥2` the standard run mode so the gate's tolerances can be trusted for every reward/fidelity claim downstream. (The gate already refuses `<2`; honor it for every number.)
 - **Files & verified anchors.** `bench/run.mjs` (`BENCH_SAMPLES=k` aggregation, median quality + `compiledRate`), `bench/gate.mjs` (3-valued `evaluate()`), `bench/baseline.json`. CLAUDE.md documents the contract.
 - **Concrete change.** No code change if sampling already aggregates correctly — instead, establish and document the standard: re-seed `bench/baseline.json` from a `BENCH_SAMPLES=k` run (`bench/gate.mjs --update-baseline`), and make "every fidelity number cited downstream comes from a `≥2`-sample run" the written rule in this doc + the bench README. If any gated task has `<2` samples available, that is INCONCLUSIVE (exit 2), not PASS.
@@ -340,3 +346,41 @@ Ship PR-1 through PR-5 in any order (Phase 0 is internally independent). PR-6 an
 5. **Local-first / zero-backend / provider-portable are walls, not preferences.** Any hosted lane (4.3), sync, or external neural-mesh pipeline trades against the `.vibemesh` moat; those are business/ops decisions and must not be smuggled in as quality levers.
 
 *Source cited as load-bearing:* CADSmith rendered-image ablation + dual-channel convergence — <https://arxiv.org/abs/2505.04207> (removing the rendered-image channel blew hard-tier mean Chamfer 1.42 → 49.68; our kernel-numbers-only loop today IS that ablated baseline). The bet-tier decomposition references (SuperDec, Light-SQ, PrimitiveAnything) are bet-horizon, not load-bearing for NOW/NEXT.
+
+---
+
+## Corrections (2026-06-23 audit)
+
+A senior-engineering audit board verified all 50 checkable claims in this plan against the tree **after** PR #125 (deploy + Supabase-auth) merged to `main`. Verdict: **substantively accurate, anchor-rotted.** Status assertions all hold; the corrections below fix the 2 wrong claims, the 15 drifted anchors, and the drift the plan never accounted for.
+
+### Two claims were WRONG (both *understated* — work already done)
+- **Task 1.1 (multi-sample bench): DONE, not open.** `BENCH_SAMPLES=3` default (`bench/run.mjs`), gate enforces `minSamples=2`, baseline re-seeded k=3 (`ebdcdc2`/`a20f2d6`). Corrected inline above.
+- **Task 0.4 blocker (2) (no figurative seam): FALSE.** The seam exists — `server/skills.mjs` figurative exemplars (CROWN/CRENELLATION/PRONG-ORB) flow through `contextText`, gated by `bench/skills.selftest.mjs`. 0.4's figurative half is a registry add; only blockers (1) + (3) survive. Corrected inline above.
+
+### Re-anchored line numbers (substance unchanged; anchors drifted post-#125)
+| Claim | Plan said | Actual location |
+|---|---|---|
+| image CAP=10 | `providers.mjs:927` | `providers.mjs:937` (`agentPromptFromMessages`) |
+| refine metric injection | `ChatPanel.tsx:142` `geoBlock` (vol/fill/tris) | `:144-146` bbox-dims only; fill via `fillBlock` `:149-150`; vol/tris never prompt-injected (feed `geometryConverged` STOP only) |
+| vision source fragment | `providers.mjs:519` | call `:525`, def `:553-555` |
+| split auto-fix budget | `MAX_AUTO_FIX` gen:50; Kimi temp providers:665 | `MAX_CONTRACT_REASK`/`MAX_GEOM_FIX` gen:54/55; Kimi desc providers:671 |
+| render cache | `client.ts:57` | `cache` field `:56`, `cacheKey` `:72`, hit `:75-79`, set `:136` |
+| lineage DAG | `shareFile.ts:39/93` | iface `:30-32`, build `:62-66`, parse `:101-103` |
+| best-of-N config | `BEST_OF_N_COUNT` :37, tie :62, fan-out :80-89 | `:42`, `:85-89`, fan-out `:88-98` |
+| refine STOP predicate | `proxyWantsRefine` gen:425 | gen:441 |
+| `MAX_AUTO_REFINE` | gen:51 | gen:59 |
+| judge opus default | `judge.mjs:71/116` | `judgeVision` `:116` (`:71` is the separate `judgeModel` fn) |
+| captureViews | `:108` / punch-list `:130` | `:110` / `:131-133` |
+| pre-gen contour seams | `:496/:519/:547` | `contextText` `:502`, vision call `:525`, fragment export `:553` |
+| agentic spike anchors | `streamAnthropicProtocol:737`, `resolveEngineDescriptor:658` | `:743`, `:664` (`:737` now `UserFacingError`) |
+| best-of-N effort tier | xhigh store.ts:561, "most expensive tier" | xhigh `:601`; xhigh is **4th of 5** (`max` is top) — drop "most expensive" → "default high, 2nd-from-top" |
+| context/spend chip | ContextChip `ChatPanel.tsx:709` | ContextChip `:733`; SpendChip `:352` (meter shipped) |
+| local temperature | local temp :1052, adaptive :752 | temp:0.2 `:1062`, adaptive `:758`, temp gated out `:762` |
+
+### Detail slips
+- `ui.ts` `autoRepair` toggle (`:100`) is a **render-failure auto-retry kill switch** (JSDoc `:33-35`) — NOT a VLM-judge opt-in. The judge opt-in is unbuilt; strike the judge framing.
+
+### Drift the plan never accounted for
+- **The entire PR #125 deploy / Supabase-auth workstream** (Docker stack, per-user isolation, JWT, cross-session reconcile, cloud PROJECTS API) is real, merged, and absent from this roadmap. **Back-fill it.**
+- **The generate route has no rate limiting** (only Anthropic's own `RateLimitError`) — a real abuse gap the new hosted storage makes urgent. *(Being addressed in a separate PR.)*
+- The bench silhouette oracle (`bench/silhouette.mjs maskIoU`, `bench/render.mjs renderMasks`) is fully built but **stranded** — zero `src/` consumers — until the Task 1.2 spike decides it's trustworthy on real photos. (As planned, but flagged: it's sunk cost sitting idle.)
