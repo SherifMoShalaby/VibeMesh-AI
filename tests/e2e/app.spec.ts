@@ -78,11 +78,12 @@ test.describe('geometry pipeline (built-in example, no AI)', () => {
     await expect(dims).not.toHaveText(before, { timeout: 15_000 })
   })
 
-  test('the export menu opens', async ({ page }) => {
+  test('the export menu opens and includes OrcaSlicer row', async ({ page }) => {
     await page.locator('.example-card', { hasText: 'Storage box' }).click()
     await expect(page.locator('canvas')).toBeVisible({ timeout: 30_000 })
     await page.locator('#topbar-export').click()
     await expect(page.locator('[role="menu"], .menu').first()).toBeVisible()
+    await expect(page.locator('.mi-title', { hasText: 'OrcaSlicer / Bambu project' })).toBeVisible()
   })
 
   test('BambuStudio-style view hotkeys (0–6) set standard views without error', async ({ page }) => {
