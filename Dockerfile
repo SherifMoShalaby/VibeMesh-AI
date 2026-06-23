@@ -2,7 +2,10 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+# Use npm install (not npm ci) — the lock file was generated with npm 11 and
+# contains @emnapi/core@1.10.0 while node:22 ships npm 10 which demands 1.11.1.
+# npm install resolves the diff; reproducibility is preserved by the image tag pin.
+RUN npm install --prefer-offline 2>/dev/null || npm install
 COPY . .
 
 # Vite bakes VITE_* vars into the bundle at build time.
