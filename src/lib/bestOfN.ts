@@ -36,6 +36,13 @@ export interface CandidateSignals {
    *  thin shell / sliver that reads as the right SIZE but isn't a solid body. Used ONLY as a
    *  below-everything tiebreak, so it can never reorder candidates that differ on a harder signal. */
   fillRatio?: number
+  /** REFERENCE-grounded silhouette-IoU (0..1) of this candidate's rendered outline against the
+   *  attached reference PHOTO's segmented mask — max over 4 poses × 8 photo orientations (Phase 2).
+   *  Undefined when there's no reference photo, segmentation failed/was low-confidence, or the
+   *  candidate didn't compile. Applied as a SOFT tiebreak below dimMismatches and above the hollow
+   *  tiebreak, so a registration miss can never cross a harder signal — only break a true tie toward
+   *  the candidate whose outline matches the user's photo. */
+  shapeMatch?: number
 }
 
 /** Default fan-out. Kept small: each candidate is a paid generation + a compile through one worker. */
@@ -75,8 +82,14 @@ export function scoreCandidate(s: CandidateSignals): number {
   score += s.degenerate ? -500_000 : 0 // a compiling-but-degenerate part is far worse than a clean one
   score -= s.structuralIssues * 1_000 // then: fewer assembly/structural faults
   score -= s.dimMismatches * 100 // then: closer to the stated dimensions
-  score -= hollowPenalty(s.fillRatio) // finally, below EVERYTHING above (<100): break a true tie toward
-  //                                      the more plausibly-solid candidate, never reorder a harder signal
+  // SOFT tiebreak tier — below dimMismatches and bounded so the soft signals can NEVER cross a harder
+  // tier, even when BOTH fire. shapeMatch (reference-photo outline match) is weighted ABOVE the
+  // self-relative hollow heuristic (a measured match against the user's photo beats a solidity guess),
+  // but the COMBINED soft penalty is CLAMPED < 100 (one dimMismatch) so two tiebreaks together can't
+  // reorder a harder signal. With no reference, shapeMatch is undefined → shapePenalty 0 → the clamp is
+  // inert (hollow ≤ TIEBREAK_MAX=50) → the score is byte-identical to the reference-free path.
+  const shapePenalty = s.shapeMatch !== undefined ? (1 - s.shapeMatch) * 75 : 0
+  score -= Math.min(shapePenalty + hollowPenalty(s.fillRatio), 95)
   return score
 }
 

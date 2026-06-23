@@ -8,6 +8,7 @@ import { fetchHealth, type HealthInfo } from '../lib/api'
 import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects, setOnExternalChange } from '../lib/storage'
 import { mergeExternalProjects } from '../lib/storeDecisions'
 import { parseShareFile, shareFileToProject } from '../lib/shareFile'
+import { clearRefMask } from '../lib/refSegment'
 import { loadSkillStats, type SkillStats } from '../lib/skillStats'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 import { createExportActions } from './exportActions'
@@ -781,6 +782,7 @@ export const useStore = create<VibeState>((set, get) => {
       if (!project) return
       const prev = get().activeId
       if (prev && prev !== id) snapshotSession(prev) // cache the project we're leaving for instant return
+      clearRefMask(id) // drop any ephemeral reference-photo mask so it can't rank a swapped photo
       clearParamTimer()
       // transient per-model interaction modes live in the UI store — clear them so a
       // selection / measuring session doesn't bleed into the next project
