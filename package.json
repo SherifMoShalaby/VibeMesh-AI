@@ -55,6 +55,7 @@
     "bench:trace": "tsx bench/trace.selftest.mjs",
     "bench:silhouette": "node bench/silhouette.selftest.mjs",
     "bench:silhouette-live": "tsx bench/silhouette-live.selftest.mjs",
+    "spike:registration": "tsx bench/registration-spike.mjs",
     "bench:clarify": "node bench/clarify.selftest.mjs",
     "bench:coilspring": "node bench/coilspring-verdict.mjs",
     "bench:gatelogic": "node bench/gate.selftest.mjs",

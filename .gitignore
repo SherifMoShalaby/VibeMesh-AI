@@ -37,3 +37,4 @@ bench/_ref.png
 # Playwright e2e artifacts
 test-results/
 playwright-report/
+bench/spike-data/
