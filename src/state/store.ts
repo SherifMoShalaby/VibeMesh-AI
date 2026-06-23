@@ -261,6 +261,8 @@ export interface VibeState {
   kimiModel: string
   setKimiModel: (id: string) => void
   refreshHealth: (providers?: HealthInfo['providers']) => Promise<void>
+  /** Back up all IndexedDB projects to the server in one shot (migrate + manual backup). */
+  exportAllToServer: () => Promise<void>
 }
 
 // legacy vibescad.* values are copied to these keys on startup (src/lib/storage.ts)
@@ -1103,6 +1105,16 @@ export const useStore = create<VibeState>((set, get) => {
     setKimiModel: (id) => {
       set({ kimiModel: id })
       localStorage.setItem(KIMI_MODEL_KEY, id)
+    },
+
+    exportAllToServer: async () => {
+      try {
+        const { exportAllProjectsToServer } = await import('../lib/storage')
+        const { ok } = await exportAllProjectsToServer()
+        useUi.getState().pushToast(`${ok} project${ok !== 1 ? 's' : ''} backed up to server`, 'info')
+      } catch (e) {
+        useUi.getState().pushToast(`Backup failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      }
     },
 
   }

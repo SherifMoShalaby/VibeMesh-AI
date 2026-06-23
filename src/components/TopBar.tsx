@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
+import { useAuth } from '../state/authStore'
+import { supabase } from '../lib/supabase'
 import { applyValuesToCode } from '../lib/params'
 import { downloadBlob } from '../lib/stl'
 import { useHardwareCatalog, detectBom, formatBomText } from '../lib/bom'
@@ -39,6 +41,9 @@ export default function TopBar() {
   const setEnginesOpen = useUi((s) => s.setEnginesOpen)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
   const mobileTab = useUi((s) => s.mobileTab)
+
+  const exportAllToServer = useStore((s) => s.exportAllToServer)
+  const { user, signOut } = useAuth()
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -173,6 +178,26 @@ export default function TopBar() {
           </button>
         )}
         <ExportMenu fileBase={fileBase} />
+        {supabase && user && (
+          <>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+              title="Back up all projects to the server"
+              onClick={() => void exportAllToServer()}
+            >
+              Back up
+            </button>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+              title={`Signed in as ${user.email}`}
+              onClick={() => void signOut()}
+            >
+              Sign out
+            </button>
+          </>
+        )}
         {/* persistent Help affordance — the shortcuts overlay was '?'-key-only, unreachable on touch */}
         <button className="icon-btn-sm" aria-label="Keyboard shortcuts & help" title="Shortcuts & help (?)" onClick={() => setHelpOpen(true)}>
           <DHelp />

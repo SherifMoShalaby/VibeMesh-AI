@@ -1,4 +1,11 @@
 import type { ChatImage, ChatMessage, DesignIntent } from '../types'
+import { supabase } from './supabase'
+
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!supabase) return {}
+  const { data: { session } } = await supabase.auth.getSession()
+  return session ? { Authorization: `Bearer ${session.access_token}` } : {}
+}
 
 export interface ProviderConnect {
   envKey: string
@@ -415,7 +422,7 @@ export async function streamGenerate(
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
     body: JSON.stringify({ engine, model, effort, messages, context }),
     signal,
   })

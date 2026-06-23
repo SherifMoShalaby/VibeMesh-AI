@@ -1,4 +1,5 @@
 import type { ChatImage, ChatMessage, Project } from '../types'
+import { supabase } from './supabase'
 
 /**
  * Persistence facade. Projects + versions live in IndexedDB (async, ~GBs) behind a
@@ -319,6 +320,8 @@ export function saveProjects(projects: Project[]): void {
   if (readOnly) return // newer-build data — keep the session usable but never persist over it
   if (db) void flushToDb()
   else writeLocal(projects)
+  // fire-and-forget sync — non-blocking; IDB is the source of truth
+  projects.forEach(syncProjectToServer)
 }
 
 /**
@@ -364,4 +367,49 @@ export function saveLastChatId(id: string | null): void {
 
 export function newId(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+}
+
+/** Fire-and-forget: sync one project to the server after every local save. */
+export function syncProjectToServer(project: Project): void {
+  if (!supabase) return
+  void supabase.auth.getSession().then(({ data: { session } }) => {
+    if (!session) return
+    fetch(`/api/projects/${project.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(project),
+    }).catch(() => { /* non-blocking — IDB is source of truth */ })
+  })
+}
+
+/** One-shot: POST all current IndexedDB projects to the server (migration / backup). */
+export async function exportAllProjectsToServer(): Promise<{ ok: number }> {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Not signed in')
+  const projects = loadProjects()
+  const res = await fetch('/api/projects', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(projects),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return { ok: projects.length }
+}
+
+/** Merge server and local project lists: server wins for projects it has that local doesn't;
+ *  local wins when its updatedAt is more recent (offline edits take priority). */
+export function reconcileProjects(local: Project[], remote: Project[]): Project[] {
+  const byId = new Map(local.map((p) => [p.id, p]))
+  for (const r of remote) {
+    const l = byId.get(r.id)
+    if (!l || r.updatedAt > l.updatedAt) byId.set(r.id, r)
+  }
+  return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt)
 }
