@@ -699,6 +699,7 @@ function aggregateRows(task, rows, k) {
     buildability: buildScores.length ? { ...rep.buildability, score: median(buildScores) } : rep.buildability,
     overSplit: rows.some((r) => r.overSplit) || undefined,
     judge: rep.judge,
+    visionJudge: rep.visionJudge,
     notes: rep.notes,
     codeLines: rep.codeLines,
   }

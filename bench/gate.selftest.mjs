@@ -175,6 +175,41 @@ test('config error + regression together → exit 2 (config precedence)', () => 
   assert.ok(v.configErrors.length >= 1)
 })
 
+/* ── visionJudge / visionFidelity (Phase 3) ── */
+test('visionJudge with valid overallFidelity → visionFidelity shown in table (vis cell)', () => {
+  // evaluate must surface rep.visionJudge.overallFidelity in the vis table column (r[7])
+  const cur = [block('kimi', [{ task: 'T1', compiled: true, samples: 3, compiledRate: 1, dimScore: 1, visionJudge: { overallFidelity: 0.82 } }])]
+  const v = evaluate([block('kimi', [baseRow('T1')])], cur)
+  assert.equal(v.exit, 0, 'a valid visionJudge row should not fail the gate')
+  const row = v.tableRows.find((r) => r[0].includes('T1'))
+  assert.ok(row, 'tableRow for T1 must exist')
+  // r[7] is the vis cell — baseline has no visionFidelity → '·→0.82'
+  assert.match(String(row[7]), /0\.82/, `vis cell should include 0.82, got: ${row[7]}`)
+})
+test('visionJudge with error flag → visionFidelity null (error-carrying response excluded)', () => {
+  const cur = [block('kimi', [{ task: 'T1', compiled: true, samples: 3, compiledRate: 1, dimScore: 1, visionJudge: { error: 'quota exceeded', overallFidelity: 0.9 } }])]
+  const v = evaluate([block('kimi', [baseRow('T1')])], cur)
+  assert.equal(v.exit, 0)
+  const row = v.tableRows.find((r) => r[0].includes('T1'))
+  // error-carrying visionJudge → visionFidelity null → both sides absent → '—'
+  assert.equal(row[7], '—', `error-carrying visionJudge must produce '—' cell, got: ${row[7]}`)
+})
+test('absent visionJudge → visionFidelity null, vis cell shows —', () => {
+  const cur = [block('kimi', [curOk('T1')])]
+  const v = evaluate([block('kimi', [baseRow('T1')])], cur)
+  assert.equal(v.exit, 0)
+  const row = v.tableRows.find((r) => r[0].includes('T1'))
+  assert.equal(row[7], '—', `absent visionJudge must produce '—' cell, got: ${row[7]}`)
+})
+test('visionFidelity drop never fires a regression (tol: Infinity)', () => {
+  // Even a visionFidelity crash from 1.0 to 0.0 must NOT gate (advisory-only, tol: Infinity)
+  const base = [block('kimi', [{ ...baseRow('T1'), visionFidelity: 1.0 }])]
+  const cur = [block('kimi', [{ task: 'T1', compiled: true, samples: 3, compiledRate: 1, dimScore: 1, visionJudge: { overallFidelity: 0.0 } }])]
+  const v = evaluate(base, cur)
+  assert.equal(v.exit, 0, 'a visionFidelity drop must NEVER fail the gate (tol: Infinity)')
+  assert.equal(v.regressions.length, 0, 'no regressions must be fired for visionFidelity drop')
+})
+
 /* ── run ── */
 let failed = 0
 for (const { name, fn } of cases) {
@@ -190,5 +225,5 @@ if (failed) {
   console.error(`\n[gate.selftest] FAIL — ${failed}/${cases.length} case(s) failed.`)
   process.exit(1)
 }
-console.log(`[gate.selftest] PASS — ${passed} gate-logic case(s) (sampling, transport split, engine parity, advisory).`)
+console.log(`[gate.selftest] PASS — ${passed} gate-logic case(s) (sampling, transport split, engine parity, advisory, visionJudge).`)
 process.exit(0)
