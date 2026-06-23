@@ -384,3 +384,23 @@ A senior-engineering audit board verified all 50 checkable claims in this plan a
 - **The entire PR #125 deploy / Supabase-auth workstream** (Docker stack, per-user isolation, JWT, cross-session reconcile, cloud PROJECTS API) is real, merged, and absent from this roadmap. **Back-fill it.**
 - **The generate route has no rate limiting** (only Anthropic's own `RateLimitError`) — a real abuse gap the new hosted storage makes urgent. *(Being addressed in a separate PR.)*
 - The bench silhouette oracle (`bench/silhouette.mjs maskIoU`, `bench/render.mjs renderMasks`) is fully built but **stranded** — zero `src/` consumers — until the Task 1.2 spike decides it's trustworthy on real photos. (As planned, but flagged: it's sunk cost sitting idle.)
+
+---
+
+## Shipped outside this plan (drift back-fill, 2026-06-23)
+
+Two workstreams merged to `main` that this plan never anticipated. Future phases must account for them.
+
+### PR #125 — Deploy + Supabase-auth workstream
+
+Merged to `main` ahead of this plan's Phase 4 window. Scope: a self-hosted Supabase stack (Docker, Kong API gateway — `supabase/kong.yml`), JWT auth middleware (`server/authMiddleware.mjs` `requireAuth`) gating a server-side projects API (`server/db.mjs` — `dbGetProjects`/`dbUpsertProject`/`dbDeleteProject`, only mounted when Supabase is configured), per-user isolation via Postgres Row-Level Security (`supabase/schema.sql`), and a client sync layer (`syncProjectToServer` in `src/lib/storage.ts`) that fire-and-forget mirrors each save to the cloud **on top of** the existing IndexedDB write. This is real, fully merged, and **absent from every phase above**.
+
+Impact on the roadmap:
+
+- **Task 4.3 (hosted lane)** is partially pre-empted. A zero-key hosted generation lane remains a separate business decision (rate-capping, billing), but cloud project sync and per-user isolation are now infrastructure facts, not aspirational work. The "Defer to a deliberate business decision" disposition in 4.3 should be read against a baseline that basic auth + cloud storage already exist, not a greenfield. Any hosted-generation decision can now focus on the generation-cost metering layer only.
+- **Local-first still holds, but is no longer the *only* path.** IndexedDB remains the primary durable store for every session (`saveProjects` always writes it); for authenticated sessions a fire-and-forget `syncProjectToServer` *additively* mirrors saves to the Supabase projects API. Any new feature touching project persistence or share-file import must now be validated against both the local-only and the cloud-synced path.
+- **The BroadcastChannel cross-tab sync** (backlog batch, `vibemesh-storage` channel, `reconcileRecord`) was designed assuming IndexedDB as the single durable store. With authenticated sessions writing through the cloud API, a tab that reconciles from IndexedDB only may miss server-side changes. This is a latent gap; it is not blocked but should be tracked before Phase 4 ships a collaborative/multi-device feature.
+
+### PR #128 — Generate-route rate limit (CLOSED)
+
+The rate-limiting gap the audit flagged ("the generate route has no rate limiting — a real abuse gap the new hosted storage makes urgent") is **now closed**. PR #128 landed `server/rateLimit.mjs`: an in-memory **fixed-window** limiter keyed by **client IP** (`TRUST_PROXY` opt-in for the real client IP behind a proxy; the key fn can be switched to the auth bearer if NAT collisions matter), applied as middleware **before the body parser** on `POST /api/generate` (default 30 req / 5 min, env-configurable; per-process — swap for a shared store like Redis if the hosted lane scales past one instance). The "(Being addressed in a separate PR.)" note in the Corrections section above is superseded by this entry — the gap is not open.
