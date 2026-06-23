@@ -7,6 +7,7 @@ import { CATALOG, saveConnection, removeConnection, validateFetchUrl, Connection
 import { SCREWS, BEARINGS } from './hardware.mjs'
 import { requireAuth } from './authMiddleware.mjs'
 import { supabase as dbClient, dbGetProjects, dbUpsertProject, dbDeleteProject } from './db.mjs'
+import { rateLimit } from './rateLimit.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
@@ -15,9 +16,23 @@ const PORT = Number(process.env.PORT || 5175)
 const HOST = process.env.HOST || '127.0.0.1'
 
 const app = express()
+// Behind a reverse proxy (hosted lane / Docker), set TRUST_PROXY so req.ip is the real client
+// IP (the rate-limit key) and not the proxy's. Off by default for a local `npm start`.
+if (process.env.TRUST_PROXY && process.env.TRUST_PROXY !== '0') app.set('trust proxy', Number(process.env.TRUST_PROXY) || true)
+
 // Body parsing is per-route so the large (base64 image) limit applies ONLY to /api/generate.
 const jsonSmall = express.json({ limit: '64kb' })
 const jsonLarge = express.json({ limit: '30mb' })
+
+// Abuse guard on the only route that spends upstream tokens. Generation is slow (a single call
+// can stream for minutes), so a generous window blocks scripted floods without ever catching a
+// human. Defaults: 30 generations / 5 min / client; override via env. Keyed by IP (set
+// TRUST_PROXY when fronted by a proxy); switch the key fn to the auth bearer if NAT collisions
+// matter. Placed BEFORE jsonLarge so a flood is rejected before a 30mb body is parsed.
+const generateLimiter = rateLimit({
+  windowMs: Number(process.env.GEN_RATELIMIT_WINDOW_MS) || 5 * 60_000,
+  max: Number(process.env.GEN_RATELIMIT_MAX) || 30,
+})
 
 app.get('/api/health', async (_req, res) => {
   const providers = await providerStatus()
@@ -107,7 +122,7 @@ app.post('/api/test', jsonSmall, async (req, res) => {
  * body: { engine: string, messages: [{ role, content }] }
  * Streams SSE: {type:'delta', text}, {type:'done'}, {type:'error', message}
  */
-app.post('/api/generate', jsonLarge, async (req, res) => {
+app.post('/api/generate', generateLimiter, jsonLarge, async (req, res) => {
   const { engine, model, effort, messages, context } = req.body ?? {}
   if (!Array.isArray(messages) || messages.length === 0 || typeof engine !== 'string') {
     res.status(400).json({ error: 'bad_request', message: 'engine and messages are required' })
