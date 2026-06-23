@@ -116,6 +116,74 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
   )
 }
 
+function ParamHistory() {
+  const history      = useStore((s) => s.paramHistory)
+  const labels       = useStore((s) => s.paramHistoryLabels)
+  const hasFuture    = useStore((s) => s.paramFuture.length > 0)
+  const undoParam    = useStore((s) => s.undoParam)
+  const redoParam    = useStore((s) => s.redoParam)
+  const jumpTo       = useStore((s) => s.jumpToParamHistory)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (document.activeElement as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault()
+        undoParam()
+      }
+      if ((e.metaKey || e.ctrlKey) && ((e.shiftKey && e.key === 'z') || e.key === 'y')) {
+        e.preventDefault()
+        redoParam()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [undoParam, redoParam])
+
+  if (!history.length && !hasFuture) return null
+
+  return (
+    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      style={{ padding: '4px 0' }}>
+      <summary className="param-group-head" style={{ cursor: 'pointer', userSelect: 'none', listStyle: 'none', display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px' }}>
+        <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', opacity: 0.7 }}>History ({history.length})</span>
+        <button
+          className="btn btn-ghost"
+          style={{ padding: '0 6px', fontSize: '0.8rem', opacity: history.length ? 1 : 0.4 }}
+          disabled={!history.length}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); undoParam() }}
+          title="Undo (Cmd+Z)"
+        >↩</button>
+        <button
+          className="btn btn-ghost"
+          style={{ padding: '0 6px', fontSize: '0.8rem', opacity: hasFuture ? 1 : 0.4 }}
+          disabled={!hasFuture}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); redoParam() }}
+          title="Redo (Cmd+Shift+Z)"
+        >↪</button>
+      </summary>
+      <ol reversed style={{ listStyle: 'none', margin: 0, padding: '4px 0' }}>
+        {[...labels].reverse().map((label, i) => {
+          const historyIndex = history.length - 1 - i
+          return (
+            <li key={i}>
+              <button
+                className="btn btn-ghost"
+                style={{ width: '100%', textAlign: 'left', padding: '3px 12px', fontSize: '0.78rem', fontFamily: 'monospace' }}
+                onClick={() => jumpTo(historyIndex)}
+              >
+                {label}
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+    </details>
+  )
+}
+
 function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle: (group: string) => void }) {
   const params = useStore((s) => s.params)
   const paramValues = useStore((s) => s.paramValues)
@@ -180,6 +248,7 @@ function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle
             </section>
           )
         })}
+        <ParamHistory />
       </div>
       <div className="panel-foot">
         <button className="btn btn-ghost wide" onClick={resetParams} title="Double-click any single slider to reset just that one">

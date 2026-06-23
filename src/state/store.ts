@@ -66,6 +66,12 @@ export interface Session {
    *  Runtime-only (not persisted) — lets the user SEE spend before opting into any quota multiplier. */
   genCalls: number
   genTokens: number
+  /** Customizer slider undo/redo stacks. Each entry is the full paramValues snapshot BEFORE
+   *  the change that produced the corresponding label. Cleared on every new AI generation. */
+  paramHistory:       ParamValues[]
+  paramFuture:        ParamValues[]
+  paramHistoryLabels: string[]
+  paramFutureLabels:  string[]
 }
 
 /** Session fields that MIRROR a top-level store field (everything except the session-only
@@ -78,6 +84,7 @@ const SESSION_PROJECTED = [
   'modelDims', 'stl', 'stlVersion', 'fitVersion', 'meshTransform', 'modelRemoved', 'vpPast', 'vpFuture',
   'viewMode', 'pieces', 'slicing', 'slicingToken', 'slicerFailed',
   'genCalls', 'genTokens',
+  'paramHistory', 'paramFuture', 'paramHistoryLabels', 'paramFutureLabels',
 ] as const satisfies ReadonlyArray<keyof Session>
 const SESSION_PROJECTED_SET: ReadonlySet<string> = new Set(SESSION_PROJECTED)
 
@@ -89,6 +96,7 @@ function blankSession(): Session {
     modelDims: null, stl: null, stlVersion: 0, fitVersion: 0, meshTransform: null, modelRemoved: false, vpPast: [], vpFuture: [],
     viewMode: 'single', pieces: null, slicing: false, slicingToken: 0, slicerFailed: [],
     genCalls: 0, genTokens: 0,
+    paramHistory: [], paramFuture: [], paramHistoryLabels: [], paramFutureLabels: [],
   }
 }
 
@@ -141,6 +149,14 @@ export interface VibeState {
   vpFuture: VpSnapshot[]
   vpUndo: () => void
   vpRedo: () => void
+  /** Customizer slider undo/redo stacks (cleared on new AI generation) */
+  paramHistory:           ParamValues[]
+  paramFuture:            ParamValues[]
+  paramHistoryLabels:     string[]
+  paramFutureLabels:      string[]
+  undoParam:              () => void
+  redoParam:              () => void
+  jumpToParamHistory:     (index: number) => void
   stl: ArrayBuffer | null
   /** monotonically increasing id so the viewport knows when geometry changed */
   stlVersion: number
@@ -473,6 +489,13 @@ export const useStore = create<VibeState>((set, get) => {
     }
     // route the editor working copy into the project's session (mirrors to the top level if active)
     writeSession(pid, { code, params, paramValues })
+    // clear the slider undo/redo history — a new AI generation starts a fresh history
+    writeSession(pid, {
+      paramHistory:       [],
+      paramFuture:        [],
+      paramHistoryLabels: [],
+      paramFutureLabels:  [],
+    })
     return compile(code, buildDefines(params, paramValues), pid)
   }
 
@@ -610,6 +633,10 @@ export const useStore = create<VibeState>((set, get) => {
     modelRemoved: false,
     vpPast: [],
     vpFuture: [],
+    paramHistory: [],
+    paramFuture: [],
+    paramHistoryLabels: [],
+    paramFutureLabels: [],
 
     init: async () => {
       await hydrateStorage() // open IndexedDB + migrate + fill the sync cache before first read
@@ -824,15 +851,22 @@ export const useStore = create<VibeState>((set, get) => {
     ...createGenerationActions(set, get, { activeChatFor, setChatFor, setChatAndFutureFor, adoptCodeFor, persistFor, qualityArgsFor, writeSession, genSession }),
 
     setParamValue: (name, value) => {
-      const paramValues = { ...get().paramValues, [name]: value }
-      set({ paramValues })
+      const prev = get().paramValues  // capture BEFORE update
+      const paramValues = { ...prev, [name]: value }
+      // clear redo immediately — any new edit invalidates the future
+      set({ paramValues, paramFuture: [], paramFutureLabels: [] })
       clearParamTimer()
       paramTimer = setTimeout(() => {
         paramTimer = null
-        const { code, params, paramValues: values } = get()
+        const { code, params, paramValues: values, paramHistory, paramHistoryLabels } = get()
+        const label = `${name} → ${value}`
+        set({
+          paramHistory: [...paramHistory, prev].slice(-50),
+          paramHistoryLabels: [...paramHistoryLabels, label].slice(-50),
+        })
         void compile(code, buildDefines(params, values))
         persist()
-      }, 350)
+      }, 800)
     },
 
     selectPart: async (value) => {
@@ -844,6 +878,56 @@ export const useStore = create<VibeState>((set, get) => {
       // re-frame on a part switch (compile only auto-fits empty→full; a switch is full→full).
       // This lives HERE, not in setParamValue, so slider drags never yank the camera.
       if (result.ok) set((s) => ({ fitVersion: s.fitVersion + 1 }))
+      persist()
+    },
+
+    undoParam: () => {
+      const { paramHistory, paramFuture, paramHistoryLabels, paramFutureLabels, paramValues, code, params } = get()
+      if (!paramHistory.length) return
+      clearParamTimer()
+      const restored = paramHistory[paramHistory.length - 1]
+      const label    = paramHistoryLabels[paramHistoryLabels.length - 1]
+      set({
+        paramValues:        restored,
+        paramHistory:       paramHistory.slice(0, -1),
+        paramHistoryLabels: paramHistoryLabels.slice(0, -1),
+        paramFuture:        [paramValues, ...paramFuture],
+        paramFutureLabels:  [label, ...paramFutureLabels],
+      })
+      void compile(code, buildDefines(params, restored))
+      persist()
+    },
+
+    redoParam: () => {
+      const { paramHistory, paramFuture, paramHistoryLabels, paramFutureLabels, paramValues, code, params } = get()
+      if (!paramFuture.length) return
+      clearParamTimer()
+      const restored = paramFuture[0]
+      const label    = paramFutureLabels[0]
+      set({
+        paramValues:        restored,
+        paramFuture:        paramFuture.slice(1),
+        paramFutureLabels:  paramFutureLabels.slice(1),
+        paramHistory:       [...paramHistory, paramValues],
+        paramHistoryLabels: [...paramHistoryLabels, label],
+      })
+      void compile(code, buildDefines(params, restored))
+      persist()
+    },
+
+    jumpToParamHistory: (index) => {
+      const { paramHistory, paramHistoryLabels, paramValues, code, params } = get()
+      if (index < 0 || index >= paramHistory.length) return
+      clearParamTimer()
+      const restored = paramHistory[index]
+      set({
+        paramValues:        restored,
+        paramHistory:       paramHistory.slice(0, index),
+        paramHistoryLabels: paramHistoryLabels.slice(0, index),
+        paramFuture:        [paramValues],
+        paramFutureLabels:  [''],
+      })
+      void compile(code, buildDefines(params, restored))
       persist()
     },
 
