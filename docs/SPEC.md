@@ -43,6 +43,13 @@ One page. The contract for the four surfaces; anything not specified here is und
   Single-piece designs export one object with the viewport placement baked and NO re-arrange
   (so the `.3mf` agrees with the `.stl` path); below Fine they offer a Fine re-render first.
   Multi-part `.3mf` uses the same per-piece rules (at least Fine, Draft retry, loud partial failure) as STL × PARTS.
+- `OrcaSlicer project (.3mf)` builds a slice-ready 5-file `.orca.3mf` that opens in
+  OrcaSlicer 2.4 and BambuStudio 02.07+ with printer, filament, and process already selected
+  (Slice button live). Reads `Metadata/project_settings.config`; geometry-only fallback opens
+  in PrusaSlicer. Assumes 0.4mm nozzle, PLA at 220°C / 65°C bed. Disabled for H2D (dual-nozzle,
+  no single-nozzle preset) and custom bed (no preset mapping). Multi-part exports produce one
+  `.orca.3mf` per bed-sized plate (same packer and per-piece rules as the `.3mf` PARTS export);
+  best-effort canvas thumbnail included as `Metadata/plate_1.png`.
 - Param-value persistence: a slider value survives APPLY & RENDER only if the code's written default for that name is unchanged; if the new code changes the default, the code wins.
 
 ## 5. Surface quality

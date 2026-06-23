@@ -5,7 +5,7 @@ import { applyValuesToCode } from '../lib/params'
 import { downloadBlob } from '../lib/stl'
 import { useHardwareCatalog, detectBom, formatBomText } from '../lib/bom'
 import { useClickOutside } from '../lib/useClickOutside'
-import { QUALITY_PRESETS } from '../types'
+import { QUALITY_PRESETS, CUSTOM_BED_ID, type OrcaMaterial } from '../types'
 import { ConfirmDialog } from './Dialogs'
 import {
   DLogo,
@@ -205,6 +205,10 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
   const exportPlates3mf = useStore((s) => s.exportPlates3mf)
   const exportStlSmart = useStore((s) => s.exportStlSmart)
   const export3mf = useStore((s) => s.export3mf)
+  const exportOrcaProject = useStore((s) => s.exportOrcaProject)
+  const orcaMaterial = useStore((s) => s.orcaMaterial)
+  const setOrcaMaterial = useStore((s) => s.setOrcaMaterial)
+  const bedId = useStore((s) => s.bedId)
   const exportShareFile = useStore((s) => s.exportShareFile)
   const importShareFile = useStore((s) => s.importShareFile)
   const pushToast = useUi((s) => s.pushToast)
@@ -259,6 +263,38 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
             <span className="mi-text">
               <span className="mi-title">3MF <span className="ext">.3mf</span></span>
               <span className="mi-sub">Recommended — parts + colors + metadata{hasPlates ? ', all parts included' : ''}</span>
+            </span>
+            <span className="mi-check"><DArrowRight /></span>
+          </button>
+          <div className="menu-item menu-item--control" style={{ cursor: 'default', gap: 8 }}>
+            <span className="mi-icon" style={{ opacity: 0.5 }}>
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="8" cy="8" r="6" strokeWidth="2" stroke="currentColor" fill="none"/><circle cx="8" cy="8" r="2"/></svg>
+            </span>
+            <span className="mi-text" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Material</span>
+              <select
+                value={orcaMaterial}
+                onChange={(e) => setOrcaMaterial(e.target.value as OrcaMaterial)}
+                onClick={(e) => e.stopPropagation()}
+                style={{ fontSize: '0.75rem', flex: 1, background: 'var(--surface-2, #1e1e2e)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 4px', cursor: 'pointer' }}
+              >
+                <option value="PLA">PLA</option>
+                <option value="PETG">PETG</option>
+                <option value="ABS">ABS</option>
+                <option value="TPU">TPU</option>
+              </select>
+            </span>
+          </div>
+          <button
+            className="menu-item"
+            role="menuitem"
+            disabled={(!stl && !hasPlates) || bedId === 'bambu-h2d' || bedId === CUSTOM_BED_ID}
+            onClick={run(() => exportOrcaProject(fileBase))}
+          >
+            <span className="mi-icon"><DLayers /></span>
+            <span className="mi-text">
+              <span className="mi-title">OrcaSlicer / Bambu project <span className="ext">.3mf</span></span>
+              <span className="mi-sub">Slice-ready — printer, filament &amp; process pre-selected{bedId === 'bambu-h2d' || bedId === CUSTOM_BED_ID ? ' (unavailable for this bed)' : ''}</span>
             </span>
             <span className="mi-check"><DArrowRight /></span>
           </button>
