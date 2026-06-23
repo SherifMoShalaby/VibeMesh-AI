@@ -6,6 +6,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Vibemesh-AI (package name `vibemesh-ai`; the directory keeps the legacy "VibeSCAD" name) — AI text/image-to-CAD for 3D printing. Plain-language prompts become parametric OpenSCAD programs, rendered entirely in the browser via openscad-wasm, with live parameter sliders and slicer-ready `.3mf`/`.stl` export. Local-first: projects live in IndexedDB (small prefs in localStorage), AI keys in `.env`.
 
+## Orchestration Protocol (Always Active)
+
+**Every request in this project follows this protocol before any work begins. No opt-in keyword required.**
+
+### Classify the request
+
+| Class | Trigger signals | Action |
+|---|---|---|
+| **THINK** | plan, audit, board, research, strategy, design, review, ultracode, workflow, "what should we", "how should we", deep-dive, investigate, compare | Call the `Workflow` tool with `model: 'opus'` on all analysis agents. If Workflow is blocked, tell the user to add "ultracode" to their prompt. |
+| **BUILD** | implement, build, fix, add, refactor, change, create, write, wire, migrate | Spawn a Senior Lead Engineer agent first (model `opus`, effort `high`) to assign a model tier. Execute at the assigned tier. See `.claude/skills/orchestrate/SKILL.md` for the SLE prompt + schema. |
+| **QUICK** | single question, single-file lookup, status check, yes/no, explain-a-line | Proceed directly. No overhead. |
+
+### Model tiers (for BUILD, decided by SLE)
+
+| Tier | `model` | `effort` | When |
+|---|---|---|---|
+| light | `haiku` | `max` | Mechanical / isolated: rename, single function, test gen, docs |
+| standard | `sonnet` | `max` | Multi-file feature, new component, moderate refactor |
+| heavy | `opus` | `high` | Core pipeline (`store.ts`, `providers.mjs`, `params.ts`, `openscad/*`), security, cross-cutting architecture |
+
+Inside an ultracode workflow, still apply the SLE tier mapping per sub-agent — do not default everything to opus.
+
+Full reference (SLE prompt, workflow skeletons, cost-discipline rules): `.claude/skills/orchestrate/SKILL.md`
+
 ## Commands
 
 ```sh
@@ -67,3 +91,13 @@ The `.vibemesh` **share file** (`src/lib/shareFile.ts`, exported/imported from t
 - The Kimi stream keeps its payload protocol-portable: no `thinking`, no `cache_control` blocks.
 - `.env` is rewritten at runtime by the server when the UI saves a key — don't treat it as static config.
 - The Claude · login engine is for personal/local use only per Anthropic's Agent SDK terms; a distributed build must use API keys.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
