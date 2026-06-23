@@ -2,7 +2,7 @@ import type { StoreApi } from 'zustand'
 import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
-import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, type SkillIssue } from '../lib/api'
+import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, estGenTokens, type SkillIssue } from '../lib/api'
 import { clampStatedDimensions, dimDiscrepancies, geometryConverged } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
@@ -47,7 +47,15 @@ interface GenerationHelpers {
 // only before /api/health has loaded.
 const GEN_TIMEOUT_FALLBACK_MS = 60 * 60_000
 const GEN_TIMEOUT_BUFFER_MS = 60_000
-const MAX_AUTO_FIX = 2 // shared budget across the contract re-ask + render/structural auto-fix
+// Separate fix budgets (Task 0.3): a format/contract re-ask and a geometry repair used to share ONE
+// counter, so two contract violations starved the geometry-fix budget (and vice-versa). Splitting
+// them means a wrapper fault can never consume a slot the compile-error repair needs. Each is bounded
+// and only fires on a FAILURE, so the combined worst case (1 reask + 2 geom fixes) stays small.
+const MAX_CONTRACT_REASK = 1 // format/contract re-asks (a wrapper fault — usually one-shot fixable)
+const MAX_GEOM_FIX = 2 // render/structural/interference auto-fixes (was MAX_AUTO_FIX)
+/** Independent per-run fix budgets, threaded through runGeneration in place of the old shared count. */
+type FixBudget = { contract: number; geom: number }
+const NO_FIXES: FixBudget = { contract: 0, geom: 0 }
 const MAX_AUTO_REFINE = 2 // total auto-refine passes per project
 const autoRefinePass = new Map<string, number>()
 // Previous refine-eligible compile's geometry CONTENT (volume + triangle count) per project — the
@@ -80,7 +88,8 @@ export function createGenerationActions(
     const fulls = await Promise.all(
       Array.from({ length: n }, (_, i) =>
         streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info }, onDone: (info) => { stopReasons[i] = info.stopReason } })
-          .then((text) => { h.writeSession(pid, { streamText: `Generated ${++done}/${n} candidates…` }); return text })
+          // each candidate is a full paid call — meter it (a best-of-N turn shows N, not 1)
+          .then((text) => { h.writeSession(pid, (cur) => ({ streamText: `Generated ${++done}/${n} candidates…`, genCalls: cur.genCalls + 1, genTokens: cur.genTokens + estGenTokens(text) })); return text })
           // A user Stop aborts every candidate's shared signal — let AbortError propagate (rejecting
           // Promise.all) so runGeneration's catch handles it as a Stop, instead of swallowing it to
           // '' which reads as a contract violation and silently restarts the whole generation.
@@ -101,6 +110,7 @@ export function createGenerationActions(
       let compiled = false
       let degenerate = false
       let dimMismatches = 0
+      let fillRatio: number | undefined
       if (budget.canSpend()) {
         compileAttempted = true
         // compile with the SAME root-scope quality defines the real render uses (Draft here — fast
@@ -113,9 +123,13 @@ export function createGenerationActions(
           const dims = stlBBox(r.stl)
           degenerate = degenerateReason(dims, ctx.bed, !isMultiPart) !== null
           dimMismatches = ctx.stated.length ? dimDiscrepancies(dims, ctx.stated).length : 0
+          // self-relative solidity: mesh volume / bbox volume (the already-computed dims carry both).
+          // Feeds the below-everything hollow tiebreak in scoreCandidate; undefined when unmeasurable.
+          const bboxVol = dims ? dims.x * dims.y * dims.z : 0
+          if (dims && bboxVol > 0) fillRatio = dims.volume / bboxVol
         }
       }
-      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches })
+      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches, fillRatio })
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
     h.writeSession(pid, { streamText: '' })
@@ -125,7 +139,7 @@ export function createGenerationActions(
   }
 
   /** stream one assistant turn for the chat as it stands (shared by send + retry) */
-  async function runGeneration(nameSource: { text: string; action?: string }, attempt = 0, opts: { skillIds?: string[] } = {}) {
+  async function runGeneration(nameSource: { text: string; action?: string }, fixes: FixBudget = NO_FIXES, opts: { skillIds?: string[] } = {}) {
     // capture the project this run is FOR once, and never read get().activeId again — every write
     // below routes through *For(pid)/writeSession(pid), so a mid-run project switch can't land this
     // reply on a different chat. (While blockSwitchWhileGenerating stands, pid is always activeId.)
@@ -179,7 +193,7 @@ export function createGenerationActions(
       // A2 — verifier-guided best-of-N: only on the FIRST attempt of a hard request (kit or image),
       // only when the user opted in (off by default), never on local engines or auto-fix re-entries.
       // The winner feeds the SAME downstream below; OFF → the single-stream path is unchanged.
-      const useBestOfN = attempt === 0 && useUi.getState().bestOfN && !engine.startsWith('local:') && (isKit || latestImgs.length > 0)
+      const useBestOfN = fixes.contract === 0 && fixes.geom === 0 && useUi.getState().bestOfN && !engine.startsWith('local:') && (isKit || latestImgs.length > 0)
       let full: string
       let stopReason: string | undefined
       if (useBestOfN) {
@@ -204,6 +218,8 @@ export function createGenerationActions(
           onSkillReport: (info) => { skillReport = info.report; appliedSkillIds = info.skillIds; droppedSkillIds = info.dropped },
           onDone: (info) => { stopReason = info.stopReason },
         })
+        // meter the single paid call (best-of-N meters its own N candidates above)
+        h.writeSession(pid, (cur) => ({ genCalls: cur.genCalls + 1, genTokens: cur.genTokens + estGenTokens(full) }))
       }
       clearTimeout(genTimer)
       genTimer = undefined
@@ -239,14 +255,14 @@ export function createGenerationActions(
       // the auto-fix attempt budget so it can never stack, and is off for weak
       // local engines (which can't reliably honor the format anyway).
       const contractViolated = code === null || blockCount > 1
-      if (contractViolated && attempt < MAX_AUTO_FIX && engine && !engine.startsWith('local:')) {
+      if (contractViolated && fixes.contract < MAX_CONTRACT_REASK && engine && !engine.startsWith('local:')) {
         h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'assistant', text: prose || 'Returning the program again.' }])
         const nudge =
           code === null
             ? 'Your last reply contained no OpenSCAD code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program, per the response format.'
             : 'Your last reply contained more than one code block. Reply again with exactly ONE ```scad fenced block containing the COMPLETE program (merge everything into a single program).'
         h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text: nudge, action: 'Fix format' }])
-        await runGeneration({ text: nudge, action: 'Fix format' }, attempt + 1, opts)
+        await runGeneration({ text: nudge, action: 'Fix format' }, { ...fixes, contract: fixes.contract + 1 }, opts)
         return
       }
 
@@ -254,7 +270,7 @@ export function createGenerationActions(
       // surface a clear, recoverable message instead of silently showing prose with no
       // model. Both cloud engines have been seen to plan correctly but omit the block.
       if (code === null) {
-        const tries = engine && !engine.startsWith('local:') ? ` after ${MAX_AUTO_FIX + 1} attempts` : ''
+        const tries = engine && !engine.startsWith('local:') ? ` after ${MAX_CONTRACT_REASK + 1} attempts` : ''
         h.setChatFor(pid, [
           ...h.activeChatFor(pid),
           {
@@ -327,11 +343,11 @@ export function createGenerationActions(
         // shared attempt budget, off for weak local engines. Off-bed single parts get
         // a deterministic drop-to-bed instead of spending an AI turn.
         const eng = get().engine
-        const canRepair = attempt < MAX_AUTO_FIX && useUi.getState().autoRepair && !!eng && !eng.startsWith('local:')
+        const canRepair = fixes.geom < MAX_GEOM_FIX && useUi.getState().autoRepair && !!eng && !eng.startsWith('local:')
         if (canRepair && !compileResult.ok && compileResult.error && compileResult.error !== 'superseded' && compileResult.error !== 'empty') {
           const fixText = buildAutoFixPrompt(compileResult.error)
           h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
-          await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
+          await runGeneration({ text: fixText, action: 'Auto-fix' }, { ...fixes, geom: fixes.geom + 1 }, opts)
         } else if (compileResult.ok) {
           // read THIS project's just-compiled geometry from its session (top-level is the active
           // project, which may be a different chat once a background generation is running)
@@ -353,7 +369,7 @@ export function createGenerationActions(
           // assembly/mechanism faults = cheap client structural checks PLUS the retrieved
           // skills' validators (server-side, received via skillReport). The advisory
           // skillNote already shows them; here they also drive a BOUNDED auto-fix (gated on
-          // the autoRepair toggle + the shared MAX_AUTO_FIX budget, so it can't loop).
+          // the autoRepair toggle + the MAX_GEOM_FIX budget, so it can't loop).
           const assembly = [...structuralReport(code, params).issues, ...skillReport.flatMap((r) => r.issues)]
           // C1 — runtime interference proxy: a cutter slicing protected structure (a bore through a
           // clutch tube, a pocket into a bearing seat) is invisible to compile/dim/IoU but caught here
@@ -375,7 +391,7 @@ export function createGenerationActions(
               parts.push(`${degenerate ? 'Also fix' : 'Fix'} these assembly/mechanism problems, then return the corrected complete program:\n${assembly.map((i) => `- ${i}`).join('\n')}`)
             const fixText = parts.join('\n\n')
             h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text: fixText, action: 'Auto-fix' }])
-            await runGeneration({ text: fixText, action: 'Auto-fix' }, attempt + 1, opts)
+            await runGeneration({ text: fixText, action: 'Auto-fix' }, { ...fixes, geom: fixes.geom + 1 }, opts)
           } else if (!isMultiPart && dims && Math.abs(dims.minZ) > 0.5) {
             // off-bed single part → deterministic drop-to-bed (no AI turn). The export
             // bakes meshTransform, so the exported/printed part sits flat on z=0. This also
@@ -519,7 +535,7 @@ export function createGenerationActions(
       // corrected skillIds OVERRIDING retrieval for this turn. Shares the generating guard +
       // abortController via runGeneration; the new version carries the corrected appliedSkillIds.
       h.setChatAndFutureFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Adjust patterns' }], [])
-      await runGeneration({ text, action: 'Adjust patterns' }, 0, { skillIds })
+      await runGeneration({ text, action: 'Adjust patterns' }, NO_FIXES, { skillIds })
     },
 
     abortGeneration: (pid?: string) => {

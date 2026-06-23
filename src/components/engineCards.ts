@@ -101,7 +101,9 @@ function fromProvider(row: EngineRowData, engine: string | null | undefined): Un
     state,
     method: methodOf(row),
     provider: row,
-    subtitle: row.model ?? (row.models?.length ? `${row.models.length} models` : ''),
+    subtitle: row.id === 'claude-code'
+      ? (row.models?.[0]?.label ?? row.model ?? '')
+      : row.model ?? (row.models?.length ? `${row.models.length} models` : ''),
     detail: row.detail,
     contextWindow: row.contextWindow,
     maxOutput: row.maxOutput ?? row.outputReservation,

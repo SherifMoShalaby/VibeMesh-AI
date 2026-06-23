@@ -170,6 +170,39 @@ describe('OpenScadEngine', () => {
     expect(w1.terminated).toBe(true)
   })
 
+  it('content cache: an identical (code, defines) re-render resolves WITHOUT touching the worker', async () => {
+    const e = new OpenScadEngine()
+    const p1 = e.compile('cube();', ['-D s=10'])
+    const w = currentWorker()
+    w.onmessage!(okMsg(1)) // first render compiles + caches
+    await expect(p1).resolves.toMatchObject({ ok: true })
+    expect(codes(w)).toEqual(['cube();']) // one post so far
+
+    // same content again → cache hit: resolves on its own, never posts a second job
+    const p2 = e.compile('cube();', ['-D s=10'])
+    await expect(p2).resolves.toMatchObject({ ok: true })
+    expect(codes(w)).toEqual(['cube();']) // STILL one post — the worker was not touched
+
+    // a DIFFERENT define is a miss → it does post
+    const p3 = e.compile('cube();', ['-D s=20'])
+    expect(codes(currentWorker())).toEqual(['cube();', 'cube();'])
+    currentWorker().onmessage!(okMsg(2))
+    await expect(p3).resolves.toMatchObject({ ok: true })
+  })
+
+  it('does NOT cache a failed render (a later identical call re-runs)', async () => {
+    const e = new OpenScadEngine()
+    const p1 = e.compile('bad();')
+    const w1 = currentWorker()
+    w1.onerror!(new Event('error')) // crash → not cached
+    await expect(p1).resolves.toMatchObject({ ok: false })
+
+    const p2 = e.compile('bad();') // identical, but the failure wasn't cached → it posts again
+    expect(codes(currentWorker())).toEqual(['bad();'])
+    currentWorker().onmessage!(okMsg(2))
+    await expect(p2).resolves.toMatchObject({ ok: true })
+  })
+
   it('ignores a worker message whose id does not match the active job', async () => {
     const e = new OpenScadEngine()
     const p1 = e.compile('a') // active id 1

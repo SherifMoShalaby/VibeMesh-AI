@@ -1,0 +1,157 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local Supabase JWT credentials (standard Supabase local-dev values).
+# These are intentionally committed — they are LOCAL-ONLY keys signed with
+# a well-known JWT secret. Safe for self-hosted development; swap them all if
+# you need production-strength local credentials.
+# ─────────────────────────────────────────────────────────────────────────────
+x-jwt-secret: &jwt_secret "your-super-secret-jwt-token-with-at-least-32-characters-long"
+x-anon-key:   &anon_key   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRFA0NiK7urfjjMvpOiFSoNZ5tY6sNbMLnkZ7g7Pq3M"
+x-svc-key:    &svc_key    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hj04zWl196z2-SBc0"
+
+services:
+
+  # ── Vibemesh app ─────────────────────────────────────────────────────────────
+  #
+  # Pre-flight: create an empty .env file before first run so Docker mounts
+  # it as a file, not a directory:  touch .env
+  # AI keys (ANTHROPIC_API_KEY etc.) can be added via the Engines UI at
+  # runtime — the server writes them back into the bind-mounted .env.
+  app:
+    build:
+      context: .
+      args:
+        # Vite bakes these in at BUILD time (not runtime).
+        # Override in host .env before `docker compose up` for cloud Supabase.
+        VITE_SUPABASE_URL:      ${VITE_SUPABASE_URL:-http://localhost:8000}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRFA0NiK7urfjjMvpOiFSoNZ5tY6sNbMLnkZ7g7Pq3M}
+    ports:
+      - "5175:5175"
+    volumes:
+      - ./.env:/app/.env
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      # Server-side: internal Docker network name — overrides any SUPABASE_URL
+      # value written in the bind-mounted .env file.
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_SERVICE_ROLE_KEY: *svc_key
+    depends_on:
+      supabase-kong:
+        condition: service_started
+      supabase-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5175/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Local Supabase self-hosted stack ─────────────────────────────────────────
+
+  supabase-db:
+    image: supabase/postgres:15.8.1.060
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: postgres
+      JWT_SECRET: *jwt_secret
+    volumes:
+      - supabase-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  supabase-auth:
+    image: supabase/gotrue:v2.164.0
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: "http://localhost:8000"
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: "postgres://supabase_auth_admin:postgres@supabase-db:5432/postgres"
+      GOTRUE_SITE_URL: "http://localhost:5173"
+      GOTRUE_URI_ALLOW_LIST: "*"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_SECRET: *jwt_secret
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      # Skip email confirmation in local dev — no SMTP server required.
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@vibemesh.local
+      GOTRUE_SMTP_SENDER_NAME: Vibemesh
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+
+  supabase-rest:
+    image: postgrest/postgrest:v12.2.0
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:postgres@supabase-db:5432/postgres"
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: *jwt_secret
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: *jwt_secret
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+    restart: unless-stopped
+
+  supabase-kong:
+    image: kong:2.8.1
+    depends_on:
+      supabase-auth:
+        condition: service_started
+      supabase-rest:
+        condition: service_started
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k"
+    volumes:
+      - ./supabase/kong.yml:/home/kong/kong.yml:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # Applies our projects table + RLS policy AFTER GoTrue has finished creating
+  # the auth schema. Exits cleanly on success; Docker restarts it on failure
+  # (in case GoTrue migrations are still running).
+  supabase-migrate:
+    image: postgres:15-alpine
+    depends_on:
+      supabase-auth:
+        condition: service_healthy
+    volumes:
+      - ./supabase/migrations:/migrations:ro
+    environment:
+      PGPASSWORD: "postgres"
+    command: >
+      sh -c "psql -h supabase-db -U postgres -d postgres -f /migrations/001_projects.sql
+             && echo '✓ Vibemesh schema migration applied'"
+    restart: on-failure
+
+volumes:
+  supabase-db-data:

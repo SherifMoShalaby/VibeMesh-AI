@@ -122,3 +122,26 @@ export function geometryConverged(
   const dTri = Math.abs(cur.triangles - prev.triangles) / Math.max(prev.triangles, 1)
   return dVol < tol && dTri < tol
 }
+
+/**
+ * ADVISORY self-relative solidity note for the refine prompt. fillRatio = mesh volume / bbox volume;
+ * a vanishingly low ratio means the part fills very little of its own envelope — usually an
+ * unintended thin shell / hollow body that read as the right SIZE but not the right MASS. It
+ * complements geometryConverged (which stops the loop) by telling the model WHY it might want to
+ * reshape. Pure + deterministic. ADVISORY ONLY — phrased as a question, never a hard gate; the
+ * dimension facts (dimDiscrepancies) remain the leading signal. Returns '' when the fill looks fine,
+ * the inputs are unusable, or the part is legitimately small (default threshold is conservative so
+ * rings / frames / walled enclosures don't trip it).
+ */
+export function fillRatioNote(
+  dims: { x: number; y: number; z: number; volume: number } | null | undefined,
+  threshold = 0.1,
+): string {
+  if (!dims) return ''
+  const bbox = dims.x * dims.y * dims.z
+  if (!(bbox > 0) || !Number.isFinite(dims.volume) || dims.volume <= 0) return ''
+  const fill = dims.volume / bbox
+  if (fill >= threshold) return ''
+  const pct = Math.max(1, Math.round(fill * 100))
+  return `SOLIDITY CHECK — the current render's mesh fills only ~${pct}% of its bounding box. If this part is meant to be a solid body, that is suspiciously hollow or thin: confirm it is not an unintended shell, and add material where the reference looks solid. (Ignore this if the part is intentionally a ring, frame, or thin wall.)`
+}

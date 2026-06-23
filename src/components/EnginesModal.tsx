@@ -572,6 +572,13 @@ function ProviderDrawer({ provider, localModel, onLocalModelChange, onChanged }:
               )}
             </label>
           )}
+          {showModels && modelValue === 'default' && (
+            <p className="ec-privacy" style={{ marginTop: 4 }}>
+              {provider.id === 'claude-code'
+                ? 'Uses the model configured in ~/.claude/settings.json'
+                : 'Uses the default model from your .env'}
+            </p>
+          )}
           {showEfforts && (
             <label className="engine-model-row">
               <span>Effort</span>

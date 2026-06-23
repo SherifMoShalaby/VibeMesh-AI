@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { dimDiscrepancies, clampStatedDimensions, geometryConverged } from './refineProxy'
+import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote } from './refineProxy'
 import type { StlBBox } from './stl'
 
 const bbox = (x: number, y: number, z: number): StlBBox => ({ x, y, z, minZ: 0, volume: 0, triangles: 0 })
+const solid = (x: number, y: number, z: number, volume: number): StlBBox => ({ x, y, z, minZ: 0, volume, triangles: 0 })
 
 describe('dimDiscrepancies', () => {
   it('returns [] with no dims or no stated dimensions', () => {
@@ -132,5 +133,39 @@ describe('geometryConverged — self-relative refine convergence', () => {
   it('guards divide-by-zero on a zero-volume baseline', () => {
     expect(geometryConverged({ volume: 0, triangles: 100 }, { volume: 0, triangles: 100 })).toBe(true)
     expect(geometryConverged({ volume: 0, triangles: 100 }, { volume: 5, triangles: 100 })).toBe(false)
+  })
+})
+
+describe('fillRatioNote — advisory hollow-fill self-diagnosis', () => {
+  it('returns "" for unusable input (null/undefined, zero bbox, non-positive/non-finite volume)', () => {
+    expect(fillRatioNote(null)).toBe('')
+    expect(fillRatioNote(undefined)).toBe('')
+    expect(fillRatioNote(solid(0, 10, 10, 5))).toBe('') // zero bbox dimension → zero bbox volume
+    expect(fillRatioNote(solid(10, 10, 10, 0))).toBe('') // zero volume
+    expect(fillRatioNote(solid(10, 10, 10, NaN))).toBe('') // non-finite volume
+  })
+
+  it('stays silent when the part fills a plausible share of its bounding box', () => {
+    // a solid-ish cylinder ~78% fill, well above the 10% default threshold
+    expect(fillRatioNote(solid(10, 10, 10, 785))).toBe('')
+    // exactly at the threshold is NOT flagged (>=)
+    expect(fillRatioNote(solid(10, 10, 10, 100))).toBe('')
+  })
+
+  it('flags a suspiciously hollow result with the measured percentage, phrased as advisory', () => {
+    const note = fillRatioNote(solid(10, 10, 10, 30)) // 3% fill
+    expect(note).toMatch(/SOLIDITY CHECK/)
+    expect(note).toMatch(/~3%/)
+    expect(note).toMatch(/Ignore this if/) // hedged, never a hard directive
+  })
+
+  it('respects a custom threshold', () => {
+    // 30% fill: silent at default 0.1, flagged when the caller demands 0.5
+    expect(fillRatioNote(solid(10, 10, 10, 300))).toBe('')
+    expect(fillRatioNote(solid(10, 10, 10, 300), 0.5)).toMatch(/~30%/)
+  })
+
+  it('never reports 0% (floors the displayed percentage at 1)', () => {
+    expect(fillRatioNote(solid(100, 100, 100, 50))).toMatch(/~1%/) // 0.005% rounds up to a readable 1%
   })
 })

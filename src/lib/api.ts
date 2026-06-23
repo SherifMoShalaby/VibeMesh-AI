@@ -1,4 +1,11 @@
 import type { ChatImage, ChatMessage, DesignIntent } from '../types'
+import { supabase } from './supabase'
+
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!supabase) return {}
+  const { data: { session } } = await supabase.auth.getSession()
+  return session ? { Authorization: `Bearer ${session.access_token}` } : {}
+}
 
 export interface ProviderConnect {
   envKey: string
@@ -209,6 +216,14 @@ export function estHistoryTokens(chat: ChatMessage[]): number {
   return clean.reduce((sum, m) => sum + msgTokens(m, (m.images?.length ?? 0) > 0 && !(m.role === 'user' && m.action === 'Refine pass' && m !== lastRefine)), 0)
 }
 
+/** Rough token estimate for ONE generated reply (the spend meter, Task 0.0). Deliberately simple:
+ *  ~4 chars/token over the produced text — we don't get real usage off the stream, so this is an
+ *  honest order-of-magnitude figure, not a billing number. Pure; '' / non-string → 0. */
+export function estGenTokens(text: string | null | undefined): number {
+  if (!text) return 0
+  return Math.ceil(text.length / 4)
+}
+
 /** Choose a contiguous suffix of recent messages whose estimated tokens fit `budget`,
  *  always keeping the latest message and reserving the pinned reference image's cost so
  *  prepending it later can't blow the budget. Mirrors the assembler's keep-images rule. */
@@ -407,7 +422,7 @@ export async function streamGenerate(
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
     body: JSON.stringify({ engine, model, effort, messages, context }),
     signal,
   })

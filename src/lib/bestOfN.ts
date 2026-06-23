@@ -31,10 +31,31 @@ export interface CandidateSignals {
   structuralIssues: number
   /** dimension-vs-stated discrepancy count (0 when the prompt stated no dimensions) */
   dimMismatches: number
+  /** mesh volume / bbox volume for the compiled candidate (a SELF-RELATIVE solidity signal —
+   *  undefined when the candidate didn't compile / wasn't measured). A vanishingly low ratio is a
+   *  thin shell / sliver that reads as the right SIZE but isn't a solid body. Used ONLY as a
+   *  below-everything tiebreak, so it can never reorder candidates that differ on a harder signal. */
+  fillRatio?: number
 }
 
 /** Default fan-out. Kept small: each candidate is a paid generation + a compile through one worker. */
 export const BEST_OF_N_COUNT = 3
+
+/** Solidity tiebreak ceiling. Strictly LESS than one `dimMismatches` (100) so the shape tiebreak can
+ *  NEVER cross a harder signal — it only resolves ties the scorer above leaves arbitrary. */
+const TIEBREAK_MAX = 50
+/** Below this fill (mesh-volume / bbox-volume) a compiled part is suspiciously hollow/thin for its
+ *  envelope; the penalty ramps from 0 at this threshold to TIEBREAK_MAX as fill → 0. Conservative on
+ *  purpose — legitimately hollow forms (rings, frames, walled enclosures) sit above it. */
+const PLAUSIBLE_FILL = 0.1
+
+/** Graded, capped penalty for an implausibly hollow compiled candidate. 0 when fill is fine or the
+ *  signal is absent (so a non-best-of-N / non-compiling candidate is never touched). */
+function hollowPenalty(fillRatio: number | undefined): number {
+  if (fillRatio === undefined || !Number.isFinite(fillRatio) || fillRatio <= 0) return 0
+  if (fillRatio >= PLAUSIBLE_FILL) return 0
+  return TIEBREAK_MAX * (1 - fillRatio / PLAUSIBLE_FILL)
+}
 
 /** Reference-free candidate score. Higher is better. Compile + degenerate dominate the issue counts. */
 export function scoreCandidate(s: CandidateSignals): number {
@@ -54,6 +75,8 @@ export function scoreCandidate(s: CandidateSignals): number {
   score += s.degenerate ? -500_000 : 0 // a compiling-but-degenerate part is far worse than a clean one
   score -= s.structuralIssues * 1_000 // then: fewer assembly/structural faults
   score -= s.dimMismatches * 100 // then: closer to the stated dimensions
+  score -= hollowPenalty(s.fillRatio) // finally, below EVERYTHING above (<100): break a true tie toward
+  //                                      the more plausibly-solid candidate, never reorder a harder signal
   return score
 }
 

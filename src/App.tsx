@@ -11,6 +11,7 @@ import HelpModal from './components/HelpModal'
 import { Toaster, ConfirmHost } from './components/Dialogs'
 import ErrorBoundary from './components/ErrorBoundary'
 import { DCube, DSliders, DSparkFill, DChevLeft, DChevRight } from './components/icons'
+import AuthGate from './components/AuthGate'
 
 const IDLE_TITLE = 'Vibemesh-AI — parametric CAD for 3D printing'
 
@@ -168,49 +169,51 @@ export default function App() {
   }, [])
 
   return (
-    <div className={`app${isMobile ? ' is-mobile' : ''}${isHome ? ' is-home' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full" data-busy={busy || undefined}>
-      <ErrorBoundary>
-        <TopBar />
-        <div
-          className="app-body"
-          style={workspace ? { gridTemplateColumns: gridTemplate } : undefined}
-        >
-          {!isHome && <ChatPanel mobileShow={isMobile && mobileTab === 'chat'} paneCollapsed={lCol} />}
-          {showResizerL && <Resizer side="left" />}
-          <Viewport />
-          {showResizerR && <Resizer side="right" />}
-          {!isHome && <RightPanel mobileShow={isMobile && mobileTab === 'params'} paneCollapsed={rCol} />}
-          {lCol && (
-            <button className="rail-expand left" title="Show chat panel" aria-label="Show chat panel" onClick={() => setLeftCollapsed(false)}>
-              <DChevRight />
-            </button>
-          )}
-          {rCol && (
-            <button className="rail-expand right" title="Show parameters panel" aria-label="Show parameters panel" onClick={() => setRightCollapsed(false)}>
-              <DChevLeft />
-            </button>
-          )}
-        </div>
+    <AuthGate>
+      <div className={`app${isMobile ? ' is-mobile' : ''}${isHome ? ' is-home' : ''}`} data-accent="cobalt" data-material="workshop" data-hud="bar" data-empty="full" data-busy={busy || undefined}>
+        <ErrorBoundary>
+          <TopBar />
+          <div
+            className="app-body"
+            style={workspace ? { gridTemplateColumns: gridTemplate } : undefined}
+          >
+            {!isHome && <ChatPanel mobileShow={isMobile && mobileTab === 'chat'} paneCollapsed={lCol} />}
+            {showResizerL && <Resizer side="left" />}
+            <Viewport />
+            {showResizerR && <Resizer side="right" />}
+            {!isHome && <RightPanel mobileShow={isMobile && mobileTab === 'params'} paneCollapsed={rCol} />}
+            {lCol && (
+              <button className="rail-expand left" title="Show chat panel" aria-label="Show chat panel" onClick={() => setLeftCollapsed(false)}>
+                <DChevRight />
+              </button>
+            )}
+            {rCol && (
+              <button className="rail-expand right" title="Show parameters panel" aria-label="Show parameters panel" onClick={() => setRightCollapsed(false)}>
+                <DChevLeft />
+              </button>
+            )}
+          </div>
 
-      {isMobile && (
-        <nav className="mobile-tabbar">
-          <button className={`mtab${mobileTab === 'model' ? ' active' : ''}`} onClick={() => setMobileTab('model')}>
-            <DCube /> Model
-          </button>
-          <button className={`mtab${mobileTab === 'params' ? ' active' : ''}`} onClick={() => setMobileTab(mobileTab === 'params' ? 'model' : 'params')}>
-            <DSliders /> Tweak
-          </button>
-          <button className={`mtab${mobileTab === 'chat' ? ' active' : ''}`} onClick={() => setMobileTab(mobileTab === 'chat' ? 'model' : 'chat')}>
-            <DSparkFill /> Chat
-          </button>
-        </nav>
-      )}
+        {isMobile && (
+          <nav className="mobile-tabbar">
+            <button className={`mtab${mobileTab === 'model' ? ' active' : ''}`} onClick={() => setMobileTab('model')}>
+              <DCube /> Model
+            </button>
+            <button className={`mtab${mobileTab === 'params' ? ' active' : ''}`} onClick={() => setMobileTab(mobileTab === 'params' ? 'model' : 'params')}>
+              <DSliders /> Tweak
+            </button>
+            <button className={`mtab${mobileTab === 'chat' ? ' active' : ''}`} onClick={() => setMobileTab(mobileTab === 'chat' ? 'model' : 'chat')}>
+              <DSparkFill /> Chat
+            </button>
+          </nav>
+        )}
 
-      <EnginesModal />
-      <HelpModal />
-      <ConfirmHost />
-      <Toaster />
-      </ErrorBoundary>
-    </div>
+        <EnginesModal />
+        <HelpModal />
+        <ConfirmHost />
+        <Toaster />
+        </ErrorBoundary>
+      </div>
+    </AuthGate>
   )
 }

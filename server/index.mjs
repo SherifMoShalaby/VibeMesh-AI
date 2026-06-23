@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { applyRuntimeSetting, providerStatus, streamChat, testEngine, discoverModels, SYSTEM_PROMPT_TOKENS, GEN_TIMEOUT_MS, GEN_MAX_RETRIES, UserFacingError, extractScadBlock, reviewWithSkills } from './providers.mjs'
 import { CATALOG, saveConnection, removeConnection, validateFetchUrl, ConnectionError } from './connections.mjs'
 import { SCREWS, BEARINGS } from './hardware.mjs'
+import { requireAuth } from './authMiddleware.mjs'
+import { supabase as dbClient, dbGetProjects, dbUpsertProject, dbDeleteProject } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
@@ -154,6 +156,31 @@ app.post('/api/generate', jsonLarge, async (req, res) => {
   }
   res.end()
 })
+
+// Projects API — only available when Supabase is configured
+if (dbClient) {
+  app.get('/api/projects', requireAuth, async (req, res) => {
+    try { res.json(await dbGetProjects(req.user.id)) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  app.post('/api/projects', requireAuth, jsonLarge, async (req, res) => {
+    try {
+      await Promise.all((req.body ?? []).map((p) => dbUpsertProject(p, req.user.id)))
+      res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  app.put('/api/projects/:id', requireAuth, jsonLarge, async (req, res) => {
+    try { await dbUpsertProject(req.body, req.user.id); res.json({ ok: true }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  app.delete('/api/projects/:id', requireAuth, async (req, res) => {
+    try { await dbDeleteProject(req.params.id, req.user.id); res.json({ ok: true }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+}
 
 // Production: serve the built frontend
 if (process.env.NODE_ENV === 'production') {
