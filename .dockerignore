@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.claude
+.playwright-mcp
+bench/results
+test-results
+playwright-report
+graphify-out
+*.tsbuildinfo
+.DS_Store
+docs

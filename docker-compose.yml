@@ -1,0 +1,28 @@
+version: '3.9'
+
+# Pre-flight: create an empty .env on the host before first run so Docker
+# mounts it as a file (not a directory): `touch .env`
+# Then add at minimum:
+#   SUPABASE_URL=https://<project-id>.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+# Additional keys (ANTHROPIC_API_KEY etc.) can be added via the Engines UI
+# at runtime — the server writes them back to the mounted .env.
+
+services:
+  app:
+    build: .
+    ports:
+      - "5175:5175"
+    volumes:
+      # Writable bind-mount: server writes API keys here at runtime.
+      # Must exist as a FILE on the host before starting (see above).
+      - ./.env:/app/.env
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5175/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
