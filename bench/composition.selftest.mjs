@@ -36,6 +36,13 @@ function conceptParams(code, re) {
 
 let fail = 0
 for (const [id, fx] of Object.entries(COMPOSED)) {
+  // Validate that every fixture carries per-fixture controls
+  if (!fx.controls || typeof fx.controls.dupClear !== 'function' || typeof fx.controls.deepPocket !== 'function') {
+    console.error(`  ${id.padEnd(12)} ✗ missing controls — every COMPOSED fixture must carry dupClear + deepPocket mutators`)
+    fail++
+    continue
+  }
+
   const tris = await compileTris(fx.exemplar)
   if (!tris) { console.error(`  ${id.padEnd(12)} ✗ exemplar FAILED to compile`); fail++; continue }
 
@@ -49,11 +56,11 @@ for (const [id, fx] of Object.entries(COMPOSED)) {
   if (vol === null || score < 1) { console.error(`  ${id.padEnd(12)} ✗ interference overlap = ${vol} mm³ (score ${score}); protected structure is sliced`); fail++; continue }
 
   // CONTROL (2): a duplicated clearance param must be caught by the one-param-per-concept check
-  const dupClear = fx.exemplar.replace(/(\nclearance = [\d.]+;[^\n]*)/, '$1\nextra_fit = 0.2;')
+  const dupClear = fx.controls.dupClear(fx.exemplar)
   if (conceptParams(dupClear, CLEARANCE_RE).length <= 1) { console.error(`  ${id.padEnd(12)} ✗ duplicate-clearance control NOT caught`); fail++; continue }
 
   // CONTROL (3): a pocket deepened to slice the pin must blow the interference probe
-  const deepPocket = fx.exemplar.replace(/pocket_h = wall - 0\.8;/, 'pocket_h = wall + pin_len;')
+  const deepPocket = fx.controls.deepPocket(fx.exemplar)
   const brokenVol = await interferenceVol(deepPocket)
   if (!(brokenVol > 2)) { console.error(`  ${id.padEnd(12)} ✗ pocket-slices-pin control NOT caught (overlap ${brokenVol} mm³)`); fail++; continue }
 

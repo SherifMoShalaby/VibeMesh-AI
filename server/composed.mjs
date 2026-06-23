@@ -64,5 +64,13 @@ if (_debug == "positives") {
 `
 
 export const COMPOSED = {
-  'axle-snap': { pair: ['wheel-axle', 'snap-fit'], sharedConcepts: ['clearance', 'wall'], exemplar: AXLE_SNAP },
+  'axle-snap': {
+    pair: ['wheel-axle', 'snap-fit'],
+    sharedConcepts: ['clearance', 'wall'],
+    exemplar: AXLE_SNAP,
+    controls: {
+      dupClear: (code) => code.replace(/(\nclearance = [\d.]+;[^\n]*)/, '$1\nextra_fit = 0.2;'),
+      deepPocket: (code) => code.replace(/pocket_h = wall - 0\.8;/, 'pocket_h = wall + pin_len;'),
+    },
+  },
 }
