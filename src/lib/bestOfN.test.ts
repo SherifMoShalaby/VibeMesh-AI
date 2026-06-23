@@ -83,6 +83,56 @@ describe('scoreCandidate — hollow fill-ratio tiebreak (below every harder sign
   })
 })
 
+describe('scoreCandidate — reference-photo shapeMatch tiebreak (Phase 2, below dimMismatches, above hollow)', () => {
+  it('no reference (undefined) is a TOTAL no-op — byte-identical to the reference-free score', () => {
+    expect(scoreCandidate(sig({ shapeMatch: undefined }))).toBe(scoreCandidate(sig({})))
+    // a perfect match (1.0) likewise contributes exactly 0
+    expect(scoreCandidate(sig({ shapeMatch: 1 }))).toBe(scoreCandidate(sig({ shapeMatch: undefined })))
+  })
+
+  it('breaks an otherwise-exact tie toward the candidate whose outline matches the photo', () => {
+    const matches = scoreCandidate(sig({ shapeMatch: 0.8 }))
+    const mismatch = scoreCandidate(sig({ shapeMatch: 0.2 }))
+    expect(matches).toBeGreaterThan(mismatch)
+  })
+
+  it('NEVER reorders a harder signal: a total shape miss still beats one extra dim mismatch', () => {
+    const missButCloserDims = scoreCandidate(sig({ shapeMatch: 0, dimMismatches: 0 }))
+    const matchButFartherDims = scoreCandidate(sig({ shapeMatch: 1, dimMismatches: 1 }))
+    expect(missButCloserDims).toBeGreaterThan(matchButFartherDims) // dimMismatch (100) > the 75 shape term
+  })
+
+  it('outranks the hollow tiebreak — a measured photo match beats a self-relative solidity heuristic', () => {
+    // same harder signals; shape match should dominate the (≤50) hollow term
+    const matchHollow = scoreCandidate(sig({ shapeMatch: 1, fillRatio: 0.001 }))
+    const missSolid = scoreCandidate(sig({ shapeMatch: 0, fillRatio: 0.9 }))
+    expect(matchHollow).toBeGreaterThan(missSolid)
+  })
+
+  it('the shape penalty is bounded in (50, 100): a total miss subtracts > hollow-max (50) and < one dim mismatch (100)', () => {
+    const perfect = scoreCandidate(sig({ shapeMatch: 1 }))
+    const totalMiss = scoreCandidate(sig({ shapeMatch: 0 }))
+    expect(perfect - totalMiss).toBe(75)
+    expect(perfect - totalMiss).toBeGreaterThan(50)
+    expect(perfect - totalMiss).toBeLessThan(100)
+  })
+
+  it('a shape-matching but compiling candidate still loses to nothing harder — compile/degenerate tiers untouched', () => {
+    const matchClean = scoreCandidate(sig({ compiled: true, shapeMatch: 1 }))
+    expect(matchClean).toBeGreaterThan(scoreCandidate(sig({ compiled: false, shapeMatch: 0 })))
+    expect(matchClean).toBeGreaterThan(scoreCandidate(sig({ compiled: true, degenerate: true, shapeMatch: 1 })))
+  })
+
+  it('COMBINED soft tiers can NEVER cross dimMismatches: a correct-dims hollow photo-miss still beats a wrong-dims solid photo-match', () => {
+    // The regression the clamp prevents: unclamped, shapeMatch(75) + hollow(50) = 125 > 100, so the
+    // wrong-dims candidate would wrongly win. The combined soft penalty is capped < 100 so the harder
+    // dimMismatches signal always governs.
+    const correctDimsHollowMiss = scoreCandidate(sig({ dimMismatches: 0, shapeMatch: 0, fillRatio: 0.001 }))
+    const wrongDimsSolidMatch = scoreCandidate(sig({ dimMismatches: 1, shapeMatch: 1, fillRatio: 0.9 }))
+    expect(correctDimsHollowMiss).toBeGreaterThan(wrongDimsSolidMatch)
+  })
+})
+
 describe('pickBestIndex', () => {
   it('picks the highest score', () => {
     expect(pickBestIndex([1, 5, 3])).toBe(1)

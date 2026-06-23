@@ -8,6 +8,8 @@ import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
 import { ComputeBudget } from '../lib/openscad/budget'
 import { scoreCandidate, pickBestIndex, BEST_OF_N_COUNT, type CandidateSignals } from '../lib/bestOfN'
+import { renderMasks } from '../lib/silhouette'
+import { bestRefIoU, ensureRefMask, getRefMask } from '../lib/refSegment'
 import { extractScadBlock, extractIntent, stripIntentLine, parseParameters } from '../lib/params'
 import { degenerateReason, detectKitIntent } from '../lib/storeDecisions'
 import { recordUses, recordRemovals, saveSkillStats } from '../lib/skillStats'
@@ -57,6 +59,11 @@ const MAX_GEOM_FIX = 2 // render/structural/interference auto-fixes (was MAX_AUT
 type FixBudget = { contract: number; geom: number }
 const NO_FIXES: FixBudget = { contract: 0, geom: 0 }
 const MAX_AUTO_REFINE = 2 // total auto-refine passes per project
+// Coarse wall-time guard on the reference-shape-match loop (renderMasks + 32 maskIoU passes per
+// candidate over 256×256 masks). Generous — best-of-N is N≤3 small meshes — but caps a pathological
+// high-triangle mesh from stalling selection between the compile loop and pickBestIndex. Past the
+// budget, remaining candidates simply rank without shapeMatch (undefined → no-op), never blocking.
+const SHAPE_MATCH_BUDGET_MS = 4_000
 const autoRefinePass = new Map<string, number>()
 // Previous refine-eligible compile's geometry CONTENT (volume + triangle count) per project — the
 // baseline the SELF-RELATIVE convergence stop compares the current pass against. Lifetime-scoped like
@@ -78,7 +85,7 @@ export function createGenerationActions(
     engine: string,
     messages: ReturnType<typeof toApiMessages>,
     baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'>,
-    ctx: { bed: { x: number; y: number; z: number }; stated: ReturnType<typeof clampStatedDimensions>['dimensions'] },
+    ctx: { bed: { x: number; y: number; z: number }; stated: ReturnType<typeof clampStatedDimensions>['dimensions']; refMask?: Uint8Array | null },
   ): Promise<{ full: string; skillReport: SkillIssue[]; appliedSkillIds: string[]; dropped: string[]; stopReason?: string }> {
     const n = BEST_OF_N_COUNT
     const reports = Array.from({ length: n }, () => ({ skillIds: [] as string[], dropped: [] as string[], report: [] as SkillIssue[] }))
@@ -97,6 +104,7 @@ export function createGenerationActions(
       ),
     )
     const budget = new ComputeBudget({ wallMs: 60_000, maxRenders: n + 2 })
+    const shapeLoopStart = Date.now() // wall-clock anchor for the per-candidate shape-match guard
     const signals: CandidateSignals[] = []
     for (const text of fulls) {
       const { code, blockCount } = extractScadBlock(text)
@@ -111,6 +119,7 @@ export function createGenerationActions(
       let degenerate = false
       let dimMismatches = 0
       let fillRatio: number | undefined
+      let shapeMatch: number | undefined
       if (budget.canSpend()) {
         compileAttempted = true
         // compile with the SAME root-scope quality defines the real render uses (Draft here — fast
@@ -127,9 +136,16 @@ export function createGenerationActions(
           // Feeds the below-everything hollow tiebreak in scoreCandidate; undefined when unmeasurable.
           const bboxVol = dims ? dims.x * dims.y * dims.z : 0
           if (dims && bboxVol > 0) fillRatio = dims.volume / bboxVol
+          // REFERENCE-grounded shape match (Phase 2): only when a segmented photo mask is in hand.
+          // renderMasks is CPU rasterization on the STL already compiled above — it does NOT consume
+          // the openscad render budget (same as fillRatio). The 32-comparison bestRefIoU is bounded by
+          // a coarse wall-time guard so a pathological mesh can't stall selection.
+          if (ctx.refMask && Date.now() - shapeLoopStart < SHAPE_MATCH_BUDGET_MS) {
+            shapeMatch = bestRefIoU(renderMasks(r.stl), ctx.refMask)
+          }
         }
       }
-      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches, fillRatio })
+      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches, fillRatio, shapeMatch })
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
     h.writeSession(pid, { streamText: '' })
@@ -198,7 +214,15 @@ export function createGenerationActions(
       let stopReason: string | undefined
       if (useBestOfN) {
         const stated = clampStatedDimensions(priorIntent?.statedDimensions).dimensions
-        const winner = await runBestOfN(pid, engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated })
+        // Reference-grounded shape tiebreak (Phase 2): when the latest user turn carries a whole-photo
+        // (role==='global') reference, kick off its segmentation FIRE-AND-FORGET — it never blocks the
+        // stream. The fan-out below ranks with whatever mask is ready by the time it compiles (often
+        // null on a fast generation → identical to today's reference-free scoring). Segmentation runs
+        // at most once per photo per project (cached, re-keyed on photo swap by image identity).
+        const refPhoto = latestImgs.find((im) => (im.role ?? 'global') === 'global')
+        if (refPhoto) ensureRefMask(pid, refPhoto.data, refPhoto.mediaType, refPhoto.data)
+        const refMask = refPhoto ? getRefMask(pid) : null
+        const winner = await runBestOfN(pid, engine, messages, baseOpts, { bed: { x: bed.x, y: bed.y, z: bed.z }, stated, refMask })
         full = winner.full
         skillReport = winner.skillReport
         appliedSkillIds = winner.appliedSkillIds
