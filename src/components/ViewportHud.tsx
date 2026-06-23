@@ -32,6 +32,7 @@ interface HudProps {
 }
 
 const fmtMs = (ms: number): string => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`)
+const EMPTY_QTY: Record<string, number> = {} // stable ref so the selector fallback doesn't churn renders
 
 function ViewportHud({ hasModel, tbox, overBed, bed, printability, platePlan, platesView, partParam, currentPart, isAssemblyPreview, outOfView, doFit }: HudProps) {
   const compileStatus = useStore((s) => s.compileStatus)
@@ -46,6 +47,8 @@ function ViewportHud({ hasModel, tbox, overBed, bed, printability, platePlan, pl
   const setCustomBed = useStore((s) => s.setCustomBed)
   const slicing = useStore((s) => s.slicing)
   const selectPart = useStore((s) => s.selectPart)
+  const setPartQuantity = useStore((s) => s.setPartQuantity)
+  const partQuantities = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.partQuantities ?? EMPTY_QTY)
   const setViewMode = useStore((s) => s.setViewMode)
   const vpUndo = useStore((s) => s.vpUndo)
   const setRightTab = useUi((s) => s.setRightTab)
@@ -163,20 +166,34 @@ function ViewportHud({ hasModel, tbox, overBed, bed, printability, platePlan, pl
               <div className="part-tog" role="radiogroup" aria-label="Active part">
                 {(partParam.options ?? []).map((opt) => {
                   const value = String(opt)
-                  const busy = currentPart === value && compileStatus === 'compiling'
+                  const isAll = value === 'all'
+                  const active = currentPart === value
+                  const busy = active && compileStatus === 'compiling'
+                  const qty = partQuantities[value] ?? 1
                   return (
-                    <button
-                      key={value}
-                      role="radio"
-                      aria-checked={currentPart === value}
-                      className={`${currentPart === value ? 'active' : ''}${busy ? ' busy' : ''}`}
-                      disabled={busy}
-                      onClick={() => void selectPart(value)}
-                    >
-                      {value === 'all' ? 'All' : value}
-                      {value === 'all' && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
-                      {busy && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
-                    </button>
+                    <span key={value} className="part-chip">
+                      <button
+                        role="radio"
+                        aria-checked={active}
+                        className={`${active ? 'active' : ''}${busy ? ' busy' : ''}`}
+                        disabled={busy}
+                        onClick={() => void selectPart(value)}
+                      >
+                        {isAll ? 'All' : value}
+                        {isAll && <span className="pc">{(partParam.options?.length ?? 1) - 1}</span>}
+                        {/* glanceable ×N on the non-selected pieces; the editable stepper shows on the active one */}
+                        {!isAll && !active && qty > 1 && <span className="pq-badge">×{qty}</span>}
+                        {busy && <span className="status-dot busy" style={{ marginLeft: 6 }} />}
+                      </button>
+                      {/* per-part PRINT count — set on the active piece; replicates on plate/3MF export + Slicer */}
+                      {!isAll && active && (
+                        <span className="part-qty" title={`How many of "${value}" to print — copies are packed onto plates in the Slicer view & 3MF export; noted on separate-STL export`}>
+                          <button type="button" className="pq-btn" aria-label={`One fewer ${value}`} disabled={qty <= 1} onClick={() => setPartQuantity(value, qty - 1)}>−</button>
+                          <span className="pq-n">×{qty}</span>
+                          <button type="button" className="pq-btn" aria-label={`One more ${value}`} disabled={qty >= 99} onClick={() => setPartQuantity(value, qty + 1)}>+</button>
+                        </span>
+                      )}
+                    </span>
                   )
                 })}
               </div>

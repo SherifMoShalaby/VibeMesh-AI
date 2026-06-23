@@ -10,7 +10,7 @@ import { resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
 import { analyzePrintability, type PrintabilityReport } from '../lib/printability'
 import { meshTint } from '../lib/viewportTint'
-import { packPlates, type Placement } from '../lib/packPlates'
+import { packPlates, expandFootprints, baseName, type Placement } from '../lib/packPlates'
 import { CAPTURE_VIEW_NAMES, canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
 import type { CaptureViewName } from '../lib/capture'
 import EmptyState from './EmptyState'
@@ -38,6 +38,7 @@ export interface ViewApi {
 const SELECT_HINT_KEY = 'vibemesh.hint.select.v1'
 /** gap (mm) between bed plates laid out in the slicer scene */
 const PLATE_GAP = 40
+const EMPTY_QTY: Record<string, number> = {} // stable ref so the partQuantities selector fallback doesn't churn renders
 
 export default function Viewport() {
   const stl = useStore((s) => s.stl)
@@ -57,6 +58,7 @@ export default function Viewport() {
   const customBed = useStore((s) => s.customBed)
   const viewMode = useStore((s) => s.viewMode)
   const pieces = useStore((s) => s.pieces)
+  const partQuantities = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.partQuantities ?? EMPTY_QTY)
   const slicing = useStore((s) => s.slicing)
   const slicerFailed = useStore((s) => s.slicerFailed)
   const compilePieces = useStore((s) => s.compilePieces)
@@ -200,17 +202,30 @@ export default function Viewport() {
       for (const g of sliceGeos.values()) g.geometry.dispose()
     }
   }, [sliceGeos])
-  const platePlan = useMemo(
-    () => (pieces ? packPlates(pieces.map((p) => ({ name: p.name, w: p.bbox.x, h: p.bbox.y, z: p.bbox.z })), { x: bed.x, y: bed.y, z: bed.z }) : null),
-    [pieces, bed.x, bed.y, bed.z],
-  )
+  const platePlan = useMemo(() => {
+    if (!pieces) return null
+    // expand each piece by its per-part print quantity so the preview shows EXACTLY what the .3mf
+    // export packs (WYSIWYG). Replicas get unique keys (lid#0, lid#1…); the count is clamped, not
+    // the render, so preview and file never disagree. oversize is deduped back to base names.
+    const expanded = expandFootprints(
+      pieces.map((p) => ({ name: p.name, w: p.bbox.x, h: p.bbox.y, z: p.bbox.z })),
+      (name) => partQuantities[name] ?? 1,
+    )
+    const plan = packPlates(expanded, { x: bed.x, y: bed.y, z: bed.z })
+    const seen = new Set<string>()
+    const oversize = plan.oversize
+      .filter((o) => { const b = baseName(o.name); if (seen.has(b)) return false; seen.add(b); return true })
+      .map((o) => ({ name: baseName(o.name), reason: o.reason }))
+    return { plates: plan.plates, oversize }
+  }, [pieces, partQuantities, bed.x, bed.y, bed.z])
   const platesTbox = useMemo<TBox>(() => {
     if (!platePlan || platePlan.plates.length === 0) return null
     const n = platePlan.plates.length
     const totalW = n * bed.x + (n - 1) * PLATE_GAP
     // only pieces actually placed on a plate drive the framed height — an oversize piece is
     // excluded from every plate, so including its z would zoom the camera out for nothing
-    const placed = new Set(platePlan.plates.flat().map((p) => p.name))
+    // (placements carry unique replica keys; resolve back to the base piece name)
+    const placed = new Set(platePlan.plates.flat().map((p) => baseName(p.name)))
     const maxZ = Math.max(0.1, ...(pieces ?? []).filter((p) => placed.has(p.name)).map((p) => p.bbox.z))
     const box = new THREE.Box3(new THREE.Vector3(-totalW / 2, -bed.y / 2, 0), new THREE.Vector3(totalW / 2, bed.y / 2, maxZ))
     const size = new THREE.Vector3()
@@ -927,7 +942,8 @@ function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<s
           <group key={pi} position={[ox, 0, 0]}>
             <PrintBed x={bed.x} y={bed.y} visible />
             {placements.map((pl) => {
-              const g = geos.get(pl.name)
+              // placements carry unique replica keys (lid#0); geometry is keyed by the base piece name
+              const g = geos.get(baseName(pl.name))
               const bb = g?.geometry.boundingBox
               if (!g || !bb) return null
               // bed is centered at the group origin (−bed/2..+bed/2); the packer gives corner-origin

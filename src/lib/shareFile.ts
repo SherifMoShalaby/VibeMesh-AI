@@ -11,7 +11,7 @@ import { newId } from './storage'
  */
 
 export const SHARE_FORMAT = 'vibemesh.share'
-export const SHARE_SCHEMA_VERSION = 1
+export const SHARE_SCHEMA_VERSION = 2 // v2: optional partQuantities (per-part print counts)
 
 export interface ShareFile {
   format: typeof SHARE_FORMAT
@@ -22,6 +22,8 @@ export interface ShareFile {
   paramValues: ParamValues
   intent?: DesignIntent
   appliedSkillIds?: string[]
+  /** per-part print quantities (keyed by part-enum option string) — so a remix preserves the counts */
+  partQuantities?: Record<string, number>
   /** small data-URL PNG preview (optional; for galleries — import re-renders from code) */
   thumbnail?: string
   /** Lineage (Task 0.6): the EXPORTING project's identity, so an import can point back to it.
@@ -38,11 +40,23 @@ export interface ShareSource {
   paramValues?: ParamValues
   intent?: DesignIntent
   appliedSkillIds?: string[]
+  partQuantities?: Record<string, number>
   thumbnail?: string
   /** the exporting project's id + its own lineage, stamped into the file as the child's parent */
   id?: string
   rootId?: string
   lineageDepth?: number
+}
+
+/** Coerce an untrusted partQuantities map to clean { string: int in [1,99] }; drops garbage. */
+function sanitizeQuantities(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const n = Math.floor(Number(v))
+    if (Number.isFinite(n) && n > 1) out[k] = Math.min(99, n) // 1 is the default — only store >1
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 /** Build the share-file object. `exportedAt` is injected (kept pure/testable). */
@@ -57,6 +71,8 @@ export function buildShareFile(src: ShareSource, exportedAt: number): ShareFile 
   }
   if (src.intent) file.intent = src.intent
   if (src.appliedSkillIds?.length) file.appliedSkillIds = src.appliedSkillIds
+  const qty = sanitizeQuantities(src.partQuantities)
+  if (qty) file.partQuantities = qty
   if (typeof src.thumbnail === 'string' && src.thumbnail.startsWith('data:image/')) file.thumbnail = src.thumbnail
   // lineage: the exporter becomes the imported child's parent; carry the exporter's root + depth.
   if (src.id) {
@@ -97,6 +113,8 @@ export function parseShareFile(text: string): ShareFile | null {
   }
   if (o.intent && typeof o.intent === 'object') file.intent = o.intent as DesignIntent
   if (Array.isArray(o.appliedSkillIds)) file.appliedSkillIds = o.appliedSkillIds.filter((x): x is string => typeof x === 'string')
+  const qty = sanitizeQuantities(o.partQuantities)
+  if (qty) file.partQuantities = qty
   if (typeof o.thumbnail === 'string' && o.thumbnail.startsWith('data:image/')) file.thumbnail = o.thumbnail
   if (typeof o.parentId === 'string') file.parentId = o.parentId
   if (typeof o.rootId === 'string') file.rootId = o.rootId
@@ -126,6 +144,7 @@ export function shareFileToProject(file: ShareFile, id: string = newId(), now = 
     name: file.name || 'Shared part',
     code: file.code,
     paramValues: file.paramValues ?? {},
+    partQuantities: file.partQuantities,
     chat: [msg],
     parentId: hasLineage ? file.parentId : undefined,
     rootId: hasLineage ? (file.rootId ?? file.parentId) : id,
