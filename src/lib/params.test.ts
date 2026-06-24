@@ -6,6 +6,8 @@ import {
   extractScadBlock,
   extractIntent,
   stripIntentLine,
+  tokenizeLabel,
+  paramsForPiece,
 } from './params'
 import type { ScadParameter } from '../types'
 
@@ -175,5 +177,160 @@ describe('stripIntentLine', () => {
     expect(out).not.toMatch(/INTENT:/)
     expect(out).toMatch(/Here is the plan\./)
     expect(out).toMatch(/Done\./)
+  })
+})
+
+// ── tokenizeLabel ─────────────────────────────────────────────────────────────
+
+describe('tokenizeLabel', () => {
+  it('splits camelCase into lowercase tokens', () => {
+    expect(tokenizeLabel('kingHead')).toEqual(['king', 'head'])
+  })
+
+  it('splits snake_case into lowercase tokens', () => {
+    expect(tokenizeLabel('king_total_h')).toEqual(['king', 'total', 'h'])
+  })
+
+  it('splits space-separated uppercase labels', () => {
+    expect(tokenizeLabel('KING HEAD')).toEqual(['king', 'head'])
+  })
+
+  it('splits kebab-case', () => {
+    expect(tokenizeLabel('rook-height')).toEqual(['rook', 'height'])
+  })
+
+  it('handles mixed camelCase + underscores', () => {
+    expect(tokenizeLabel('bishopBase_w')).toEqual(['bishop', 'base', 'w'])
+  })
+
+  it('returns empty array for empty string', () => {
+    expect(tokenizeLabel('')).toEqual([])
+  })
+})
+
+// ── paramsForPiece ────────────────────────────────────────────────────────────
+
+describe('paramsForPiece', () => {
+  // Simulate a chess set parameter block
+  const PIECE_NAMES = ['king', 'queen', 'bishop', 'knight', 'rook', 'pawn']
+
+  // part enum — "Which Piece To Render" — its group/name/description contain no individual piece names
+  const partParam: ScadParameter = {
+    name: 'part',
+    kind: 'enum',
+    group: 'Piece Selection',
+    description: 'Which Piece To Render',
+    defaultValue: 'all',
+    options: ['all', ...PIECE_NAMES],
+  }
+
+  // shared/global params — no piece name in group/name/description
+  const wallThickness: ScadParameter = {
+    name: 'wall_thickness',
+    kind: 'slider',
+    group: 'Global',
+    description: 'Wall Thickness',
+    defaultValue: 1.5,
+    min: 0.8,
+    max: 3,
+    step: 0.1,
+  }
+  const buildPlate: ScadParameter = {
+    name: 'bed_clearance',
+    kind: 'number',
+    group: 'Build Plate',
+    description: 'Center-to-center spacing',
+    defaultValue: 2,
+    min: 0,
+    max: 10,
+    step: 0.5,
+  }
+
+  // king-specific param — group contains "king"
+  const kingParam: ScadParameter = {
+    name: 'king_head_d',
+    kind: 'slider',
+    group: 'KING HEAD',
+    description: 'King head diameter',
+    defaultValue: 18,
+    min: 10,
+    max: 30,
+    step: 0.5,
+  }
+
+  // rook-specific param — name contains "rook"
+  const rookParam: ScadParameter = {
+    name: 'rook_battlements',
+    kind: 'number',
+    group: 'Parameters',
+    description: 'Number of battlements',
+    defaultValue: 4,
+    min: 2,
+    max: 8,
+    step: 1,
+  }
+
+  const allParams = [partParam, wallThickness, buildPlate, kingParam, rookParam]
+
+  it('a shared param (no piece name in its text) is kept for every piece', () => {
+    for (const piece of PIECE_NAMES) {
+      const result = paramsForPiece(allParams, piece, PIECE_NAMES)
+      expect(result).toContainEqual(wallThickness)
+      expect(result).toContainEqual(buildPlate)
+    }
+  })
+
+  it('the part enum param ("Which Piece To Render") is treated as shared and stays visible for every piece', () => {
+    for (const piece of PIECE_NAMES) {
+      const result = paramsForPiece(allParams, piece, PIECE_NAMES)
+      expect(result).toContainEqual(partParam)
+    }
+  })
+
+  it('a "KING HEAD"-group param is kept only when king is selected', () => {
+    const forKing = paramsForPiece(allParams, 'king', PIECE_NAMES)
+    expect(forKing).toContainEqual(kingParam)
+
+    for (const piece of PIECE_NAMES.filter((p) => p !== 'king')) {
+      const result = paramsForPiece(allParams, piece, PIECE_NAMES)
+      expect(result).not.toContainEqual(kingParam)
+    }
+  })
+
+  it('a rook-named param is kept only when rook is selected', () => {
+    const forRook = paramsForPiece(allParams, 'rook', PIECE_NAMES)
+    expect(forRook).toContainEqual(rookParam)
+
+    const forKing = paramsForPiece(allParams, 'king', PIECE_NAMES)
+    expect(forKing).not.toContainEqual(rookParam)
+  })
+
+  it('a piece with no dedicated params yields only the shared params (+ part enum)', () => {
+    // pawn has no dedicated params in this set
+    const forPawn = paramsForPiece(allParams, 'pawn', PIECE_NAMES)
+    expect(forPawn).toContainEqual(partParam)
+    expect(forPawn).toContainEqual(wallThickness)
+    expect(forPawn).toContainEqual(buildPlate)
+    expect(forPawn).not.toContainEqual(kingParam)
+    expect(forPawn).not.toContainEqual(rookParam)
+    expect(forPawn).toHaveLength(3)
+  })
+
+  it('tokenization handles camelCase param names correctly', () => {
+    const camelParam: ScadParameter = {
+      name: 'bishopNeckW',
+      kind: 'number',
+      group: 'Parameters',
+      description: 'neck width',
+      defaultValue: 5,
+      min: 2,
+      max: 12,
+      step: 0.5,
+    }
+    const forBishop = paramsForPiece([...allParams, camelParam], 'bishop', PIECE_NAMES)
+    expect(forBishop).toContainEqual(camelParam)
+
+    const forRook = paramsForPiece([...allParams, camelParam], 'rook', PIECE_NAMES)
+    expect(forRook).not.toContainEqual(camelParam)
   })
 })

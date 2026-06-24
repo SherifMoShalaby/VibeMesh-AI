@@ -2,14 +2,14 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
-import { applyValuesToCode } from '../lib/params'
+import { applyValuesToCode, paramsForPiece } from '../lib/params'
 import { buildManualFixPrompt } from '../lib/compileReport'
 import { downloadBlob } from '../lib/stl'
 import type { ParamValue, ScadParameter } from '../types'
 // CodeMirror is ~170KB gzip — keep it out of the main bundle; the chunk loads lazily on the
 // first Code-tab open.
 const CodeEditor = lazy(() => import('./CodeEditor'))
-import { DSliders, DCode, DChevDown, DChevRight, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning } from './icons'
+import { DSliders, DCode, DChevDown, DChevRight, DUndo, DDownload, DCheck, DCopy, DWrench, DRefresh, IconWarning, DGrid } from './icons'
 
 const TWEAK_HINT_KEY = 'vibemesh.hint.tweak.v1'
 
@@ -20,6 +20,59 @@ function roundToStep(n: number, step: number | undefined): number {
   return Number((Math.round(n / step) * step).toFixed(decimals))
 }
 
+/** "Objects" outliner — lists the individual pieces of a multi-part design.
+ *  Row-click and scene-click are bidirectional via the shared `selectedPiece`.
+ *  CRITICAL: never writes `paramValues.part` — that would trigger compile() and
+ *  null out pieces[], causing a recompile storm. This is purely a read-only highlight. */
+function ObjectsOutliner({ partParam }: { partParam: { options?: (string | number | boolean)[] } }) {
+  const selectedPiece = useUi((s) => s.selectedPiece)
+  const setSelectedPiece = useUi((s) => s.setSelectedPiece)
+  const viewMode = useStore((s) => s.viewMode)
+
+  // Only meaningful in the plates/slicer view (where separate per-piece meshes exist)
+  const inPlatesView = viewMode === 'plates'
+
+  // Options minus 'all' — these are the printable pieces
+  const pieces = useMemo(
+    () => (partParam.options ?? []).filter((o) => String(o) !== 'all').map(String),
+    [partParam.options],
+  )
+
+  if (pieces.length === 0) return null
+
+  return (
+    <div className="objects-outliner">
+      <div className="outliner-header">
+        <DGrid />
+        <span>Objects</span>
+        {!inPlatesView && <span className="outliner-hint">switch to Slicer view to select</span>}
+      </div>
+      <ul className="outliner-list" role="listbox" aria-label="Model pieces">
+        {pieces.map((name) => {
+          const isSelected = selectedPiece === name
+          return (
+            <li
+              key={name}
+              role="option"
+              aria-selected={isSelected}
+              className={`outliner-row${isSelected ? ' is-selected' : ''}${!inPlatesView ? ' is-disabled' : ''}`}
+              onClick={() => {
+                if (!inPlatesView) return
+                // Toggle: clicking the already-selected piece deselects it
+                setSelectedPiece(isSelected ? null : name)
+              }}
+              title={inPlatesView ? `Select ${name}` : 'Switch to Slicer view to select pieces'}
+            >
+              <span className="outliner-dot" />
+              <span className="outliner-name">{name}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 export default function RightPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
   const rightTab = useUi((s) => s.rightTab)
   const setRightTab = useUi((s) => s.setRightTab)
@@ -27,6 +80,8 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
   const compileStatus = useStore((s) => s.compileStatus)
   const params = useStore((s) => s.params)
   const activeId = useStore((s) => s.activeId)
+  // multi-part 'part' enum — drives the Objects outliner
+  const partParam = useMemo(() => params.find((p) => p.name === 'part' && p.kind === 'enum'), [params])
 
   // teach the causality: the chat is writing the code right now. Subscribe to the derived
   // boolean (flips once when the first fence streams) — NOT raw streamText, which would re-render
@@ -104,6 +159,8 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
         </button>
       </div>
 
+      {rightTab === 'params' && partParam && <ObjectsOutliner partParam={partParam} />}
+
       {rightTab === 'params' && params.length > 0 && !tweakHintDone && (
         <div className="tweak-hint" role="note">
           <span className="th-text">These sliders tweak the model's recipe — ask in chat to rewrite it.</span>
@@ -111,7 +168,15 @@ export default function RightPanel({ mobileShow = false, paneCollapsed = false }
         </div>
       )}
 
-      {rightTab === 'code' ? <CodePanel /> : <ParamsPanel collapsed={collapsed} onToggle={toggle} />}
+      {rightTab === 'code' ? (
+    <CodePanel />
+  ) : (
+    <ParamsPanel
+      collapsed={collapsed}
+      onToggle={toggle}
+      partParam={partParam}
+    />
+  )}
     </section>
   )
 }
@@ -184,22 +249,55 @@ function ParamHistory() {
   )
 }
 
-function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle: (group: string) => void }) {
+function ParamsPanel({
+  collapsed,
+  onToggle,
+  partParam,
+}: {
+  collapsed: Set<string>
+  onToggle: (group: string) => void
+  partParam: ScadParameter | undefined
+}) {
   const params = useStore((s) => s.params)
   const paramValues = useStore((s) => s.paramValues)
   const setParamValue = useStore((s) => s.setParamValue)
   const resetParams = useStore((s) => s.resetParams)
   const reduce = useReducedMotion()
 
+  // piece-filter state
+  const selectedPiece = useUi((s) => s.selectedPiece)
+  const [showAll, setShowAll] = useState(false)
+
+  // reset showAll whenever the selected piece changes so each new selection re-filters
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowAll(false)
+  }, [selectedPiece])
+
+  // piece names are the part-enum options minus 'all'
+  const pieceNames = useMemo(
+    () => (partParam?.options ?? []).filter((o) => String(o) !== 'all').map(String),
+    [partParam],
+  )
+
+  // true when we should narrow the param list to the selected piece
+  const filtering = !!selectedPiece && pieceNames.length > 0 && !showAll
+
+  // the param list to display (filtered or all)
+  const visibleParams = useMemo(
+    () => (filtering ? paramsForPiece(params, selectedPiece!, pieceNames) : params),
+    [filtering, params, selectedPiece, pieceNames],
+  )
+
   const groups = useMemo(() => {
     const map = new Map<string, ScadParameter[]>()
-    for (const p of params) {
+    for (const p of visibleParams) {
       const list = map.get(p.group) ?? []
       list.push(p)
       map.set(p.group, list)
     }
     return Array.from(map.entries())
-  }, [params])
+  }, [visibleParams])
 
   if (params.length === 0) {
     return (
@@ -216,8 +314,25 @@ function ParamsPanel({ collapsed, onToggle }: { collapsed: Set<string>; onToggle
   return (
     <>
       <div className="panel-scroll">
+        {/* piece-filter bar — shown only when a piece is selected in the Slicer view */}
+        {filtering && (
+          <div className="param-filter-bar">
+            <span className="param-filter-label">
+              {selectedPiece} · {visibleParams.length} of {params.length}
+            </span>
+            <button
+              className="chip-btn param-filter-showall"
+              onClick={() => setShowAll(true)}
+              title="Show all parameters"
+            >
+              Show all
+            </button>
+          </div>
+        )}
         {groups.map(([group, items]) => {
-          const open = !collapsed.has(group)
+          // when filtering, auto-expand all groups (they're few + all relevant)
+          // without mutating the parent collapsed state
+          const open = filtering ? true : !collapsed.has(group)
           return (
             <section key={group} className={`param-group${open ? '' : ' collapsed'}`}>
               <button className="param-group-head" onClick={() => onToggle(group)} aria-expanded={open}>

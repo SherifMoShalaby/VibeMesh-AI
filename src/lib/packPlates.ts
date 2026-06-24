@@ -124,3 +124,56 @@ export function packPlates(
 
   return { plates, oversize }
 }
+
+/** A per-piece nudge over the packer result, keyed by the packer placement name (e.g. `lid#1`).
+ *  `dx`/`dy` are bed-local mm offsets ADDED to the packer corner; `rot` is an ABSOLUTE Z-rotation in
+ *  {0,90} that REPLACES the packer's chosen `rot` (NOT additive — SlicerScene and buildThreeMF both
+ *  branch only on `rot===90`). Default (no entry) ⇒ the pure packer seat. */
+export interface PieceOverride {
+  dx: number
+  dy: number
+  rot: 0 | 90
+}
+
+/** Snap any number to the nearest of {0,90} — the only two rotations the seat math / .3mf export bake. */
+function snapRot(r: number): 0 | 90 {
+  return Math.abs(((r % 180) + 180) % 180 - 90) < 45 ? 90 : 0
+}
+
+/**
+ * The SINGLE source of truth for where each piece sits in the plates/Arrange view AND in both .3mf
+ * export paths (the WYSIWYG guard). Runs `packPlates` over the qty-expanded footprints, THEN applies
+ * the per-piece override deltas, THEN re-snaps `rot` to {0,90}. Replacing the packer's `rot` with the
+ * override's absolute value also re-swaps the PLACED footprint (`w`/`h`) so the bed-fit math downstream
+ * stays consistent. Reuses `packPlates` verbatim — no second nester.
+ *
+ * @param pieces  per-part footprints (name/w/h/z in print orientation), pre-expansion
+ * @param qtyOf   per-part print quantity (clamped [1,99] inside expandFootprints)
+ * @param bed     printer bed (mm)
+ * @param overrides  sparse per-piece nudge map keyed by packer placement name (empty ⇒ pure packer)
+ */
+export function effectivePlacements(
+  pieces: PieceFootprint[],
+  qtyOf: (name: string) => number,
+  bed: { x: number; y: number; z: number },
+  overrides: Record<string, PieceOverride> = {},
+): PlatePlan {
+  const expanded = expandFootprints(pieces, qtyOf)
+  const plan = packPlates(expanded, { x: bed.x, y: bed.y, z: bed.z })
+  if (Object.keys(overrides).length === 0) return plan // pure packer — zero behavior change
+  const plates = plan.plates.map((placements) =>
+    placements.map((pl) => {
+      const ov = overrides[pl.name]
+      if (!ov) return pl
+      const rot = snapRot(ov.rot)
+      // pl.w/pl.h are POST-rotation (packer already swapped for rot===90). Recover the as-drawn
+      // footprint, then re-swap for the override's absolute rot so w/h match the new orientation.
+      const drawnW = pl.rot === 90 ? pl.h : pl.w
+      const drawnH = pl.rot === 90 ? pl.w : pl.h
+      const w = rot === 90 ? drawnH : drawnW
+      const h = rot === 90 ? drawnW : drawnH
+      return { name: pl.name, x: pl.x + ov.dx, y: pl.y + ov.dy, w, h, rot }
+    }),
+  )
+  return { plates, oversize: plan.oversize }
+}

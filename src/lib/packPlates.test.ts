@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { packPlates, expandFootprints, baseName, type PieceFootprint } from './packPlates'
+import { packPlates, expandFootprints, effectivePlacements, baseName, type PieceFootprint, type PieceOverride } from './packPlates'
 
 const bigBed = { x: 256, y: 256, z: 256 }
 
@@ -60,5 +60,65 @@ describe('packPlates + expandFootprints — N copies pack as N placements (byNam
     expect(plan.plates.flat()).toHaveLength(0)
     expect(plan.oversize).toHaveLength(3)
     expect([...new Set(plan.oversize.map((o) => baseName(o.name)))]).toEqual(['huge'])
+  })
+})
+
+describe('effectivePlacements — shared packer+override selector (Phase 4 Arrange)', () => {
+  const pieces: PieceFootprint[] = [
+    { name: 'lid', w: 30, h: 20, z: 5 },
+    { name: 'base', w: 40, h: 25, z: 5 },
+  ]
+  const qty1 = () => 1
+
+  it('with NO overrides returns exactly the pure packer plan (zero behavior change)', () => {
+    const packer = packPlates(expandFootprints(pieces, qty1), bigBed)
+    const eff = effectivePlacements(pieces, qty1, bigBed, {})
+    expect(eff).toEqual(packer)
+  })
+
+  it('WYSIWYG: the preview plan deep-equals the export plan for identical (pieces, qty, bed, overrides)', () => {
+    // both the Viewport memo and BOTH .3mf export paths call this same function with the same args —
+    // this is the export-parity guard. Calling it twice with identical inputs must be byte-identical.
+    const overrides: Record<string, PieceOverride> = {
+      lid: { dx: 7, dy: -3, rot: 90 },
+      base: { dx: 0, dy: 12, rot: 0 },
+    }
+    const preview = effectivePlacements(pieces, qty1, bigBed, overrides)
+    const exported = effectivePlacements(pieces, qty1, bigBed, overrides)
+    expect(preview).toEqual(exported)
+  })
+
+  it('applies dx/dy as a delta over the packer corner', () => {
+    const base = effectivePlacements(pieces, qty1, bigBed, {})
+    const lid0 = base.plates.flat().find((p) => p.name === 'lid')!
+    const moved = effectivePlacements(pieces, qty1, bigBed, { lid: { dx: 5, dy: 9, rot: lid0.rot } })
+    const lid1 = moved.plates.flat().find((p) => p.name === 'lid')!
+    expect(lid1.x).toBeCloseTo(lid0.x + 5)
+    expect(lid1.y).toBeCloseTo(lid0.y + 9)
+  })
+
+  it('rot REPLACES the packer rot (absolute) and re-swaps the placed footprint', () => {
+    const base = effectivePlacements(pieces, qty1, bigBed, {})
+    const lid0 = base.plates.flat().find((p) => p.name === 'lid')!
+    // force the opposite rotation; w/h must swap to match (vs lid0's as-drawn 30×20)
+    const target: 0 | 90 = lid0.rot === 90 ? 0 : 90
+    const rotated = effectivePlacements(pieces, qty1, bigBed, { lid: { dx: 0, dy: 0, rot: target } })
+    const lid1 = rotated.plates.flat().find((p) => p.name === 'lid')!
+    expect(lid1.rot).toBe(target)
+    expect(lid1.w).toBeCloseTo(lid0.h)
+    expect(lid1.h).toBeCloseTo(lid0.w)
+  })
+
+  it('snaps an off-axis override rot to the nearest of {0,90}', () => {
+    const a = effectivePlacements(pieces, qty1, bigBed, { lid: { dx: 0, dy: 0, rot: 80 as unknown as 0 | 90 } })
+    const b = effectivePlacements(pieces, qty1, bigBed, { lid: { dx: 0, dy: 0, rot: 10 as unknown as 0 | 90 } })
+    expect(a.plates.flat().find((p) => p.name === 'lid')!.rot).toBe(90)
+    expect(b.plates.flat().find((p) => p.name === 'lid')!.rot).toBe(0)
+  })
+
+  it('ignores overrides for keys that no longer name a placement (stale-key tolerance)', () => {
+    const eff = effectivePlacements(pieces, qty1, bigBed, { ghost: { dx: 99, dy: 99, rot: 90 } })
+    const pure = effectivePlacements(pieces, qty1, bigBed, {})
+    expect(eff).toEqual(pure)
   })
 })

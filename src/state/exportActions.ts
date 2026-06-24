@@ -6,7 +6,7 @@ import { openscad } from '../lib/openscad/client'
 import { downloadBlob, stlBBox, transformStl, type StlBBox } from '../lib/stl'
 import { buildThreeMF } from '../lib/threeMF'
 import { buildOrcaProject } from '../lib/orcaProject'
-import { packPlates, expandFootprints, baseName } from '../lib/packPlates'
+import { effectivePlacements, baseName } from '../lib/packPlates'
 import { buildShareFile, serializeShareFile } from '../lib/shareFile'
 import { useUi } from './ui'
 
@@ -142,16 +142,18 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       } finally {
         set({ exportingPlates: false })
       }
-      // pack the rendered pieces onto bed-sized plates — the SAME packer + qty expansion the slicer
-      // view uses, so each .3mf is WYSIWYG with what was on screen. Per-part print quantities expand
-      // each piece into N entries with UNIQUE keys (lid#0, lid#1…), so N copies pack as N placements
-      // instead of silently collapsing under one name (the byName→byKey fix).
-      const quantities = get().projects.find((p) => p.id === projectAtStart)?.partQuantities ?? {}
-      const expanded = expandFootprints(
+      // pack the rendered pieces onto bed-sized plates via the SHARED selector — the SAME packer +
+      // qty expansion + Arrange overrides the slicer view applies, so each .3mf is WYSIWYG with what
+      // was on screen (the export-parity guard). Per-part print quantities expand each piece into N
+      // entries with UNIQUE keys (lid#0…), and the per-piece overrides nudge them just like the preview.
+      const proj = get().projects.find((p) => p.id === projectAtStart)
+      const quantities = proj?.partQuantities ?? {}
+      const plan = effectivePlacements(
         compiled.map((c) => ({ name: c.name, w: c.bbox.x, h: c.bbox.y, z: c.bbox.z })),
         (name) => quantities[name] ?? 1,
+        { x: bed.x, y: bed.y, z: bed.z },
+        proj?.pieceOverrides ?? {},
       )
-      const plan = packPlates(expanded, { x: bed.x, y: bed.y, z: bed.z })
       const byName = new Map(compiled.map((c) => [c.name, c]))
       let written = 0
       plan.plates.forEach((placements, pi) => {
@@ -343,18 +345,24 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       } finally {
         set({ exportingPlates: false })
       }
-      // pack the rendered pieces onto bed-sized plates — the SAME packer the slicer view uses,
-      // so each .orca.3mf is WYSIWYG with what was on screen
-      const plan = packPlates(
+      // pack the rendered pieces onto bed-sized plates via the SHARED selector — the SAME packer +
+      // qty expansion + Arrange overrides the slicer view applies, so each .orca.3mf is WYSIWYG with
+      // what was on screen (the export-parity guard).
+      const proj = get().projects.find((p) => p.id === projectAtStart)
+      const quantities = proj?.partQuantities ?? {}
+      const plan = effectivePlacements(
         compiled.map((c) => ({ name: c.name, w: c.bbox.x, h: c.bbox.y, z: c.bbox.z })),
+        (name) => quantities[name] ?? 1,
         { x: bed.x, y: bed.y, z: bed.z },
+        proj?.pieceOverrides ?? {},
       )
       const byName = new Map(compiled.map((c) => [c.name, c]))
       let written = 0
       plan.plates.forEach((placements, pi) => {
         const plateParts = placements
           .map((pl) => {
-            const c = byName.get(pl.name)
+            // resolve the unique replica placement key back to its compiled piece via the BASE name
+            const c = byName.get(baseName(pl.name))
             return c ? { name: pl.name, stl: c.stl, place: { x: pl.x, y: pl.y, rot: pl.rot } } : null
           })
           .filter((p): p is { name: string; stl: ArrayBuffer; place: { x: number; y: number; rot: 0 | 90 } } => p !== null)
@@ -369,8 +377,16 @@ export function createExportActions(set: StoreApi<VibeState>['setState'], get: S
       // degradation is surfaced even alongside failures (not swallowed by the problem branch)
       const problems: string[] = []
       if (failed.length) problems.push(`failed to render: ${failed.join(', ')}`)
-      if (plan.oversize.length)
-        problems.push(`too big for the ${bed.label} bed: ${plan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')}`)
+      if (plan.oversize.length) {
+        // a part is oversize regardless of how many copies — dedupe replica keys back to base names
+        const seen = new Set<string>()
+        const over: string[] = []
+        for (const o of plan.oversize) {
+          const b = baseName(o.name)
+          if (!seen.has(b)) { seen.add(b); over.push(`${b} (${o.reason})`) }
+        }
+        problems.push(`too big for the ${bed.label} bed: ${over.join(', ')}`)
+      }
       const degradedNote = degraded.length ? ` ${degraded.length} part(s) exported at Draft (too heavy for ${preset.label}): ${degraded.join(', ')}.` : ''
       if (problems.length) {
         const note = `PLATES EXPORT INCOMPLETE — ${problems.join('; ')} (${written} plate file(s) written).${degradedNote}`
