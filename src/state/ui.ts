@@ -50,8 +50,16 @@ interface UiState {
   setOrtho: (v: boolean) => void
   measureMode: boolean
   setMeasureMode: (v: boolean) => void
+  /** tool-rail Orbit/Move MODE flag — true ⇒ move/rotate-the-whole-model gizmo is armed.
+   *  NOT piece identity (see selectedPiece). The Move button sets this true with no mesh click. */
   selected: boolean
   setSelected: (v: boolean) => void
+  /** per-piece selection identity in the plates/Arrange view — the packer placement key
+   *  (a part-enum name resolved via baseName(), e.g. 'knight' or 'lid#1'), NOT a pieces[] index.
+   *  Orthogonal to `selected`: a piece can be selected without arming the whole-model move gizmo.
+   *  Reset wherever geometry is replaced or the project switches. */
+  selectedPiece: string | null
+  setSelectedPiece: (name: string | null) => void
   gizmoMode: 'translate' | 'rotate'
   setGizmoMode: (m: 'translate' | 'rotate') => void
 
@@ -120,6 +128,8 @@ export const useUi = create<UiState>((set) => ({
   setMeasureMode: (measureMode) => set({ measureMode }),
   selected: false,
   setSelected: (selected) => set({ selected }),
+  selectedPiece: null,
+  setSelectedPiece: (selectedPiece) => set({ selectedPiece }),
   gizmoMode: 'translate',
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
 

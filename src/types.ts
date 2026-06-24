@@ -99,6 +99,11 @@ export interface Project {
    *  not geometry, so it never re-renders or pollutes the slider UI. Optional ⇒ no schema migration;
    *  old records load with it undefined. Untouched by version restore (a print order, not geometry). */
   partQuantities?: Record<string, number>
+  /** Per-piece ARRANGE nudges over the auto-packer result, keyed by the packer placement key
+   *  (`lid#1`). PROJECT METADATA like partQuantities — a bed layout, not geometry, so it never
+   *  re-renders or pollutes the slider UI. Optional ⇒ no schema migration; empty/absent ⇒ pure
+   *  packer layout. Untouched by version restore (a layout, not the model). */
+  pieceOverrides?: Record<string, { dx: number; dy: number; rot: 0 | 90 }>
   chat: ChatMessage[]
   /** Versions rolled past via Restore: the abandoned tail (everything after the
    *  restored message), kept so a rollback is reversible (redo) until the user

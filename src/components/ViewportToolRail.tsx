@@ -33,6 +33,9 @@ function ToolRail({ hasModel, platesView, viewApi, doFit, onResetMeasure }: Tool
   const setMeasureMode = useUi((s) => s.setMeasureMode)
   const selected = useUi((s) => s.selected)
   const setSelected = useUi((s) => s.setSelected)
+  const gizmoMode = useUi((s) => s.gizmoMode)
+  const setGizmoMode = useUi((s) => s.setGizmoMode)
+  const selectedPiece = useUi((s) => s.selectedPiece)
 
   const canUndo = useStore((s) => s.vpPast.length > 0)
   const canRedo = useStore((s) => s.vpFuture.length > 0)
@@ -55,12 +58,13 @@ function ToolRail({ hasModel, platesView, viewApi, doFit, onResetMeasure }: Tool
         <DRotate />
       </button>
       <button
-        className={`tool-btn${selected ? ' active' : ''}`}
-        data-tip="Move / rotate part"
-        aria-label="Move or rotate part"
-        aria-pressed={selected}
-        disabled={!hasModel || platesView}
-        onClick={() => setSelected(true)}
+        className={`tool-btn${(platesView ? gizmoMode === 'translate' && !!selectedPiece : selected) ? ' active' : ''}`}
+        data-tip={platesView ? 'Arrange: move part on the bed' : 'Move / rotate part'}
+        aria-label={platesView ? 'Arrange part on the bed' : 'Move or rotate part'}
+        aria-pressed={platesView ? gizmoMode === 'translate' && !!selectedPiece : selected}
+        // plates view: per-piece Arrange gizmo (needs a selected piece); single view: whole-model move gizmo
+        disabled={platesView ? !selectedPiece : !hasModel}
+        onClick={() => (platesView ? setGizmoMode('translate') : setSelected(true))}
       >
         <DMove />
       </button>
@@ -128,10 +132,12 @@ function ToolRail({ hasModel, platesView, viewApi, doFit, onResetMeasure }: Tool
         <DCamera />
       </button>
       <div className="rail-sep" />
-      <button className="tool-btn" disabled={!canUndo || platesView} data-tip="Undo (⌘Z)" aria-label="Undo placement" onClick={vpUndo}>
+      {/* Undo/Redo cover BOTH whole-model placement (single view) and per-piece Arrange overrides
+          (plates view) — both push vpPast — so they must NOT be gated on platesView. */}
+      <button className="tool-btn" disabled={!canUndo} data-tip="Undo (⌘Z)" aria-label="Undo placement" onClick={vpUndo}>
         <DUndo />
       </button>
-      <button className="tool-btn" disabled={!canRedo || platesView} data-tip="Redo (⇧⌘Z)" aria-label="Redo placement" onClick={vpRedo}>
+      <button className="tool-btn" disabled={!canRedo} data-tip="Redo (⇧⌘Z)" aria-label="Redo placement" onClick={vpRedo}>
         <span style={{ display: 'grid', transform: 'scaleX(-1)' }}><DUndo /></span>
       </button>
     </div>

@@ -254,3 +254,31 @@ export function extractIntent(prose: string): DesignIntent | null {
 export function stripIntentLine(prose: string): string {
   return prose.replace(new RegExp(INTENT_RE_SRC, 'gm'), '').replace(/\n{3,}/g, '\n\n').trim()
 }
+
+/** Lowercase word tokens of a label — splits snake_case, kebab, spaces, AND camelCase.
+ *  e.g. "kingHead" → ["king","head"], "king_total_h" → ["king","total","h"], "KING HEAD" → ["king","head"] */
+export function tokenizeLabel(s: string): string[] {
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
+
+/** Filter params to those relevant to `piece`: a param is kept if its searchable text names no
+ *  piece (shared/global) OR names the selected `piece`. A param that names only OTHER pieces is
+ *  hidden. `pieceNames` is the part-enum options minus 'all'. */
+export function paramsForPiece(
+  params: ScadParameter[],
+  piece: string,
+  pieceNames: string[],
+): ScadParameter[] {
+  const names = pieceNames.map((p) => p.toLowerCase())
+  const target = piece.toLowerCase()
+  return params.filter((p) => {
+    const tokens = new Set(tokenizeLabel(`${p.group} ${p.name} ${p.description ?? ''}`))
+    const named = names.filter((n) => tokens.has(n))
+    // Keep when: no piece name mentioned (shared/global) OR the target piece is named
+    return named.length === 0 || named.includes(target)
+  })
+}

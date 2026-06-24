@@ -10,7 +10,7 @@ import { resolveBed } from '../types'
 import { parseStl, type ModelGeometry } from '../lib/stl'
 import { analyzePrintability, type PrintabilityReport } from '../lib/printability'
 import { meshTint } from '../lib/viewportTint'
-import { packPlates, expandFootprints, baseName, type Placement } from '../lib/packPlates'
+import { effectivePlacements, baseName, type Placement } from '../lib/packPlates'
 import { CAPTURE_VIEW_NAMES, canvasToChatImage, registerMultiCapture, registerViewportCanvas } from '../lib/capture'
 import type { CaptureViewName } from '../lib/capture'
 import EmptyState from './EmptyState'
@@ -59,9 +59,15 @@ export default function Viewport() {
   const viewMode = useStore((s) => s.viewMode)
   const pieces = useStore((s) => s.pieces)
   const partQuantities = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.partQuantities ?? EMPTY_QTY)
+  const pieceOverrides = useStore((s) => s.pieceOverrides)
+  const setPieceOverride = useStore((s) => s.setPieceOverride)
+  const removePieceOverride = useStore((s) => s.removePieceOverride)
+  const clearPieceOverrides = useStore((s) => s.clearPieceOverrides)
+  const selectedPiece = useUi((s) => s.selectedPiece)
   const slicing = useStore((s) => s.slicing)
   const slicerFailed = useStore((s) => s.slicerFailed)
   const compilePieces = useStore((s) => s.compilePieces)
+  const setViewMode = useStore((s) => s.setViewMode)
 
   const shading = useUi((s) => s.shading)
   const xray = useUi((s) => s.xray)
@@ -71,6 +77,7 @@ export default function Viewport() {
   const setMeasureMode = useUi((s) => s.setMeasureMode)
   const selected = useUi((s) => s.selected)
   const setSelected = useUi((s) => s.setSelected)
+  const setSelectedPiece = useUi((s) => s.setSelectedPiece)
   const gizmoMode = useUi((s) => s.gizmoMode)
   const setGizmoMode = useUi((s) => s.setGizmoMode)
 
@@ -111,6 +118,7 @@ export default function Viewport() {
   // deselect + clear measurements when geometry changes
   useEffect(() => {
     setSelected(false)
+    setSelectedPiece(null)
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMeasurePts([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,20 +212,27 @@ export default function Viewport() {
   }, [sliceGeos])
   const platePlan = useMemo(() => {
     if (!pieces) return null
-    // expand each piece by its per-part print quantity so the preview shows EXACTLY what the .3mf
-    // export packs (WYSIWYG). Replicas get unique keys (lid#0, lid#1…); the count is clamped, not
-    // the render, so preview and file never disagree. oversize is deduped back to base names.
-    const expanded = expandFootprints(
+    // effectivePlacements = the SAME packer + qty expansion both .3mf export paths run, THEN the
+    // per-piece Arrange overrides applied on top (WYSIWYG: preview == export). Replicas get unique
+    // keys (lid#0…); the count is clamped, not the render. oversize is deduped back to base names.
+    const plan = effectivePlacements(
       pieces.map((p) => ({ name: p.name, w: p.bbox.x, h: p.bbox.y, z: p.bbox.z })),
       (name) => partQuantities[name] ?? 1,
+      { x: bed.x, y: bed.y, z: bed.z },
+      pieceOverrides,
     )
-    const plan = packPlates(expanded, { x: bed.x, y: bed.y, z: bed.z })
     const seen = new Set<string>()
     const oversize = plan.oversize
       .filter((o) => { const b = baseName(o.name); if (seen.has(b)) return false; seen.add(b); return true })
       .map((o) => ({ name: baseName(o.name), reason: o.reason }))
-    return { plates: plan.plates, oversize }
-  }, [pieces, partQuantities, bed.x, bed.y, bed.z])
+    // off-bed / overlap re-validation (Phase 4): a nudged-off-bed or colliding piece must warn as
+    // loudly as a packer oversize — fold it into the SAME readout the packer's oversize feeds.
+    const offBed = validateLayout(plan.plates, { x: bed.x, y: bed.y })
+    const combined = [...oversize]
+    const known = new Set(oversize.map((o) => o.name))
+    for (const o of offBed) if (!known.has(o.name)) { known.add(o.name); combined.push(o) }
+    return { plates: plan.plates, oversize: combined }
+  }, [pieces, partQuantities, pieceOverrides, bed.x, bed.y, bed.z])
   const platesTbox = useMemo<TBox>(() => {
     if (!platePlan || platePlan.plates.length === 0) return null
     const n = platePlan.plates.length
@@ -284,6 +299,23 @@ export default function Viewport() {
     setMeshTransform(null)
   }
 
+  /* ── per-piece arrange actions (plates view) ── */
+  const hasOverrides = Object.keys(pieceOverrides).length > 0
+  // center the selected piece's PLACED footprint on its plate: shift its current displayed corner to
+  // the bed-centered corner. The displayed corner already includes the override, so add the delta.
+  const centerSelectedPiece = () => {
+    if (!selectedPiece || !platePlan) return
+    const pl = platePlan.plates.flat().find((p) => p.name === selectedPiece)
+    if (!pl) return
+    const cur = pieceOverrides[selectedPiece] ?? { dx: 0, dy: 0, rot: pl.rot }
+    const targetX = (bed.x - pl.w) / 2
+    const targetY = (bed.y - pl.h) / 2
+    setPieceOverride(selectedPiece, { dx: cur.dx + (targetX - pl.x), dy: cur.dy + (targetY - pl.y), rot: pl.rot })
+  }
+  const resetSelectedPiece = () => {
+    if (selectedPiece) removePieceOverride(selectedPiece) // snaps this piece back to its packer seat
+  }
+
   /* ── keyboard: F fit · Esc deselect · Del delete · ⌘Z/⇧⌘Z undo/redo ── */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -320,9 +352,13 @@ export default function Viewport() {
       }
       if (e.key === 'Escape') {
         setSelected(false)
+        setSelectedPiece(null)
         setMeasureMode(false)
         setMeasurePts([])
       }
+      // Delete/Backspace removes the whole model — gate STRICTLY on the move-mode boolean.
+      // A piece selection (selectedPiece) must NEVER trigger clearModel() (project-geometry wipe);
+      // per-piece delete is handled in the arrange surface in a later phase, not here.
       if ((e.key === 'Delete' || e.key === 'Backspace') && useUi.getState().selected) deleteModel()
     }
     window.addEventListener('keydown', onKey)
@@ -362,7 +398,10 @@ export default function Viewport() {
         onCreated={({ gl }) => {
           registerViewportCanvas(gl.domElement)
         }}
-        onPointerMissed={() => setSelected(false)}
+        onPointerMissed={() => {
+          setSelected(false)
+          setSelectedPiece(null)
+        }}
       >
         <color attach="background" args={['#2f3236']} />
         <hemisphereLight args={['#cdd6e0', '#23262b', 0.85]} />
@@ -509,7 +548,20 @@ export default function Viewport() {
               <span className="ac-hint">
                 Drag orbit · <kbd>right</kbd>/<kbd>middle</kbd> pan · <kbd>scroll</kbd> zoom · <kbd>F</kbd> fit · <kbd>0</kbd>–<kbd>6</kbd> views
               </span>
-              {isAssemblyPreview && <span className="ac-hint">check each part below for bed fit</span>}
+              {isAssemblyPreview && (
+                <>
+                  <span className="ac-hint">
+                    assembled preview — pieces are laid out on the bed in the Slicer view
+                  </span>
+                  <button
+                    className={`split-btn${overBed ? ' arrange-suggest' : ''}`}
+                    onClick={() => void setViewMode('plates')}
+                    title="Switch to the Slicer view — pieces are packed on the build plate (overflow spills to plate 2)"
+                  >
+                    <DWrench /> Arrange parts on bed
+                  </button>
+                </>
+              )}
               {meshTransform && <span className="ac-hint">moved — placement is saved into exports</span>}
               {tbox && tbox.minZ < -0.01 && (
                 <span className="ac-warn">
@@ -583,10 +635,70 @@ export default function Viewport() {
         />
       )}
 
+      {/* ── per-piece ARRANGE toolbar (plates view, a piece selected) ── */}
+      {platesView && selectedPiece && (
+        <div className="sel-bar arrange-bar">
+          <span className="ac-label">{baseName(selectedPiece)}</span>
+          <button className={`plate-chip${gizmoMode === 'translate' ? ' active' : ''}`} aria-pressed={gizmoMode === 'translate'} onClick={() => setGizmoMode('translate')} title="Move on the bed (XY)">
+            <DMove /> Move
+          </button>
+          <button className={`plate-chip${gizmoMode === 'rotate' ? ' active' : ''}`} aria-pressed={gizmoMode === 'rotate'} onClick={() => setGizmoMode('rotate')} title="Rotate flat (snaps 0°/90°)">
+            <DRotate /> Rotate
+          </button>
+          <button className="plate-chip" onClick={centerSelectedPiece} title="Center this piece on its plate">
+            <IconCenter /> Center
+          </button>
+          {pieceOverrides[selectedPiece] && (
+            <button className="plate-chip" onClick={resetSelectedPiece} title="Reset this piece to the auto-packer position">
+              <DUndo /> Reset
+            </button>
+          )}
+          <button className="plate-chip" disabled={!hasOverrides} onClick={clearPieceOverrides} title="Snap every piece back to the auto-packer layout">
+            <DWrench /> Arrange all
+          </button>
+        </div>
+      )}
+
       {showEmpty && <EmptyState />}
     </main>
     </section>
   )
+}
+
+/** Re-validate an Arrange layout: a nudged piece that ran off the bed (outside the gap-inset usable
+ *  area) or that overlaps a neighbor on the same plate is reported with the SAME {name, reason} shape
+ *  the packer's oversize uses, so the existing slicer readout warns identically. Names are deduped
+ *  back to base names. Pure — keyed only on the placement plan + bed. */
+function validateLayout(plates: Placement[][], bed: { x: number; y: number }, gap = 6): { name: string; reason: 'footprint' }[] {
+  const out: { name: string; reason: 'footprint' }[] = []
+  const seen = new Set<string>()
+  const flag = (name: string) => {
+    const b = baseName(name)
+    if (seen.has(b)) return
+    seen.add(b)
+    out.push({ name: b, reason: 'footprint' })
+  }
+  const usableX = bed.x - 2 * gap
+  const usableY = bed.y - 2 * gap
+  for (const placements of plates) {
+    for (let i = 0; i < placements.length; i++) {
+      const p = placements[i]
+      // off-bed: min corner before the gap margin, or max corner past the usable area
+      if (p.x < gap - 1e-6 || p.y < gap - 1e-6 || p.x - gap + p.w > usableX + 1e-6 || p.y - gap + p.h > usableY + 1e-6) {
+        flag(p.name)
+        continue
+      }
+      // neighbor overlap (AABB intersection) within the same plate
+      for (let j = i + 1; j < placements.length; j++) {
+        const q = placements[j]
+        if (p.x < q.x + q.w - 1e-6 && p.x + p.w > q.x + 1e-6 && p.y < q.y + q.h - 1e-6 && p.y + p.h > q.y + 1e-6) {
+          flag(p.name)
+          flag(q.name)
+        }
+      }
+    }
+  }
+  return out
 }
 
 function matrixOf(t: { position: [number, number, number]; rotation: [number, number, number] }): THREE.Matrix4 {
@@ -929,11 +1041,141 @@ function ProjectionFit({ apiRef }: { apiRef: React.MutableRefObject<ViewApi | nu
   return null
 }
 
+/** A single pickable piece mesh inside SlicerScene — owns its own hover state so
+ *  each mesh gets independent hover tracking, and calls invalidate() so the
+ *  emissive tint actually repaints under frameloop='demand'. When selected and a
+ *  per-piece gizmo is armed, it mounts a TransformControls (XY-translate or Z-rotate)
+ *  bound to its OWN mesh and commits a clean (dx,dy,rot) override on mouse-up — the
+ *  inversion runs in the plate-group-LOCAL frame (the gizmo lives inside the same
+ *  [ox,0,0] group as the mesh), so the constant plate offset cancels and never enters
+ *  the delta. The bed-local seat offset (the rot-dependent rmin) is constant during a
+ *  drag, so the local-position delta IS the (dx,dy) delta over the displayed corner. */
+function SlicerPiece({
+  pl,
+  g,
+  bed,
+  isSelected,
+  onSelect,
+  gizmo,
+  gizmoMode,
+  onCommit,
+}: {
+  pl: Placement
+  g: ModelGeometry
+  bed: { x: number; y: number; z: number }
+  isSelected: boolean
+  onSelect: (name: string) => void
+  /** mount the per-piece arrange gizmo on this (selected) piece */
+  gizmo: boolean
+  gizmoMode: 'translate' | 'rotate'
+  /** commit a clean override: dx/dy are ADDED to the current override, rot is ABSOLUTE in {0,90} */
+  onCommit: (name: string, next: { dx: number; dy: number; rot: 0 | 90 }) => void
+}) {
+  const { invalidate } = useThree()
+  const [hovered, setHovered] = useState(false)
+  // state (not a raw ref read) so the gizmo mounts on the NEXT render once the mesh exists — reading
+  // meshRef.current during render is a react-hooks/refs violation and can miss the update.
+  const [mesh, setMesh] = useState<THREE.Mesh | null>(null)
+  const dragStart = useRef<{ x: number; y: number } | null>(null)
+  const bb = g.geometry.boundingBox
+  if (!bb) return null
+  // bed is centered at the group origin (−bed/2..+bed/2); the packer gives corner-origin
+  // coords (0..bed). three.js applies worldPos = position + R·v, so we seat the post-
+  // rotation bbox min to the packer corner. For a 90° CCW Z-spin the rotated min is
+  // (−bb.max.y, bb.min.x); rot===0 is the original min. This is the SAME affine the
+  // .3mf export bakes (buildThreeMF), keeping the preview and the exported plate identical.
+  const rminX = pl.rot === 90 ? -bb.max.y : bb.min.x
+  const rminY = pl.rot === 90 ? bb.min.x : bb.min.y
+  const { color, emissive } = meshTint({
+    overBed: false,
+    isAssemblyPreview: false,
+    selected: isSelected,
+    hovered,
+    measureMode: false,
+  })
+  const onMouseDown = () => {
+    if (mesh) dragStart.current = { x: mesh.position.x, y: mesh.position.y }
+  }
+  const onMouseUp = () => {
+    const m = mesh
+    if (!m) return
+    if (gizmoMode === 'translate') {
+      const s = dragStart.current
+      // local-position delta == (dx,dy) delta over the displayed corner (offsets cancel)
+      const ddx = s ? m.position.x - s.x : 0
+      const ddy = s ? m.position.y - s.y : 0
+      onCommit(pl.name, { dx: ddx, dy: ddy, rot: pl.rot })
+    } else {
+      // Z-rotate: snap the mesh's absolute Z to the nearest of {0,90}. The base mesh rotation
+      // already encodes the current rot (π/2 ⇒ 90), so reading absolute z and snapping is correct.
+      const deg = (m.rotation.z * 180) / Math.PI
+      const norm = ((deg % 180) + 180) % 180
+      const rot: 0 | 90 = Math.abs(norm - 90) < 45 ? 90 : 0
+      onCommit(pl.name, { dx: 0, dy: 0, rot })
+    }
+    dragStart.current = null
+  }
+  return (
+    <>
+      <mesh
+        ref={setMesh}
+        geometry={g.geometry}
+        rotation={[0, 0, pl.rot === 90 ? Math.PI / 2 : 0]}
+        position={[pl.x - bed.x / 2 - rminX, pl.y - bed.y / 2 - rminY, -bb.min.z]}
+        onClick={(e) => {
+          e.stopPropagation()
+          onSelect(pl.name)
+          invalidate()
+        }}
+        onPointerOver={(e) => {
+          e.stopPropagation()
+          setHovered(true)
+          document.body.style.cursor = 'pointer'
+          invalidate()
+        }}
+        onPointerOut={() => {
+          setHovered(false)
+          document.body.style.cursor = ''
+          invalidate()
+        }}
+      >
+        <meshStandardMaterial color={color} emissive={emissive} roughness={0.55} metalness={0.12} side={THREE.DoubleSide} />
+      </mesh>
+      {gizmo && mesh && (
+        // XY-translate or Z-rotate ONLY — the bed is the Z-up XY plane, so only in-plane edits map
+        // to a buildable (dx,dy,rot). showZ is off for translate; X/Y off for rotate.
+        <TransformControls
+          object={mesh}
+          mode={gizmoMode}
+          size={0.6}
+          showZ={gizmoMode === 'rotate'}
+          showX={gizmoMode === 'translate'}
+          showY={gizmoMode === 'translate'}
+          onMouseDown={onMouseDown}
+          onMouseUp={onMouseUp}
+        />
+      )}
+    </>
+  )
+}
+
 /** The slicer view: each compiled piece packed onto one or more bed-sized plates,
- *  laid out left-to-right and centered. Read-only (no per-piece move/section/measure). */
+ *  laid out left-to-right and centered. Pieces are individually selectable via
+ *  setSelectedPiece — clicking empty space (onPointerMissed on the Canvas) clears. */
 function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<string, ModelGeometry>; bed: { x: number; y: number; z: number } }) {
+  const selectedPiece = useUi((s) => s.selectedPiece)
+  const setSelectedPiece = useUi((s) => s.setSelectedPiece)
+  const gizmoMode = useUi((s) => s.gizmoMode)
+  const pieceOverrides = useStore((s) => s.pieceOverrides)
+  const setPieceOverride = useStore((s) => s.setPieceOverride)
   const n = plates.length
   const totalW = n * bed.x + (n - 1) * PLATE_GAP
+  // a drag commits a DELTA over the displayed corner; the stored override is ABSOLUTE over the
+  // packer corner — so add the delta to the existing override (rot stays absolute).
+  const onCommit = (name: string, d: { dx: number; dy: number; rot: 0 | 90 }) => {
+    const cur = pieceOverrides[name] ?? { dx: 0, dy: 0, rot: 0 as 0 | 90 }
+    setPieceOverride(name, { dx: cur.dx + d.dx, dy: cur.dy + d.dy, rot: d.rot })
+  }
   return (
     <group>
       {plates.map((placements, pi) => {
@@ -944,24 +1186,20 @@ function SlicerScene({ plates, geos, bed }: { plates: Placement[][]; geos: Map<s
             {placements.map((pl) => {
               // placements carry unique replica keys (lid#0); geometry is keyed by the base piece name
               const g = geos.get(baseName(pl.name))
-              const bb = g?.geometry.boundingBox
-              if (!g || !bb) return null
-              // bed is centered at the group origin (−bed/2..+bed/2); the packer gives corner-origin
-              // coords (0..bed). three.js applies worldPos = position + R·v, so we seat the post-
-              // rotation bbox min to the packer corner. For a 90° CCW Z-spin the rotated min is
-              // (−bb.max.y, bb.min.x); rot===0 is the original min. This is the SAME affine the
-              // .3mf export bakes (buildThreeMF), keeping the preview and the exported plate identical.
-              const rminX = pl.rot === 90 ? -bb.max.y : bb.min.x
-              const rminY = pl.rot === 90 ? bb.min.x : bb.min.y
+              if (!g) return null
+              const sel = selectedPiece === pl.name
               return (
-                <mesh
+                <SlicerPiece
                   key={pl.name}
-                  geometry={g.geometry}
-                  rotation={[0, 0, pl.rot === 90 ? Math.PI / 2 : 0]}
-                  position={[pl.x - bed.x / 2 - rminX, pl.y - bed.y / 2 - rminY, -bb.min.z]}
-                >
-                  <meshStandardMaterial color="#b9bdc6" roughness={0.55} metalness={0.12} side={THREE.DoubleSide} />
-                </mesh>
+                  pl={pl}
+                  g={g}
+                  bed={bed}
+                  isSelected={sel}
+                  onSelect={setSelectedPiece}
+                  gizmo={sel}
+                  gizmoMode={gizmoMode}
+                  onCommit={onCommit}
+                />
               )
             })}
           </group>

@@ -547,27 +547,99 @@ input[type='checkbox']:focus-visible,
 }
 .img-lightbox-x:hover { background: var(--panel-2); }
 
-/* version / code-updated chip */
+/* ── AI turn three-tier hierarchy ─────────────────────────────
+   .ai-stack is the single indented container under .msg.ai that
+   replaces the eight repeated calc(22px + var(--s2)) magic-number
+   margin-lefts. All child tiers sit inside it at zero left-margin. */
+.ai-stack {
+  margin-left: calc(22px + var(--s2));
+  display: flex; flex-direction: column; gap: var(--s2);
+}
+
+/* Tier 2 — collapsible metadata drawer (collapsed by default) */
+.turn-meta {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  background: var(--panel-hi);
+  font-size: var(--fs-small);
+}
+.turn-meta > summary {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: 5px var(--s3);
+  cursor: pointer; list-style: none; user-select: none;
+  color: var(--text-faint);
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.04em;
+}
+.turn-meta > summary::-webkit-details-marker { display: none; }
+.turn-meta > summary::before {
+  content: '›';
+  display: inline-block; transition: transform var(--t-fast) var(--ease);
+  font-size: 13px; line-height: 1; color: var(--text-ghost);
+}
+.turn-meta[open] > summary::before { transform: rotate(90deg); }
+.turn-meta > summary .tm-count {
+  padding: 1px 6px; border-radius: var(--r-pill);
+  background: var(--raised); color: var(--text-faint);
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+}
+.turn-meta-body {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s2) var(--s3) var(--s3);
+  border-top: 1px solid var(--line-soft);
+}
+/* restyle skill-note inside the drawer to a quieter, non-amber weight so a
+   normal photo+skill turn doesn't look like two simultaneous errors */
+.turn-meta-body .skill-note {
+  margin: 0;
+  border-color: var(--line-soft);
+  background: var(--inset);
+}
+.turn-meta-body .skill-note .sn-head { color: var(--text-faint); }
+/* expect-banner keeps its amber styling (the more prominent signal); skill-note is quieted */
+.turn-meta-body .expect-banner { margin: 0; }
+.turn-meta-body .applied-patterns { margin: 0; }
+
+/* Tier 3 — compact action row (right-aligned chip-btns) */
+.turn-actions {
+  display: flex; align-items: center; gap: var(--s1); justify-content: flex-end; flex-wrap: wrap;
+}
+.turn-actions .chip-btn { height: 26px; padding: 0 8px; font-size: var(--fs-micro); gap: 4px; }
+.turn-actions .chip-btn svg { width: 12px; height: 12px; }
+/* redo-as-action: folded redo-pill into the per-turn actions row */
+.turn-actions .redo-action {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 8px; border-radius: var(--r-sm);
+  background: var(--accent-soft); border: 1px dashed var(--accent-line);
+  color: var(--accent-text); font: inherit; font-size: var(--fs-micro); font-weight: 600;
+  cursor: pointer; transition: all var(--t-fast) var(--ease);
+}
+.turn-actions .redo-action:hover { border-style: solid; background: var(--raised-hi); color: var(--text); }
+.turn-actions .redo-action svg { width: 11px; height: 11px; }
+
+/* version / code-updated chip — Tier 1: result marker (passive, muted).
+   Lives OUTSIDE the <details> so it's always visible. Inside .ai-stack so
+   it's already indented; no extra margin-left needed. */
 .code-chip {
   display: inline-flex; align-items: center; gap: var(--s2);
-  margin-top: var(--s2);
-  padding: 7px 9px 7px 11px;
+  margin-top: 0;
+  padding: 5px 8px 5px 9px;
   border-radius: var(--r-sm);
-  background: linear-gradient(180deg, rgba(61,111,245,0.12), rgba(61,111,245,0.05));
-  border: 1px solid var(--accent-line);
-  box-shadow: var(--sh-raise);
+  background: transparent;
+  border: 1px solid var(--line-soft);
   max-width: max-content;
-  cursor: pointer;
-  color: var(--text-dim);
+  cursor: default;
+  color: var(--text-faint);
   font: inherit;
   text-align: left;
   transition: all var(--t-fast) var(--ease);
 }
-.msg.ai .code-chip { margin-left: calc(22px + var(--s2)); }
+/* legacy: the chip still sits in .ai-stack, so no extra margin-left rule needed;
+   keep the old rule as a harmless no-op for old messages that might land outside */
+.msg.ai .code-chip { margin-left: 0; }
 .code-chip:disabled { cursor: default; }
 /* advisory mechanism check (verified-skill validators) — never blocks, just flags */
 .skill-note {
-  margin: var(--s2) 0 0 calc(22px + var(--s2));
+  margin: var(--s2) 0 0;
   padding: var(--s2) var(--s3);
   border-radius: var(--r-xs);
   border: 1px solid var(--warn-soft);
@@ -580,7 +652,7 @@ input[type='checkbox']:focus-visible,
 /* honest-expectation banner (organic/photo or low-confidence reference) */
 .expect-banner {
   display: flex; align-items: flex-start; gap: var(--s2);
-  margin: var(--s2) 0 0 calc(22px + var(--s2));
+  margin: var(--s2) 0 0;
   padding: var(--s2) var(--s3);
   border-radius: var(--r-xs);
   border: 1px solid var(--warn-soft); background: var(--warn-soft);
@@ -593,7 +665,7 @@ input[type='checkbox']:focus-visible,
 
 .applied-patterns {
   display: flex; align-items: flex-start; gap: var(--s2);
-  margin: var(--s2) 0 0 calc(22px + var(--s2));
+  margin: var(--s2) 0 0;
   padding: var(--s2) var(--s3);
   border-radius: var(--r-xs);
   border: 1px solid var(--accent-line);
@@ -705,12 +777,16 @@ input[type='checkbox']:focus-visible,
 
 .stream-meta {
   display: inline-flex; align-items: center; gap: 6px;
-  margin-left: calc(22px + var(--s2));
+  margin-left: 0;
   font-size: var(--fs-micro); color: var(--text-faint); font-family: var(--font-mono);
 }
+/* when stream-meta sits directly in .msg.ai (the live streaming turn, no .ai-stack yet),
+   keep the legacy indent so the clock aligns with the avatar */
+.msg.ai > .stream-meta { margin-left: calc(22px + var(--s2)); }
 .stream-meta svg { width: 12px; height: 12px; }
 
-/* attachments preview row */
+/* attachments preview row — now lives INSIDE .composer-box as .composer-thumbs */
+/* keep .attach-row/.attach-thumb for backward compat but they're no longer rendered */
 .attach-row { display: flex; gap: var(--s2); padding: 0 var(--s4) var(--s2); flex-wrap: wrap; }
 .attach-thumb { position: relative; width: 52px; height: 52px; }
 .attach-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--line-strong); }
@@ -723,6 +799,61 @@ input[type='checkbox']:focus-visible,
 }
 .attach-thumb button svg { width: 11px; height: 11px; }
 
+/* inline thumbnail strip inside the composer box (replaces the stacked attach-row) */
+.composer-thumbs {
+  display: flex; gap: var(--s2); padding: var(--s2) var(--s3) 0; flex-wrap: wrap;
+  max-height: 70px; overflow-y: auto;  /* mobile guard: cap height so textarea stays reachable */
+}
+.composer-thumbs .attach-thumb { width: 48px; height: 48px; }
+
+/* inline hint chip — warnings + refine bar now live above the textarea as a hint chip */
+.composer-hint {
+  display: flex; align-items: center; gap: 6px;
+  margin: var(--s2) var(--s3) 0;
+  padding: 6px 9px; border-radius: var(--r-sm);
+  font-size: var(--fs-small); font-weight: 500;
+}
+.composer-hint.warn { background: var(--warn-soft); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent); }
+.composer-hint.refine { background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-text); cursor: pointer; transition: all var(--t-fast) var(--ease); }
+.composer-hint.refine:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.composer-hint svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+/* gen-progress as a thin top-border bar on the composer-box when generating */
+.composer-box.is-generating {
+  border-top-color: transparent;
+  position: relative;
+}
+.composer-box.is-generating::before {
+  content: '';
+  position: absolute; top: -1px; left: 0; right: 0; height: 3px;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent), color-mix(in srgb, var(--accent) 55%, transparent));
+  background-size: 200% 100%;
+  animation: gen-shimmer 1.4s linear infinite;
+  pointer-events: none;
+}
+/* gen-elapsed label inside the composer when generating */
+.composer-gen-label {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+  padding: 3px var(--s3) 0;
+  font-size: var(--fs-micro); color: var(--text-faint);
+}
+.composer-gen-label .gen-remain { font-family: var(--font-mono); color: var(--text-faint); }
+.composer-gen-label.low { color: var(--warn); }
+.composer-gen-label.low .gen-remain { color: var(--warn); }
+
+/* composer action layout: secondary cluster wraps; Send is a non-wrapping sibling outside it */
+.composer-actions {
+  display: flex; align-items: center; gap: var(--s2); padding: var(--s2); padding-top: 0;
+  /* no flex-wrap here — the row itself never wraps; only the inner cluster wraps */
+}
+.composer-secondary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); flex: 1; min-width: 0;
+}
+/* Send/Stop stays outside .composer-secondary so it can't be pushed to row 2 */
+.composer-send { flex-shrink: 0; }
+
+/* keep original .vision-warn + .refine-bar CSS in case any other site references them */
 .vision-warn {
   display: flex; align-items: center; gap: 6px;
   margin: 0 var(--s4) var(--s2);
@@ -781,7 +912,7 @@ input[type='checkbox']:focus-visible,
   outline: none; min-height: 44px; max-height: 140px;
 }
 .composer textarea::placeholder { color: var(--text-ghost); }
-.composer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); row-gap: var(--s2); padding: var(--s2); padding-top: 0; }
+/* .composer-actions rules are defined above (three-tier hierarchy section) */
 .chip-btn {
   display: inline-flex; align-items: center; gap: 6px;
   height: 30px; padding: 0 10px; border-radius: var(--r-sm);
@@ -796,8 +927,6 @@ input[type='checkbox']:focus-visible,
 .chip-btn svg { width: 14px; height: 14px; }
 .chip-btn .dot-ok { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
 .chip-btn .dot-off { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
-.composer-actions .spacer { flex: 1; }
-
 /* icon-only composer chip (Reference): square, no label */
 .chip-btn.icon-only { padding: 0; width: 30px; justify-content: center; gap: 0; }
 
@@ -1092,6 +1221,12 @@ input[type='checkbox']:focus-visible,
 }
 .assembly-chip .split-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .assembly-chip .split-btn svg { width: 12px; height: 12px; }
+/* "Arrange parts on bed" in assembly preview — stronger accent when the assembly overruns the bed */
+.assembly-chip .split-btn.arrange-suggest {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
 
 .perf-chip {
   position: absolute; right: var(--s4); top: var(--s4);
@@ -1136,6 +1271,55 @@ input[type='checkbox']:focus-visible,
 .plate-chip:hover { color: var(--text); background: var(--raised); }
 .plate-chip.active { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .plate-chip.danger:hover { color: var(--err); background: var(--err-soft); }
+.plate-chip:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+/* per-piece Arrange toolbar (plates view) — same chrome as .sel-bar, with a leading piece label */
+.arrange-bar .ac-label {
+  display: inline-flex; align-items: center; padding: 0 8px 0 4px;
+  font-size: var(--fs-small); font-weight: 700; color: var(--accent-text);
+}
+
+/* ─────────────── OBJECTS OUTLINER ────────────────────────── */
+/* Lightweight per-piece list at the top of the Params tab for multi-part designs.
+ * Selection highlight is purely read-only — never writes the 'part' paramValue. */
+.objects-outliner {
+  border-bottom: 1px solid var(--line-soft);
+  padding: var(--s2) 0 var(--s3);
+  flex-shrink: 0;
+}
+.outliner-header {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: 0 var(--s3) var(--s2);
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-faint);
+}
+.outliner-header svg { width: 12px; height: 12px; flex-shrink: 0; }
+.outliner-hint {
+  margin-left: auto; font-size: var(--fs-micro); font-weight: 400;
+  text-transform: none; letter-spacing: 0; color: var(--text-ghost); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.outliner-list {
+  list-style: none; margin: 0; padding: 0;
+}
+.outliner-row {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: 5px var(--s3); cursor: pointer;
+  font-size: var(--fs-small); color: var(--text-dim);
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  border-left: 2px solid transparent;
+}
+.outliner-row:hover:not(.is-disabled) { background: var(--raised); color: var(--text); }
+.outliner-row.is-selected {
+  background: var(--accent-soft); color: var(--accent-text);
+  border-left-color: var(--accent);
+}
+.outliner-row.is-disabled { cursor: default; opacity: 0.45; }
+.outliner-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: currentColor; opacity: 0.55;
+}
+.outliner-row.is-selected .outliner-dot { opacity: 1; }
+.outliner-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ─────────────── PARAMETERS / CODE PANEL ──────────────────── */
 .panel-tabs { display: flex; gap: 2px; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line-soft); background: var(--panel-hi); flex-shrink: 0; }
@@ -1155,6 +1339,23 @@ input[type='checkbox']:focus-visible,
 .tweak-hint .th-x:hover { color: var(--text); }
 .tweak-hint .th-x:focus-visible { outline: var(--ring); }
 .tweak-hint .th-x:active:not(:disabled) { transform: scale(0.92); }
+
+/* param-filter-bar — appears above param groups when a piece is selected in the Slicer view */
+.param-filter-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.param-filter-label {
+  flex: 1; min-width: 0;
+  font-size: var(--fs-small); font-weight: 600;
+  color: var(--accent-text); font-family: var(--font-mono);
+  text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.param-filter-showall {
+  flex-shrink: 0; font-size: var(--fs-micro);
+}
+
 .panel-tab {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 11px; border-radius: var(--r-sm);

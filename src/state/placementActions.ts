@@ -1,8 +1,9 @@
 import type { StoreApi } from 'zustand'
 import type { VibeState, VpSnapshot } from './store'
 
-/** snapshot the placement-affected fields so move/rotate/delete are undoable */
-const vpSnapshotOf = (s: VibeState): VpSnapshot => ({
+/** snapshot the placement-affected fields so move/rotate/delete (and Arrange nudges) are undoable.
+ *  Exported so store.ts's setPieceOverride/clearPieceOverrides push the SAME snapshot shape. */
+export const vpSnapshotOf = (s: VibeState): VpSnapshot => ({
   stl: s.stl,
   modelDims: s.modelDims,
   meshTransform: s.meshTransform,
@@ -11,6 +12,7 @@ const vpSnapshotOf = (s: VibeState): VpSnapshot => ({
   compileNote: s.compileNote,
   compileMs: s.compileMs,
   modelRemoved: s.modelRemoved,
+  pieceOverrides: s.pieceOverrides,
 })
 
 function sameTransform(a: VibeState['meshTransform'], b: VibeState['meshTransform']): boolean {
@@ -19,7 +21,7 @@ function sameTransform(a: VibeState['meshTransform'], b: VibeState['meshTransfor
   return a.position.every((v, i) => v === b.position[i]) && a.rotation.every((v, i) => v === b.rotation[i])
 }
 
-const VP_HISTORY_LIMIT = 30
+export const VP_HISTORY_LIMIT = 30
 
 type PlacementActions = Pick<VibeState, 'setMeshTransform' | 'clearModel' | 'vpUndo' | 'vpRedo'>
 
@@ -32,7 +34,7 @@ type PlacementActions = Pick<VibeState, 'setMeshTransform' | 'clearModel' | 'vpU
 export function createPlacementActions(
   set: StoreApi<VibeState>['setState'],
   get: StoreApi<VibeState>['getState'],
-  h: { clearParamTimer: () => void },
+  h: { clearParamTimer: () => void; persistOverrides: (overrides: VibeState['pieceOverrides']) => void },
 ): PlacementActions {
   return {
     setMeshTransform: (meshTransform) => {
@@ -66,6 +68,9 @@ export function createPlacementActions(
       const prev = s.vpPast[s.vpPast.length - 1]
       if (!prev) return
       set({ vpPast: s.vpPast.slice(0, -1), vpFuture: [...s.vpFuture, vpSnapshotOf(s)], ...prev })
+      // overrides are also project metadata — re-persist the restored map so the layout survives
+      // a project switch / reload, matching setPieceOverride's durability.
+      h.persistOverrides(prev.pieceOverrides)
     },
 
     vpRedo: () => {
@@ -73,6 +78,7 @@ export function createPlacementActions(
       const next = s.vpFuture[s.vpFuture.length - 1]
       if (!next) return
       set({ vpFuture: s.vpFuture.slice(0, -1), vpPast: [...s.vpPast, vpSnapshotOf(s)], ...next })
+      h.persistOverrides(next.pieceOverrides)
     },
   }
 }

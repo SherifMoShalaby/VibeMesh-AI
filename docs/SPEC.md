@@ -29,6 +29,7 @@ One page. The contract for the four surfaces; anything not specified here is und
 - Convention: enum parameter named `part`, first option `all` = assembly preview. UI: PARTS bar in the viewport (⬚ ALL + one chip per piece).
 - Assembly preview suppresses bed-fit warnings; each individual part shows real dims + EXCEEDS BED when applicable.
 - The `all` view is the **assembled** object (pieces in their final relative positions), not a scattered layout. An optional `explode` parameter (0 = assembled, the default) fans the pieces apart along their assembly axes for an OpenSCAD-style exploded preview; it changes only the preview, never the printed per-piece geometry.
+- The assembled (`all`) preview's status banner carries an **"Arrange parts on bed"** button → switches to the Slicer/plates view (`setViewMode('plates')`, triggering the existing per-piece compile auto-effect — no new compile wiring), where pieces are laid out on the build plate and can be selected + arranged (§15). The fused `all` mesh is contractually assembled-only and is **never** reflowed in place. The banner hint reads "assembled preview — pieces are laid out on the bed in the Slicer view" (closing the expectation gap). When the assembled preview also exceeds the bed, the button shifts to an accent palette (`.arrange-suggest`) as a soft suggestion.
 - Clicking a PARTS chip (or `all`) switches the viewed piece with an **immediate** per-piece compile (no slider debounce) and re-fits the camera — a part switch is navigation. A slider tweak, by contrast, never yanks the camera.
 - The slicer view (§7) is the only place pieces are shown as bed "plates"; the PARTS bar itself still shows one piece at a time.
 - `⚒ ASK AI TO SPLIT INTO PARTS` shows whenever the *currently viewed* geometry exceeds the bed (including an already-split piece that is still too big — asks to split further), except in assembly preview.
@@ -88,9 +89,10 @@ One page. The contract for the four surfaces; anything not specified here is und
   bed-sized plates (shelf / first-fit, **translation-only** so the layout stays WYSIWYG with export),
   spilling onto additional plates as needed. A piece that can't fit the bed as-drawn is reported
   **oversize** (never force-fit or rotated); a piece that fails to render is **named in the readout** —
-  neither is ever silently dropped. Placement / section / measure tools and the PARTS bar are disabled
-  in Slicer view, and the camera frames all plates. Entering Slicer (re)builds the pack and re-frames;
-  toggling back to Single — or re-entering with an unchanged pack — leaves the camera as the user left it.
+  neither is ever silently dropped. The single-mesh placement / section / measure tools and the PARTS
+  bar are disabled in Slicer view (per-piece **selection + Arrange** replaces them here — §15), and the
+  camera frames all plates. Entering Slicer (re)builds the pack and re-frames; toggling back to Single —
+  or re-entering with an unchanged pack — leaves the camera as the user left it.
 - **Print bed**: 15 printer presets (Creality, Bambu incl. H2D, Prusa incl. CORE One/XL, Elegoo,
   Flashforge, QIDI) + `Custom…` (prompt-parsed `W × D × H`, editable via ✎ while active). Bed
   choice and custom dims persist across sessions and are sent to the AI as generation context.
@@ -308,3 +310,57 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   compiles, exposes exactly one parameter per shared concept, and keeps protected-structure ∩
   cutters ≈ 0 — with broken controls (a duplicated clearance, a pocket sliced into the pin) proving
   it discriminates. The live loop stays WARN-only; only this deterministic walker may hard-fail.
+
+## 15. Per-piece selection + interactive bed-Arrange (2026-06-24 — slicer plates only)
+
+The Slicer/plates view (§7) is the ONLY surface for per-piece selection and arrange — the fused `all`
+assembly mesh is single-mesh and assembled-only (§4) and is never decomposed, reflowed, or fed a
+`translate()`. Per-piece geometry comes from `pieces[]` (each `{name, stl, bbox}` in print orientation);
+`packPlates` does the auto-layout; `effectivePlacements` is the single seat oracle.
+
+- **Selection identity (`selectedPiece`).** A separate `ui.ts` field `selectedPiece: string | null`
+  (default null) names the selected piece; it is **distinct from** the existing `selected` boolean,
+  which stays the tool-rail Orbit/Move MODE flag (the Move button sets `selected` with no mesh click).
+  Selection is **read-only on geometry**: clicking a piece (in the scene or the outliner) sets
+  `selectedPiece` directly and NEVER writes the `part` Customizer value — writing `part` would trigger
+  `compile()`, bump the slicing token, and null `pieces[]` (a recompile storm). `selectedPiece` resets
+  at every point `selected` resets (geometry change / `stlVersion`, Escape, pointer-miss) and at every
+  project boundary (openProject cross-project bleed guard, recompile reset alongside `pieces:null`).
+  Delete/Backspace on a piece selection never wipes project geometry.
+- **Bidirectional select.** In the scene, each plate piece is its own `SlicerPiece` mesh owning hover
+  state; pointer-over/out/click call `invalidate()` (required under `frameloop='demand'`) and drive
+  color/emissive through the shared `meshTint()` contract (`isSelected`/`hovered`). The right panel's
+  **Objects outliner** lists the `part` options minus `all`, highlights the `selectedPiece` row, and
+  row-click toggles selection (clicking the selected row deselects). The outliner is disabled/greyed
+  with a hint outside plates view; it is guarded to multi-part designs (`partParam !== null`) and never
+  writes `paramValues.part`.
+- **Interactive Arrange (`pieceOverrides`).** Arrange is **deltas-over-packer**: a sparse
+  `Project.pieceOverrides` map keyed by the packer placement name (e.g. `lid#1`) carries
+  `{dx, dy, rot}` — `dx`/`dy` are bed-local mm ADDED to the packer corner; `rot` is an ABSOLUTE
+  Z-rotation in `{0,90}` that REPLACES (not adds to) the packer's chosen rot. `effectivePlacements`
+  (`src/lib/packPlates.ts`) is the single seat oracle: it runs `expandFootprints` + `packPlates`, then
+  applies each override delta and re-snaps rot to `{0,90}` (re-swapping the placed `w`/`h` to match).
+  An empty override map is the pure packer plan (zero behavior change).
+- **Export parity (the WYSIWYG contract).** The SAME `effectivePlacements(pieces, qtyOf, bed, overrides)`
+  feeds ALL THREE consumers — the Slicer preview (`Viewport.tsx` platePlan memo), `Plates as .3mf`
+  (`exportPlates3mf`), and `OrcaSlicer project` (`exportOrcaProject`). For identical
+  `(pieces, qty, bed, overrides)` the preview plan deep-equals each export plan (unit-tested), so an
+  arranged layout exports exactly as drawn. Quantities are expanded and oversize replica keys deduped
+  to base names on every path.
+- **Per-piece gizmo + Arrange toolbar.** The selected piece mounts a drei `TransformControls` bound to
+  its own mesh, constrained to XY-translate (Move) or Z-rotate (Rotate) by `gizmoMode`, snapping rot to
+  `{0,90}` on release. The (dx,dy) inversion runs in the plate-group-LOCAL frame so the plate offset
+  and rot-dependent seat offset cancel and the local-position delta IS the override delta. A per-piece
+  Arrange toolbar (plates view) offers Move / Rotate / Center (center the piece on its plate via a
+  delta) / per-piece Reset (`removePieceOverride`) / **Arrange all** (`clearPieceOverrides` → pure
+  packer). The tool-rail Move button drives the per-piece gizmo in plates view (gated on
+  `selectedPiece`).
+- **Undo / off-bed / persistence.** `setPieceOverride`/`removePieceOverride`/`clearPieceOverrides` each
+  snapshot `vpPast` (undoable via the same ⌘Z/⇧⌘Z machinery, §7) and persist to the project record — NO
+  recompile. `pieceOverrides` lives on the Project shape and survives project switch/reload (mirrors
+  `partQuantities`/`pieces`), resets to `{}` at every project boundary (cross-project bleed guard), and
+  is pruned (`pruneOverrides`) when its qty-expanded packer key no longer exists (after a new
+  `compilePieces` lands or a quantity is lowered). A pure `validateLayout()` flags pieces nudged off the
+  usable bed area or overlapping a neighbor, folded into the existing slicer oversize readout with the
+  same `{name, reason:'footprint'}` shape (deduped to base names) — off-bed arrangement is surfaced,
+  never silently exported.

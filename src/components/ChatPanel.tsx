@@ -353,10 +353,11 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
         </div>
       )}
 
+      {/* ── header ── */}
       <div className="pane-head">
         <span className="eyebrow">Conversation</span>
-        <ContextChip chat={chat} provider={activeProvider} systemTokens={health?.systemTokens} />
-        <SpendChip calls={genCalls} tokens={genTokens} />
+        {/* Single ring chip: Context % + spend info folded into tooltip (guard: header merge) */}
+        <ContextChip chat={chat} provider={activeProvider} systemTokens={health?.systemTokens} calls={genCalls} tokens={genTokens} />
         <button className="icon-btn-sm" title="New part" aria-label="New part" onClick={() => newProject()}>
           <DPlus />
         </button>
@@ -424,7 +425,19 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               </motion.div>
             )
           }
+
+          // ── assistant turn ──
           const isCurrent = msg.code === currentCode
+          const appliedSkills = msg.appliedSkillIds ?? []
+          const droppedSkills = (msg.droppedSkillIds ?? []).filter((id) => !appliedSkills.includes(id))
+          const hasMetadata = Boolean(
+            msg.skillNote ||
+            (msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low')) ||
+            (msg.code && (msg.intent || appliedSkills.length > 0))
+          )
+          // for the summary label: count of skill pills + 1 for intent/expect if present
+          const metaCount = appliedSkills.length + (msg.intent ? 1 : 0)
+
           return (
             <motion.div
               key={msg.id}
@@ -433,11 +446,14 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
             >
+              {/* avatar / who / time row */}
               <div className="msg-head">
                 <span className="msg-avatar ai"><DSparkFill /></span>
                 <span className="msg-who">Vibemesh-AI</span>
                 <span className="msg-time">{fmtTime(msg.createdAt)}</span>
               </div>
+
+              {/* AI-attached images (e.g. refine captures sent by the app itself) */}
               {msg.images?.map((img, j) => (
                 <img
                   key={j}
@@ -451,164 +467,202 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightbox(imgSrc(img)) } }}
                 />
               ))}
+
+              {/* prose body */}
               <div className="msg-body">{msg.text}</div>
-              {msg.skillNote && (
-                <div className="skill-note" title="Verified-skill mechanism check — advisory">
-                  <span className="sn-head">⚠ Mechanism check</span>
-                  {msg.skillNote.split('\n').map((line, j) => (
-                    <div key={j} className="sn-line">{line}</div>
-                  ))}
-                </div>
-              )}
-              {msg.code && (
-                <button
-                  className={`code-chip${isCurrent ? ' current' : ''}`}
-                  title={isCurrent ? 'This is the version you see now' : 'Bring this version of the model back'}
-                  disabled={generating || isCurrent}
-                  onClick={() => restoreVersion(msg.id)}
-                >
-                  <span className="cc-icon"><DCode /></span>
-                  <span className="cc-text">
-                    <span className="cc-title">Model code updated</span>
-                    <span className="cc-meta">v{versionOf.get(msg.id)}{isCurrent ? ' · current' : ''}</span>
-                  </span>
-                  {!isCurrent && <span className="cc-restore"><DRestore /> Restore</span>}
-                </button>
-              )}
-              {msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low') && (
-                <div className={`expect-banner ${msg.intent?.sourceType === 'photo' ? 'photo' : 'lowconf'}`}>
-                  <span className="eb-icon">{msg.intent?.sourceType === 'photo' ? <DImage /> : <IconWarning />}</span>
-                  <span className="eb-text">
-                    {msg.intent?.sourceType === 'photo'
-                      ? 'Working from a photo — exact sizes are estimated, and smooth or organic curves become a printable hard-surface approximation. Tell me what to refine.'
-                      : 'Low-confidence read of this reference — a best-effort interpretation. Correct me if a feature looks off.'}
-                    {msg.intent?.confidence && <span className="eb-conf">confidence {msg.intent.confidence}</span>}
-                  </span>
-                </div>
-              )}
-              {msg.code && (msg.intent || (msg.appliedSkillIds?.length ?? 0) > 0) && (
-                <div
-                  className="applied-patterns"
-                  title={[
-                    msg.intent?.archetype && `Archetype: ${msg.intent.archetype}`,
-                    msg.intent?.ambiguityScore && `Ambiguity: ${msg.intent.ambiguityScore}`,
-                    msg.intent?.assumptions?.length && `Assumptions:\n${msg.intent.assumptions.map((a) => `• ${a}`).join('\n')}`,
-                  ]
-                    .filter(Boolean)
-                    .join('\n') || undefined}
-                >
-                  <span className="ap-icon"><DLayers /></span>
-                  <span className="ap-text">
-                    <span className="ap-title">
-                      {msg.intent?.form ?? 'design'}
-                      {msg.intent?.facetVerdict ? ` · ${msg.intent.facetVerdict}` : ''}
+
+              {/* ── .ai-stack: all indented turn content ── */}
+              <div className="ai-stack">
+                {/* ── TIER 1: result marker (always visible, passive) ──
+                    GUARD: .code-chip MUST be the FIRST .code-chip in DOM order within this turn.
+                    It is OUTSIDE the <details> so it's always visible.
+                    It keeps class "code-chip" for e2e (surfaces.spec.ts:17, app.spec.ts:79).
+                    It is NOT interactive when current; non-current versions show Restore in turn-actions. */}
+                {msg.code && (
+                  <div
+                    className={`code-chip${isCurrent ? ' current' : ''}`}
+                    title={isCurrent ? 'This is the version you see now' : `v${versionOf.get(msg.id)}`}
+                    aria-label={isCurrent ? `Version ${versionOf.get(msg.id)}, current` : `Version ${versionOf.get(msg.id)}`}
+                  >
+                    <span className="cc-icon"><DCode /></span>
+                    <span className="cc-text">
+                      <span className="cc-title">Model code updated</span>
+                      <span className="cc-meta">v{versionOf.get(msg.id)}{isCurrent ? ' · current' : ''}</span>
                     </span>
-                    {(() => {
-                      const applied = msg.appliedSkillIds ?? []
-                      // editing only on the current model + when idle: a correction regenerates
-                      const editable = isCurrent && !generating
-                      const addable = ALL_SKILL_IDS.filter((id) => !applied.includes(id))
-                      return (
-                        <span className="ap-skills">
-                          {applied.map((id) => (
-                            <span key={id} className={`ap-skill${flaggedSkills.has(id) ? ' flagged' : ''}`}>
-                              {flaggedSkills.has(id) && (
-                                <span className="ap-flag" title="You've removed this pattern often — it may misfire here. Consider quarantining it.">⚠</span>
-                              )}
-                              {skillLabel(id)}
-                              {editable && (
-                                <button
-                                  className="ap-x"
-                                  title={`Remove "${skillLabel(id)}" and regenerate`}
-                                  onClick={() => void regenerateWithSkills(msg.id, applied.filter((x) => x !== id))}
-                                >
-                                  ×
-                                </button>
-                              )}
-                            </span>
+                  </div>
+                )}
+
+                {/* ── TIER 2: metadata drawer (collapsed by default) ── */}
+                {hasMetadata && (
+                  <details className="turn-meta">
+                    <summary>
+                      Design details
+                      {metaCount > 0 && <span className="tm-count">{metaCount}</span>}
+                    </summary>
+                    <div className="turn-meta-body">
+                      {/* skill-note: advisory mechanism check — quieted inside the drawer */}
+                      {msg.skillNote && (
+                        <div className="skill-note" title="Verified-skill mechanism check — advisory">
+                          <span className="sn-head">⚠ Mechanism check</span>
+                          {msg.skillNote.split('\n').map((line, j) => (
+                            <div key={j} className="sn-line">{line}</div>
                           ))}
-                          {applied.length === 0 && !editable && <span className="ap-meta">no mechanism skills applied</span>}
-                          {editable && addable.length > 0 && (
-                            <select
-                              className="ap-add"
-                              value=""
-                              title="Add a mechanism pattern and regenerate"
-                              onChange={(e) => {
-                                if (e.target.value) void regenerateWithSkills(msg.id, [...applied, e.target.value])
-                              }}
-                            >
-                              <option value="">+ pattern</option>
-                              {addable.map((id) => (
-                                <option key={id} value={id}>{skillLabel(id)}</option>
-                              ))}
-                            </select>
-                          )}
-                          {(() => {
-                            // skills that matched the prompt but the cap cut — surfaced so the
-                            // truncation is never silent; promote one to regenerate WITH it.
-                            const dropped = (msg.droppedSkillIds ?? []).filter((id) => !applied.includes(id))
-                            if (!dropped.length) return null
-                            return (
-                              <span className="ap-dropped" title="Matched your prompt but cut by the cap — promote one to include it">
-                                <span className="ap-meta">· considered:</span>
-                                {dropped.map((id) =>
-                                  editable ? (
-                                    <button
-                                      key={`d-${id}`}
-                                      className="ap-promote"
-                                      title={`Promote "${skillLabel(id)}" and regenerate`}
-                                      onClick={() => void regenerateWithSkills(msg.id, [...applied, id])}
+                        </div>
+                      )}
+                      {/* expect-banner: keeps amber styling — the more prominent signal */}
+                      {msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low') && (
+                        <div className={`expect-banner ${msg.intent?.sourceType === 'photo' ? 'photo' : 'lowconf'}`}>
+                          <span className="eb-icon">{msg.intent?.sourceType === 'photo' ? <DImage /> : <IconWarning />}</span>
+                          <span className="eb-text">
+                            {msg.intent?.sourceType === 'photo'
+                              ? 'Working from a photo — exact sizes are estimated, and smooth or organic curves become a printable hard-surface approximation. Tell me what to refine.'
+                              : 'Low-confidence read of this reference — a best-effort interpretation. Correct me if a feature looks off.'}
+                            {msg.intent?.confidence && <span className="eb-conf">confidence {msg.intent.confidence}</span>}
+                          </span>
+                        </div>
+                      )}
+                      {/* applied-patterns: design intent + skills */}
+                      {msg.code && (msg.intent || appliedSkills.length > 0) && (
+                        <div
+                          className="applied-patterns"
+                          title={[
+                            msg.intent?.archetype && `Archetype: ${msg.intent.archetype}`,
+                            msg.intent?.ambiguityScore && `Ambiguity: ${msg.intent.ambiguityScore}`,
+                            msg.intent?.assumptions?.length && `Assumptions:\n${msg.intent.assumptions.map((a) => `• ${a}`).join('\n')}`,
+                          ]
+                            .filter(Boolean)
+                            .join('\n') || undefined}
+                        >
+                          <span className="ap-icon"><DLayers /></span>
+                          <span className="ap-text">
+                            <span className="ap-title">
+                              {msg.intent?.form ?? 'design'}
+                              {msg.intent?.facetVerdict ? ` · ${msg.intent.facetVerdict}` : ''}
+                            </span>
+                            {(() => {
+                              // editing only on the current model + when idle: a correction regenerates
+                              const editable = isCurrent && !generating
+                              const addable = ALL_SKILL_IDS.filter((id) => !appliedSkills.includes(id))
+                              return (
+                                <span className="ap-skills">
+                                  {appliedSkills.map((id) => (
+                                    <span key={id} className={`ap-skill${flaggedSkills.has(id) ? ' flagged' : ''}`}>
+                                      {flaggedSkills.has(id) && (
+                                        <span className="ap-flag" title="You've removed this pattern often — it may misfire here. Consider quarantining it.">⚠</span>
+                                      )}
+                                      {skillLabel(id)}
+                                      {editable && (
+                                        <button
+                                          className="ap-x"
+                                          title={`Remove "${skillLabel(id)}" and regenerate`}
+                                          onClick={() => void regenerateWithSkills(msg.id, appliedSkills.filter((x) => x !== id))}
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </span>
+                                  ))}
+                                  {appliedSkills.length === 0 && !editable && <span className="ap-meta">no mechanism skills applied</span>}
+                                  {editable && addable.length > 0 && (
+                                    <select
+                                      className="ap-add"
+                                      value=""
+                                      title="Add a mechanism pattern and regenerate"
+                                      onChange={(e) => {
+                                        if (e.target.value) void regenerateWithSkills(msg.id, [...appliedSkills, e.target.value])
+                                      }}
                                     >
-                                      + {skillLabel(id)}
-                                    </button>
-                                  ) : (
-                                    <span key={`d-${id}`} className="ap-skill ap-dropped-chip">{skillLabel(id)}</span>
-                                  ),
-                                )}
-                              </span>
-                            )
-                          })()}
-                        </span>
-                      )
-                    })()}
-                  </span>
-                </div>
-              )}
-              {msg.error && i === chat.length - 1 && !generating && (
-                <button className="code-chip" title="Run the same prompt again" onClick={() => void retryLast()}>
-                  <span className="cc-icon"><DRefresh /></span>
-                  <span className="cc-text"><span className="cc-title">Retry</span></span>
-                </button>
-              )}
-              {msg.code && isCurrent && !generating && (
-                <button
-                  className="code-chip reroll"
-                  title="Generate a different version of this model — both are kept; switch between them with the version chips"
-                  onClick={() => void rerollLast()}
-                >
-                  <span className="cc-icon"><DRefresh /></span>
-                  <span className="cc-text">
-                    <span className="cc-title">Regenerate</span>
-                    <span className="cc-meta">a different take · keeps this version</span>
-                  </span>
-                </button>
-              )}
+                                      <option value="">+ pattern</option>
+                                      {addable.map((id) => (
+                                        <option key={id} value={id}>{skillLabel(id)}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                  {droppedSkills.length > 0 && (
+                                    <span className="ap-dropped" title="Matched your prompt but cut by the cap — promote one to include it">
+                                      <span className="ap-meta">· considered:</span>
+                                      {droppedSkills.map((id) =>
+                                        isCurrent && !generating ? (
+                                          <button
+                                            key={`d-${id}`}
+                                            className="ap-promote"
+                                            title={`Promote "${skillLabel(id)}" and regenerate`}
+                                            onClick={() => void regenerateWithSkills(msg.id, [...appliedSkills, id])}
+                                          >
+                                            + {skillLabel(id)}
+                                          </button>
+                                        ) : (
+                                          <span key={`d-${id}`} className="ap-skill ap-dropped-chip">{skillLabel(id)}</span>
+                                        ),
+                                      )}
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                            })()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                )}
+
+                {/* ── TIER 3: compact action row (right-aligned) ──
+                    Restore / Regenerate / Retry + folded redo-pill ("Redo N") */}
+                {(() => {
+                  const isLastMsg = i === chat.length - 1
+                  const showRetry = msg.error && isLastMsg && !generating
+                  const showRestore = msg.code && !isCurrent
+                  const showRegenerate = msg.code && isCurrent && !generating
+                  // redo-pill folded in: only show on the LAST ai turn (so it's contextually
+                  // next to the actions you'd take after a rollback)
+                  const showRedo = rolledBackVersions > 0 && !generating && isLastMsg && msg.code
+                  if (!showRetry && !showRestore && !showRegenerate && !showRedo) return null
+                  return (
+                    <div className="turn-actions">
+                      {showRedo && (
+                        <button
+                          className="redo-action"
+                          title="You rolled the model back — click to bring the newer versions back instead."
+                          onClick={() => restoreNewer()}
+                        >
+                          <DRefresh />
+                          Redo ({rolledBackVersions})
+                        </button>
+                      )}
+                      {showRetry && (
+                        <button className="chip-btn" title="Run the same prompt again" onClick={() => void retryLast()}>
+                          <DRefresh /> Retry
+                        </button>
+                      )}
+                      {showRestore && (
+                        <button
+                          className="chip-btn"
+                          title="Bring this version of the model back"
+                          disabled={generating}
+                          onClick={() => restoreVersion(msg.id)}
+                        >
+                          <DRestore /> Restore v{versionOf.get(msg.id)}
+                        </button>
+                      )}
+                      {showRegenerate && (
+                        <button
+                          className="chip-btn"
+                          title="Generate a different version of this model — both are kept; switch between them with the version chips"
+                          onClick={() => void rerollLast()}
+                        >
+                          <DRefresh /> Regenerate
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>{/* end .ai-stack */}
             </motion.div>
           )
         })}
-        {rolledBackVersions > 0 && !generating && (
-          <button
-            className="redo-pill"
-            title="You rolled the model back — your next prompt will build on this version. Click to undo the rollback and bring the newer versions back instead."
-            onClick={() => restoreNewer()}
-          >
-            <DRefresh />
-            <span>
-              Rolled back · {rolledBackVersions} newer version{rolledBackVersions > 1 ? 's' : ''} set aside.{' '}
-              <strong>Bring them back</strong>
-            </span>
-          </button>
-        )}
+
+        {/* Live streaming turn */}
         {generating && (
           <div className="msg ai">
             <div className="msg-head">
@@ -623,104 +677,121 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
         )}
       </div>
 
-      {images.length > 0 && (
-        <div className="attach-row">
-          {images.map((img, i) => (
-            <span key={i} className="attach-thumb">
-              <img src={imgSrc(img)} alt={`attachment ${i + 1}`} title="Click to view full size" onClick={() => setLightbox(imgSrc(img))} />
-              <button aria-label="Remove attached image" title="Remove attached image" onClick={() => setImages(images.filter((_, j) => j !== i))}>×</button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {noVision && (
-        <div className="vision-warn" role="status">
-          <IconWarning /> {activeProvider!.label} can't see images — switch engine or remove the attachment. Send is disabled.
-        </div>
-      )}
-      {attachNote && <div className="vision-warn" role="status"><IconWarning /> {attachNote}</div>}
-
-      {canRefine && (
-        <button className="refine-bar" onClick={refine} title="Snapshot the model from a fixed angle and ask the AI to compare it against your reference photo, then fix the differences">
-          Compare with my photo &amp; fix
-        </button>
-      )}
-
-      {generating && (
-        <div
-          className={`gen-progress${genRemainSec <= 120 ? ' low' : ''}`}
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(genPct)}
-          aria-label="Time elapsed before the generation timeout"
-        >
-          <div className="gen-progress-track"><div className="gen-progress-fill" style={{ width: `${genPct}%` }} /></div>
-          <div className="gen-progress-label">
-            <span className="streaming">Working… {genElapsedClock}</span>
-            <span className="gen-progress-remaining">{genRemainLabel} before timeout</span>
-          </div>
-        </div>
-      )}
-
+      {/* ── Composer (pre-composer strips folded in) ── */}
       <div className="composer">
-        <div className="composer-box">
+        <div className={`composer-box${generating ? ' is-generating' : ''}`}>
+
+          {/* inline gen-progress label (the top-border shimmer is CSS ::before) */}
+          {generating && (
+            <div className={`composer-gen-label${genRemainSec <= 120 ? ' low' : ''}`}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(genPct)}
+              aria-label="Time elapsed before the generation timeout"
+            >
+              <span className="streaming">Working… {genElapsedClock}</span>
+              <span className="gen-remain">{genRemainLabel} before timeout</span>
+            </div>
+          )}
+
+          {/* inline thumbnail strip — GUARD: real <img> elements inside .chat-pane
+              (surfaces.spec.ts:23 asserts `.chat-pane img` visible after setInputFiles) */}
+          {images.length > 0 && (
+            <div className="composer-thumbs">
+              {images.map((img, i) => (
+                <span key={i} className="attach-thumb">
+                  <img src={imgSrc(img)} alt={`attachment ${i + 1}`} title="Click to view full size" onClick={() => setLightbox(imgSrc(img))} />
+                  <button aria-label="Remove attached image" title="Remove attached image" onClick={() => setImages(images.filter((_, j) => j !== i))}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* inline hint chips: vision-warn / attachNote / refine-bar */}
+          {noVision && (
+            <div className="composer-hint warn" role="status">
+              <IconWarning /> {activeProvider!.label} can't see images — switch engine or remove the attachment. Send is disabled.
+            </div>
+          )}
+          {attachNote && (
+            <div className="composer-hint warn" role="status">
+              <IconWarning /> {attachNote}
+            </div>
+          )}
+          {canRefine && (
+            <button
+              className="composer-hint refine"
+              onClick={refine}
+              title="Snapshot the model from a fixed angle and ask the AI to compare it against your reference photo, then fix the differences"
+            >
+              <DImage /> Compare with my photo &amp; fix
+            </button>
+          )}
+
           <textarea
             ref={textRef}
             aria-label="Describe the part"
             title="Enter sends — Shift+Enter for a new line"
-            placeholder={chat.length ? 'Describe a change — “add a 6 mm cable channel through the base”…' : 'e.g. a wall hook for headphones, 30mm reach…'}
+            placeholder={chat.length ? 'Describe a change — "add a 6 mm cable channel through the base"…' : 'e.g. a wall hook for headphones, 30mm reach…'}
             value={input}
             rows={1}
             onChange={(e) => { setInput(e.target.value); setHistIdx(null) }}
             onPaste={onPaste}
             onKeyDown={onInputKeyDown}
           />
+
+          {/* GUARD: <input type=file> inside .chat-pane (surfaces.spec.ts:22) */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            hidden
+            onChange={(e) => { void attachFiles(e.target.files ?? []); e.target.value = '' }}
+          />
+
+          {/* Action row: secondary cluster (wraps) + non-wrapping Send sibling */}
           <div className="composer-actions">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              hidden
-              onChange={(e) => { void attachFiles(e.target.files ?? []); e.target.value = '' }}
-            />
-            <button className="chip-btn icon-only" aria-label="Attach a photo or sketch" title="Attach a photo or sketch — or paste (⌘V) / drag & drop" onClick={() => fileRef.current?.click()}>
-              <DImage />
-            </button>
-            <button
-              className="chip-btn"
-              type="button"
-              aria-pressed={autoRepair}
-              title={autoRepair ? 'Auto-fix is ON — I retry once automatically if a model fails to render' : 'Auto-fix is OFF'}
-              onClick={() => setAutoRepair(!autoRepair)}
-            >
-              <span className={autoRepair ? 'dot-ok' : 'dot-off'} /> Auto-fix
-            </button>
-            <button
-              className="chip-btn"
-              type="button"
-              aria-pressed={bestOfN}
-              title={bestOfN ? 'Best-of-3 is ON — for kit / image prompts I generate 3 candidates and keep the one that scores best (uses 3× the generations)' : 'Best-of-3 is OFF — turn on to trade 3× generations for higher reliability on kit / image prompts'}
-              onClick={() => setBestOfN(!bestOfN)}
-            >
-              <span className={bestOfN ? 'dot-ok' : 'dot-off'} /> Best-of-3
-            </button>
-            <ModelMenu />
-            <span className="spacer" />
-            {generating ? (
-              <button className="send-btn stop" onClick={() => abortGeneration()}>Stop</button>
-            ) : (
-              <button
-                className="send-btn"
-                onClick={submit}
-                disabled={(!input.trim() && images.length === 0) || Boolean(noVision) || noBackend}
-                title={noBackend ? 'AI generation needs the self-hosted backend — not available in this demo' : noVision ? 'This engine cannot see images — switch engine or remove the attachment' : undefined}
-              >
-                <DSend /> Send
+            <div className="composer-secondary">
+              <button className="chip-btn icon-only" aria-label="Attach a photo or sketch" title="Attach a photo or sketch — or paste (⌘V) / drag & drop" onClick={() => fileRef.current?.click()}>
+                <DImage />
               </button>
-            )}
+              <button
+                className="chip-btn"
+                type="button"
+                aria-pressed={autoRepair}
+                title={autoRepair ? 'Auto-fix is ON — I retry once automatically if a model fails to render' : 'Auto-fix is OFF'}
+                onClick={() => setAutoRepair(!autoRepair)}
+              >
+                <span className={autoRepair ? 'dot-ok' : 'dot-off'} /> Auto-fix
+              </button>
+              <button
+                className="chip-btn"
+                type="button"
+                aria-pressed={bestOfN}
+                title={bestOfN ? 'Best-of-3 is ON — for kit / image prompts I generate 3 candidates and keep the one that scores best (uses 3× the generations)' : 'Best-of-3 is OFF — turn on to trade 3× generations for higher reliability on kit / image prompts'}
+                onClick={() => setBestOfN(!bestOfN)}
+              >
+                <span className={bestOfN ? 'dot-ok' : 'dot-off'} /> Best-of-3
+              </button>
+              <ModelMenu />
+            </div>
+            {/* Send is outside .composer-secondary so it can't wrap to row 2 */}
+            <div className="composer-send">
+              {generating ? (
+                <button className="send-btn stop" onClick={() => abortGeneration()}>Stop</button>
+              ) : (
+                <button
+                  className="send-btn"
+                  onClick={submit}
+                  disabled={(!input.trim() && images.length === 0) || Boolean(noVision) || noBackend}
+                  title={noBackend ? 'AI generation needs the self-hosted backend — not available in this demo' : noVision ? 'This engine cannot see images — switch engine or remove the attachment' : undefined}
+                >
+                  <DSend /> Send
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -728,39 +799,37 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   )
 }
 
-/** Compact AI-memory gauge. History is now bound to the ACTIVE ENGINE's context window
- *  (a token budget), not a fixed message count. The ring shows how full that budget is,
- *  using the SAME token estimators the assembler uses (no drift), and turns amber once
- *  the conversation exceeds the budget and older turns start dropping (the reference image
- *  is always pinned, so it survives regardless). */
-/** Session spend meter (Task 0.0): exact generation-call count for this project + a rough token
- *  estimate, so the user can SEE spend before opting into any quota multiplier (e.g. best-of-N's 3×).
- *  Hidden until the first call. */
-function SpendChip({ calls, tokens }: { calls: number; tokens: number }) {
-  if (!calls) return null
-  const kb = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`)
-  const title = `This session has made ${calls} generation call${calls === 1 ? '' : 's'} on this part (≈${tokens.toLocaleString()} generated tokens, rough estimate). A best-of-N turn counts as N calls — this is how you see the cost of any quota multiplier before turning it on.`
-  return (
-    <span className="ctx-chip" title={title} role="status" aria-label={`${calls} generation calls this session`}>
-      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-        <circle cx="8" cy="8" r="6" className="ctx-track" />
-      </svg>
-      <span className="ctx-num">{calls}× · ≈{kb(tokens)}</span>
-    </span>
-  )
-}
-
-const ContextChip = memo(function ContextChip({ chat, provider, systemTokens }: { chat: ChatMessage[]; provider?: ProviderInfo; systemTokens?: number }) {
+/** Compact AI-memory gauge merged with session spend.
+ *  History is now bound to the ACTIVE ENGINE's context window (a token budget), not a fixed
+ *  message count. The ring shows how full that budget is. The spend info (calls × tokens) is
+ *  folded into the tooltip so the header carries ONE chip instead of two near-identical rings. */
+const ContextChip = memo(function ContextChip({
+  chat, provider, systemTokens, calls, tokens,
+}: {
+  chat: ChatMessage[]
+  provider?: ProviderInfo
+  systemTokens?: number
+  calls: number
+  tokens: number
+}) {
   const nonError = chat.filter((m) => !m.error).length
-  if (nonError === 0) return null
+  if (nonError === 0 && !calls) return null
   const used = estHistoryTokens(chat)
   const budget = historyBudgetTokens(provider, systemTokens)
   const C = 2 * Math.PI * 6
   const kb = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`)
+  // spend suffix folded into the title
+  const spendSuffix = calls
+    ? ` · ${calls} generation call${calls === 1 ? '' : 's'} this session (≈${tokens.toLocaleString()} generated tokens)`
+    : ''
   // unknown capacity (demo / no backend): show a raw token count, neutral ring
   if (budget <= 0) {
     return (
-      <span className="ctx-chip" title={`≈${used.toLocaleString()} tokens of chat history (engine context unknown)`} role="status">
+      <span
+        className="ctx-chip"
+        title={`≈${used.toLocaleString()} tokens of chat history (engine context unknown)${spendSuffix}`}
+        role="status"
+      >
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="8" cy="8" r="6" className="ctx-track" /></svg>
         <span className="ctx-num">≈{kb(used)}</span>
       </span>
@@ -770,8 +839,8 @@ const ContextChip = memo(function ContextChip({ chat, provider, systemTokens }: 
   const trimming = used > budget
   const win = provider?.contextWindow
   const title = trimming
-    ? `Chat history is past the ~${kb(budget)}-token budget — the oldest turns are no longer sent (your reference image is always kept). Budget = the engine's context window capped for cost.`
-    : `Chat history: ~${kb(used)} of ~${kb(budget)} tokens in context${win ? ` (${provider?.label?.split(' · ')[0]} window ${kb(win)}, capped for cost)` : ''}. The reference image is always kept.`
+    ? `Chat history is past the ~${kb(budget)}-token budget — the oldest turns are no longer sent (your reference image is always kept). Budget = the engine's context window capped for cost.${spendSuffix}`
+    : `Chat history: ~${kb(used)} of ~${kb(budget)} tokens in context${win ? ` (${provider?.label?.split(' · ')[0]} window ${kb(win)}, capped for cost)` : ''}. The reference image is always kept.${spendSuffix}`
   return (
     <span className={`ctx-chip${trimming ? ' trimming' : ''}`} title={title} role="status">
       <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">

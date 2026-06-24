@@ -12,13 +12,14 @@ import { clearRefMask } from '../lib/refSegment'
 import { loadSkillStats, type SkillStats } from '../lib/skillStats'
 import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 import { createExportActions } from './exportActions'
-import { createPlacementActions } from './placementActions'
+import { createPlacementActions, vpSnapshotOf, VP_HISTORY_LIMIT } from './placementActions'
 import { createGenerationActions } from './generationActions'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
  *  chat while a brand-new window/tab (empty sessionStorage) starts fresh. */
 const SESSION_KEY = 'vibemesh.session.v1'
 import { stlBBox, type StlBBox } from '../lib/stl'
+import { expandFootprints } from '../lib/packPlates'
 import type { Example } from '../lib/examples'
 
 export type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error'
@@ -63,6 +64,9 @@ export interface Session {
   slicing: boolean
   slicingToken: number
   slicerFailed: string[]
+  /** per-piece Arrange nudges over the packer layout (Phase 4) — mirrors the project record so the
+   *  plates view + both .3mf exports read one map, and so vpUndo/vpRedo can restore it via vpSnapshotOf. */
+  pieceOverrides: Record<string, { dx: number; dy: number; rot: 0 | 90 }>
   /** session spend meter (Task 0.0): exact count of generation calls made this session for THIS
    *  project (a best-of-N turn counts N, a single turn 1) + a rough estimate of generated tokens.
    *  Runtime-only (not persisted) — lets the user SEE spend before opting into any quota multiplier. */
@@ -84,7 +88,7 @@ const SESSION_PROJECTED = [
   'code', 'params', 'paramValues',
   'compileStatus', 'compileError', 'compileLog', 'compileMs', 'compileNote', 'degradedToDraft',
   'modelDims', 'stl', 'stlVersion', 'fitVersion', 'meshTransform', 'modelRemoved', 'vpPast', 'vpFuture',
-  'viewMode', 'pieces', 'slicing', 'slicingToken', 'slicerFailed',
+  'viewMode', 'pieces', 'slicing', 'slicingToken', 'slicerFailed', 'pieceOverrides',
   'genCalls', 'genTokens',
   'paramHistory', 'paramFuture', 'paramHistoryLabels', 'paramFutureLabels',
 ] as const satisfies ReadonlyArray<keyof Session>
@@ -96,7 +100,7 @@ function blankSession(): Session {
     code: '', params: [], paramValues: {},
     compileStatus: 'idle', compileError: null, compileLog: null, compileMs: null, compileNote: null, degradedToDraft: false,
     modelDims: null, stl: null, stlVersion: 0, fitVersion: 0, meshTransform: null, modelRemoved: false, vpPast: [], vpFuture: [],
-    viewMode: 'single', pieces: null, slicing: false, slicingToken: 0, slicerFailed: [],
+    viewMode: 'single', pieces: null, slicing: false, slicingToken: 0, slicerFailed: [], pieceOverrides: {},
     genCalls: 0, genTokens: 0,
     paramHistory: [], paramFuture: [], paramHistoryLabels: [], paramFutureLabels: [],
   }
@@ -112,6 +116,9 @@ export interface VpSnapshot {
   compileNote: string | null
   compileMs: number | null
   modelRemoved: boolean
+  /** Phase 4: per-piece Arrange nudges captured alongside the geometry so ⌘Z/⇧⌘Z restore the
+   *  bed layout in lock-step with the model (otherwise undo would desync overrides from `stl`). */
+  pieceOverrides: Record<string, { dx: number; dy: number; rot: 0 | 90 }>
 }
 
 export interface VibeState {
@@ -231,6 +238,15 @@ export interface VibeState {
   /** set the PRINT quantity for a multi-part piece — project metadata, clamped [1,99], triggers NO
    *  recompile (a print count is not geometry). Drives replication on plate/3MF export + Slicer view. */
   setPartQuantity: (part: string, n: number) => void
+  /** Phase 4 Arrange: per-piece bed nudges over the auto-packer, keyed by the packer placement key
+   *  (`lid#1`). Project metadata (persisted), undoable via vpSnapshotOf. Empty ⇒ pure packer layout. */
+  pieceOverrides: Record<string, { dx: number; dy: number; rot: 0 | 90 }>
+  /** set (or replace) one piece's Arrange override — snapshots placement for ⌘Z, persists, triggers NO recompile */
+  setPieceOverride: (name: string, override: { dx: number; dy: number; rot: 0 | 90 }) => void
+  /** drop ONE piece's Arrange override → that piece snaps back to its pure packer seat (per-piece Reset) */
+  removePieceOverride: (name: string) => void
+  /** clear all Arrange overrides → snap back to the pure auto-packer layout (the "Arrange" chip) */
+  clearPieceOverrides: () => void
   resetParams: () => void
   setCode: (code: string) => void
   recompile: () => void
@@ -349,6 +365,28 @@ export const useStore = create<VibeState>((set, get) => {
     return QUALITY_PRESETS.indexOf(cur) >= QUALITY_PRESETS.indexOf(fine) ? cur : fine
   }
 
+  /** Drop Arrange-override keys that no longer name a live placement (after a recompile changes the
+   *  pieces, or partQuantities drops a replica). The valid keys are exactly the qty-expanded packer
+   *  keys for the current pieces — anything else is stale and would offset a piece that isn't there.
+   *  Mirrors the sliceGeos cleanup + pieces=null invalidation. No-op (and no churn) when nothing stale. */
+  function pruneOverrides() {
+    const overrides = get().pieceOverrides
+    if (Object.keys(overrides).length === 0) return
+    const pieces = get().pieces
+    if (!pieces) return // pieces being rebuilt — keep overrides until the new pack lands
+    const quantities = get().projects.find((p) => p.id === get().activeId)?.partQuantities ?? {}
+    const valid = new Set(
+      expandFootprints(
+        pieces.map((p) => ({ name: p.name, w: p.bbox.x, h: p.bbox.y, z: p.bbox.z })),
+        (name) => quantities[name] ?? 1,
+      ).map((e) => e.name),
+    )
+    const kept = Object.fromEntries(Object.entries(overrides).filter(([k]) => valid.has(k)))
+    if (Object.keys(kept).length === Object.keys(overrides).length) return // nothing stale
+    set({ pieceOverrides: kept })
+    persist({ pieceOverrides: kept })
+  }
+
   /** Compile every part-enum piece into in-memory geometry for the slicer view.
    *  Sequential (the openscad client coalesces concurrent jobs), at >=Fine like exports,
    *  with the same Draft timeout fallback. Stale-guarded against a project switch. */
@@ -395,6 +433,9 @@ export const useStore = create<VibeState>((set, get) => {
     // a missing piece in the slicer is as misleading as a missing part in an export — surface it
     // loudly: both the gated HUD note AND the always-visible slicer readout (slicerFailed)
     set({ pieces: collected, slicerFailed: failed })
+    // Override invalidation (Phase 4): the pieces[] this layout keyed into were rebuilt — drop any
+    // override key whose base name / replica index no longer exists (mirrors the pieces=null reset).
+    pruneOverrides()
     if (failed.length) set({ compileNote: `Slicer: ${failed.length} part(s) failed to render — ${failed.join(', ')}` })
   }
 
@@ -414,6 +455,9 @@ export const useStore = create<VibeState>((set, get) => {
     // a re-render replaces the geometry — reset THIS project's viewport history + bump its slicing
     // token so its own in-flight compilePieces() abandons a now-stale pack.
     writeSession(pid, (cur) => ({ compileStatus: 'compiling', compileError: null, compileNote: null, degradedToDraft: false, vpPast: [], vpFuture: [], modelRemoved: false, pieces: null, slicerFailed: [], slicingToken: cur.slicingToken + 1 }))
+    // the pieces[] this selection keyed into is being rebuilt — drop the stale per-piece identity
+    // alongside the pieces:null invalidation so a recompile can't leave a dangling selectedPiece.
+    if (pid === get().activeId) useUi.getState().setSelectedPiece(null)
     // adaptive curve quality: kill any global $fn, drive $fa/$fs from the preset.
     const preset = QUALITY_PRESETS.find((q) => q.id === get().quality) ?? QUALITY_PRESETS[1]
     let result: CompileResult = await openscad.compile(code, [...defines, ...qualityArgsFor(preset)], undefined, { projectId: pid })
@@ -628,6 +672,7 @@ export const useStore = create<VibeState>((set, get) => {
     slicing: false,
     slicingToken: 0,
     slicerFailed: [],
+    pieceOverrides: {},
     generating: false,
     streamText: '',
     streamHasCode: false,
@@ -736,7 +781,7 @@ export const useStore = create<VibeState>((set, get) => {
         set({
           activeId: existing.id, code: '', params: [], paramValues: {}, stl: null, meshTransform: null,
           vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null,
-          streamText: '', generating: false, streamHasCode: false, viewMode: 'single', pieces: null, slicing: false,
+          streamText: '', generating: false, streamHasCode: false, viewMode: 'single', pieces: null, slicing: false, pieceOverrides: {},
         })
         setChatHash(existing.id)
         saveLastChatId(existing.id)
@@ -771,6 +816,7 @@ export const useStore = create<VibeState>((set, get) => {
         viewMode: 'single',
         pieces: null,
         slicing: false,
+        pieceOverrides: {},
       })
       saveProjects(projects)
       setChatHash(project.id)
@@ -788,14 +834,17 @@ export const useStore = create<VibeState>((set, get) => {
       // selection / measuring session doesn't bleed into the next project
       const ui = useUi.getState()
       ui.setSelected(false)
+      ui.setSelectedPiece(null)
       ui.setMeasureMode(false)
       setChatHash(id)
       saveLastChatId(id)
       set({ activeId: id })
       // cached render → restore it instantly, no recompile (Phase 2)
       if (restoreSession(id)) return
-      // first visit (or never compiled): the original reset + parse + compile path
-      set({ stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false })
+      // first visit (or never compiled): the original reset + parse + compile path. Seed the
+      // per-piece Arrange overrides from the project record (cross-project bleed guard — never carry
+      // the prior project's layout).
+      set({ stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', compileError: null, streamText: '', viewMode: 'single', pieces: null, slicing: false, pieceOverrides: project.pieceOverrides ?? {} })
       const params = parseParameters(project.code)
       const paramValues = { ...Object.fromEntries(params.map((p) => [p.name, p.defaultValue])), ...project.paramValues }
       set({ code: project.code, params, paramValues })
@@ -856,7 +905,7 @@ export const useStore = create<VibeState>((set, get) => {
       saveProjects(projects)
       if (get().activeId === id) {
         clearParamTimer()
-        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false, streamText: '', generating: false, streamHasCode: false })
+        set({ activeId: null, code: '', params: [], paramValues: {}, stl: null, meshTransform: null, vpPast: [], vpFuture: [], modelRemoved: false, compileStatus: 'idle', viewMode: 'single', pieces: null, slicing: false, streamText: '', generating: false, streamHasCode: false, pieceOverrides: {} })
         setChatHash(null, { replace: true })
         saveLastChatId(null)
       }
@@ -958,6 +1007,32 @@ export const useStore = create<VibeState>((set, get) => {
       if (cur[part] === clamped) return
       // project metadata via the existing persist seam — no compile, no slider write
       persist({ partQuantities: { ...cur, [part]: clamped } })
+      // a lowered count drops replica keys (lid#2…) — prune any override that named one
+      pruneOverrides()
+    },
+
+    setPieceOverride: (name, override) => {
+      const s = get()
+      const next = { ...s.pieceOverrides, [name]: override }
+      // snapshot placement so a nudge is undoable (⌘Z), mirroring setMeshTransform; no recompile.
+      set({ vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)], vpFuture: [], pieceOverrides: next })
+      persist({ pieceOverrides: next })
+    },
+
+    removePieceOverride: (name) => {
+      const s = get()
+      if (!(name in s.pieceOverrides)) return
+      const { [name]: _drop, ...rest } = s.pieceOverrides
+      void _drop
+      set({ vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)], vpFuture: [], pieceOverrides: rest })
+      persist({ pieceOverrides: rest })
+    },
+
+    clearPieceOverrides: () => {
+      const s = get()
+      if (Object.keys(s.pieceOverrides).length === 0) return // already pure-packer — no snapshot churn
+      set({ vpPast: [...s.vpPast.slice(-(VP_HISTORY_LIMIT - 1)), vpSnapshotOf(s)], vpFuture: [], pieceOverrides: {} })
+      persist({ pieceOverrides: {} })
     },
 
     compilePieces,
@@ -1101,7 +1176,11 @@ export const useStore = create<VibeState>((set, get) => {
     },
 
     // viewport-placement slice (move/rotate/delete + undo/redo) lives in ./placementActions
-    ...createPlacementActions(set, get, { clearParamTimer }),
+    ...createPlacementActions(set, get, {
+      clearParamTimer,
+      // undo/redo restores the override map top-level; mirror it onto the project record too
+      persistOverrides: (overrides) => persist({ pieceOverrides: overrides }),
+    }),
 
     setOrcaMaterial: (m) => {
       set({ orcaMaterial: m })
