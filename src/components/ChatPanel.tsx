@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
@@ -44,11 +44,11 @@ const ALL_SKILL_IDS = [
 export default function ChatPanel({ mobileShow = false, paneCollapsed = false }: { mobileShow?: boolean; paneCollapsed?: boolean }) {
   const projects = useStore((s) => s.projects)
   const activeId = useStore((s) => s.activeId)
+  // UIUX-7: generating is needed here ONLY for canRefine + submit guard + Stop button visibility.
+  // It does NOT feed streamText rendering — that lives in StreamingLeaf.
   const generating = useStore((s) => s.generating)
-  const streamText = useStore((s) => s.streamText)
   const genCalls = useStore((s) => s.genCalls)
   const genTokens = useStore((s) => s.genTokens)
-  const genTimeoutMs = useStore((s) => s.health?.genTimeoutMs)
   const sendPrompt = useStore((s) => s.sendPrompt)
   const regenerateWithSkills = useStore((s) => s.regenerateWithSkills)
   const skillStats = useStore((s) => s.skillStats)
@@ -79,7 +79,6 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const [lightbox, setLightbox] = useState<string | null>(null) // data URL of the image opened full-size
   const [dragging, setDragging] = useState(false)
   const [histIdx, setHistIdx] = useState<number | null>(null)
-  const [elapsed, setElapsed] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
@@ -170,16 +169,12 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     }
   }, [draftPrompt, setDraftPrompt])
 
-  // new message → smooth scroll it into view (reduced-motion → instant). Streaming tokens keep the
-  // bottom pinned with an INSTANT scroll — smooth-scrolling on every token would stutter.
+  // new message → smooth scroll it into view (reduced-motion → instant). Token scrolling is
+  // handled inside StreamingLeaf (it re-renders per token anyway) via the same scrollRef.
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: (reduce ?? false) ? 'auto' : 'smooth' })
   }, [chat.length, reduce])
-  useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTo({ top: el.scrollHeight })
-  }, [streamText])
 
   // auto-fire one refine pass after the first image-grounded model renders (store
   // sets the flag to this project's id; we wait for canRefine, then let R3F paint).
@@ -196,13 +191,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAutoRefineFor, activeId, canRefine])
 
-  useEffect(() => {
-    if (!generating) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setElapsed(0)
-    const timer = setInterval(() => setElapsed((s) => s + 1), 1000)
-    return () => clearInterval(timer)
-  }, [generating])
+  // UIUX-7: elapsed timer moved to StreamingLeaf — it's only relevant while generating.
 
   // Esc closes the full-size image preview
   useEffect(() => {
@@ -294,30 +283,9 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     }
   }
 
-  // hide the code block from the live stream — the code lands in the code panel
-  const streamProse = streamText.split('```')[0].trim()
-  const streamingCode = streamText.includes('```')
-  // UIUX-8 — name the active generation PHASE instead of a generic spinner. Best-of-N writes its own
-  // candidate status into streamText (used verbatim); otherwise the latest user turn's `action` tells
-  // us whether this is a refine / auto-fix / regenerate pass. Falls back to "Thinking…" on a first send.
-  // cheap O(messages) scan from the tail; chat identity is stable mid-stream (only streamText
-  // mutates), so this does not re-run per streamed token — no new per-token re-render is introduced.
-  let lastAction: string | undefined
-  for (let i = chat.length - 1; i >= 0; i--) { if (chat[i].role === 'user') { lastAction = chat[i].action; break } }
-  const phaseLabel =
-    lastAction === 'Refine pass' ? 'Refining against your reference…'
-      : lastAction === 'Auto-fix' ? 'Auto-fixing the render…'
-        : lastAction === 'Fix format' ? 'Reformatting the program…'
-          : lastAction === 'Regenerate' ? 'Generating a fresh version…'
-            : lastAction === 'Adjust patterns' ? 'Regenerating with the chosen patterns…'
-              : 'Thinking…'
-  // in-chat timeout bar: how much of the configured generation timeout has elapsed (reassures the
-  // user a long Opus/high-effort run is still going, not frozen). `elapsed` ticks every second above.
-  const genCapSec = Math.max(1, Math.round((genTimeoutMs ?? 60 * 60 * 1000) / 1000))
-  const genPct = Math.min(100, (elapsed / genCapSec) * 100)
-  const genRemainSec = Math.max(0, genCapSec - elapsed)
-  const genRemainLabel = genRemainSec >= 60 ? `~${Math.ceil(genRemainSec / 60)} min left` : `${genRemainSec}s left`
-  const genElapsedClock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+  // UIUX-7: streamProse / streamingCode / phaseLabel / elapsed / genCap* moved to StreamingLeaf.
+  // The last-action scan (phaseLabel) is O(messages) but runs only inside StreamingLeaf which
+  // re-renders per token anyway — it does NOT run in the chat-list render path.
 
   // number restorable versions so history reads as history (UX-AUDIT F17)
   const versionOf = useMemo(() => {
@@ -327,17 +295,17 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     return map
   }, [chat])
 
-  const now = () => {
-    const d = new Date()
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }
-  // a message's SEND time (stamped at creation), stable across re-renders. '' for messages
-  // persisted before createdAt existed — the UI then renders no time rather than a wrong one.
-  const fmtTime = (ts?: number) => {
-    if (!ts) return ''
-    const d = new Date(ts)
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }
+  // UIUX-7: stable callbacks so MessageRow props never change identity across re-renders
+  // (prevents parent re-render from busting the memo even on chat-length changes)
+  const onLightbox = useCallback((src: string | null) => setLightbox(src), [])
+  const onRestoreVersion = useCallback((id: string) => restoreVersion(id), [restoreVersion])
+  const onRestoreNewer = useCallback(() => restoreNewer(), [restoreNewer])
+  const onRetryLast = useCallback(() => void retryLast(), [retryLast])
+  const onRerollLast = useCallback(() => void rerollLast(), [rerollLast])
+  const onRegenerateWithSkills = useCallback(
+    (id: string, ids: string[]) => void regenerateWithSkills(id, ids),
+    [regenerateWithSkills],
+  )
 
   return (
     <section
@@ -408,311 +376,40 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
             expose them as sliders.
           </div>
         )}
-        {chat.map((msg, i) => {
-          if (msg.role === 'user') {
-            return (
-              <motion.div
-                key={msg.id}
-                className="msg user"
-                initial={reduce ? false : { opacity: 0, y: 7 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <div className="msg-head">
-                  <span className="msg-avatar user"><DUser /></span>
-                  <span className="msg-who">You</span>
-                  <span className="msg-time">{fmtTime(msg.createdAt)}</span>
-                </div>
-                {msg.images?.map((img, j) => (
-                  <img
-                    key={j}
-                    className="msg-img"
-                    src={imgSrc(img)}
-                    alt="reference"
-                    role="button"
-                    tabIndex={0}
-                    title="Click to view full size"
-                    onClick={() => setLightbox(imgSrc(img))}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightbox(imgSrc(img)) } }}
-                  />
-                ))}
-                {msg.action ? (
-                  <div className="tag" title={msg.text}><DCode /> {msg.action}</div>
-                ) : (
-                  <div className="bubble">{msg.text}</div>
-                )}
-              </motion.div>
-            )
-          }
+        {/* UIUX-7: each message is a React.memo'd MessageRow keyed by id — prior bubbles
+            do NOT re-render per streaming token. All callbacks are stable (useCallback). */}
+        {chat.map((msg, i) => (
+          <MessageRow
+            key={msg.id}
+            msg={msg}
+            isLast={i === chat.length - 1}
+            versionNum={versionOf.get(msg.id)}
+            currentCode={currentCode}
+            generating={generating}
+            rolledBackVersions={rolledBackVersions}
+            flaggedSkills={flaggedSkills}
+            reduce={reduce}
+            onLightbox={onLightbox}
+            onRestoreVersion={onRestoreVersion}
+            onRestoreNewer={onRestoreNewer}
+            onRetryLast={onRetryLast}
+            onRerollLast={onRerollLast}
+            onRegenerateWithSkills={onRegenerateWithSkills}
+          />
+        ))}
 
-          // ── assistant turn ──
-          const isCurrent = msg.code === currentCode
-          const appliedSkills = msg.appliedSkillIds ?? []
-          const droppedSkills = (msg.droppedSkillIds ?? []).filter((id) => !appliedSkills.includes(id))
-          const hasMetadata = Boolean(
-            msg.skillNote ||
-            (msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low')) ||
-            (msg.code && (msg.intent || appliedSkills.length > 0))
-          )
-          // for the summary label: count of skill pills + 1 for intent/expect if present
-          const metaCount = appliedSkills.length + (msg.intent ? 1 : 0)
-
-          return (
-            <motion.div
-              key={msg.id}
-              className={`msg ai${msg.error ? ' err' : ''}`}
-              initial={reduce ? false : { opacity: 0, y: 7 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-            >
-              {/* avatar / who / time row */}
-              <div className="msg-head">
-                <span className="msg-avatar ai"><DSparkFill /></span>
-                <span className="msg-who">Vibemesh-AI</span>
-                <span className="msg-time">{fmtTime(msg.createdAt)}</span>
-              </div>
-
-              {/* AI-attached images (e.g. refine captures sent by the app itself) */}
-              {msg.images?.map((img, j) => (
-                <img
-                  key={j}
-                  className="msg-img"
-                  src={imgSrc(img)}
-                  alt="reference"
-                  role="button"
-                  tabIndex={0}
-                  title="Click to view full size"
-                  onClick={() => setLightbox(imgSrc(img))}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightbox(imgSrc(img)) } }}
-                />
-              ))}
-
-              {/* prose body */}
-              <div className="msg-body">{msg.text}</div>
-
-              {/* ── .ai-stack: all indented turn content ── */}
-              <div className="ai-stack">
-                {/* ── TIER 1: result marker (always visible, passive) ──
-                    GUARD: .code-chip MUST be the FIRST .code-chip in DOM order within this turn.
-                    It is OUTSIDE the <details> so it's always visible.
-                    It keeps class "code-chip" for e2e (surfaces.spec.ts:17, app.spec.ts:79).
-                    It is NOT interactive when current; non-current versions show Restore in turn-actions. */}
-                {msg.code && (
-                  <div
-                    className={`code-chip${isCurrent ? ' current' : ''}`}
-                    title={isCurrent ? 'This is the version you see now' : `v${versionOf.get(msg.id)}`}
-                    aria-label={isCurrent ? `Version ${versionOf.get(msg.id)}, current` : `Version ${versionOf.get(msg.id)}`}
-                  >
-                    <span className="cc-icon"><DCode /></span>
-                    <span className="cc-text">
-                      <span className="cc-title">Model code updated</span>
-                      <span className="cc-meta">v{versionOf.get(msg.id)}{isCurrent ? ' · current' : ''}</span>
-                    </span>
-                  </div>
-                )}
-
-                {/* ── TIER 2: metadata drawer (collapsed by default) ── */}
-                {hasMetadata && (
-                  <details className="turn-meta">
-                    <summary>
-                      Design details
-                      {metaCount > 0 && <span className="tm-count">{metaCount}</span>}
-                    </summary>
-                    <div className="turn-meta-body">
-                      {/* skill-note: advisory mechanism check — quieted inside the drawer */}
-                      {msg.skillNote && (
-                        <div className="skill-note" title="Verified-skill mechanism check — advisory">
-                          <span className="sn-head">⚠ Mechanism check</span>
-                          {msg.skillNote.split('\n').map((line, j) => (
-                            <div key={j} className="sn-line">{line}</div>
-                          ))}
-                        </div>
-                      )}
-                      {/* expect-banner: keeps amber styling — the more prominent signal */}
-                      {msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low') && (
-                        <div className={`expect-banner ${msg.intent?.sourceType === 'photo' ? 'photo' : 'lowconf'}`}>
-                          <span className="eb-icon">{msg.intent?.sourceType === 'photo' ? <DImage /> : <IconWarning />}</span>
-                          <span className="eb-text">
-                            {msg.intent?.sourceType === 'photo'
-                              ? 'Working from a photo — exact sizes are estimated, and smooth or organic curves become a printable hard-surface approximation. Tell me what to refine.'
-                              : 'Low-confidence read of this reference — a best-effort interpretation. Correct me if a feature looks off.'}
-                            {msg.intent?.confidence && <span className="eb-conf">confidence {msg.intent.confidence}</span>}
-                          </span>
-                        </div>
-                      )}
-                      {/* applied-patterns: design intent + skills */}
-                      {msg.code && (msg.intent || appliedSkills.length > 0) && (
-                        <div
-                          className="applied-patterns"
-                          title={[
-                            msg.intent?.archetype && `Archetype: ${msg.intent.archetype}`,
-                            msg.intent?.ambiguityScore && `Ambiguity: ${msg.intent.ambiguityScore}`,
-                            msg.intent?.assumptions?.length && `Assumptions:\n${msg.intent.assumptions.map((a) => `• ${a}`).join('\n')}`,
-                          ]
-                            .filter(Boolean)
-                            .join('\n') || undefined}
-                        >
-                          <span className="ap-icon"><DLayers /></span>
-                          <span className="ap-text">
-                            <span className="ap-title">
-                              {msg.intent?.form ?? 'design'}
-                              {msg.intent?.facetVerdict ? ` · ${msg.intent.facetVerdict}` : ''}
-                            </span>
-                            {(() => {
-                              // editing only on the current model + when idle: a correction regenerates
-                              const editable = isCurrent && !generating
-                              const addable = ALL_SKILL_IDS.filter((id) => !appliedSkills.includes(id))
-                              return (
-                                <span className="ap-skills">
-                                  {appliedSkills.map((id) => (
-                                    <span key={id} className={`ap-skill${flaggedSkills.has(id) ? ' flagged' : ''}`}>
-                                      {flaggedSkills.has(id) && (
-                                        <span className="ap-flag" title="You've removed this pattern often — it may misfire here. Consider quarantining it.">⚠</span>
-                                      )}
-                                      {skillLabel(id)}
-                                      {editable && (
-                                        <button
-                                          className="ap-x"
-                                          title={`Remove "${skillLabel(id)}" and regenerate`}
-                                          onClick={() => void regenerateWithSkills(msg.id, appliedSkills.filter((x) => x !== id))}
-                                        >
-                                          ×
-                                        </button>
-                                      )}
-                                    </span>
-                                  ))}
-                                  {appliedSkills.length === 0 && !editable && <span className="ap-meta">no mechanism skills applied</span>}
-                                  {editable && addable.length > 0 && (
-                                    <select
-                                      className="ap-add"
-                                      value=""
-                                      title="Add a mechanism pattern and regenerate"
-                                      onChange={(e) => {
-                                        if (e.target.value) void regenerateWithSkills(msg.id, [...appliedSkills, e.target.value])
-                                      }}
-                                    >
-                                      <option value="">+ pattern</option>
-                                      {addable.map((id) => (
-                                        <option key={id} value={id}>{skillLabel(id)}</option>
-                                      ))}
-                                    </select>
-                                  )}
-                                  {droppedSkills.length > 0 && (
-                                    <span className="ap-dropped" title="Matched your prompt but cut by the cap — promote one to include it">
-                                      <span className="ap-meta">· considered:</span>
-                                      {droppedSkills.map((id) =>
-                                        isCurrent && !generating ? (
-                                          <button
-                                            key={`d-${id}`}
-                                            className="ap-promote"
-                                            title={`Promote "${skillLabel(id)}" and regenerate`}
-                                            onClick={() => void regenerateWithSkills(msg.id, [...appliedSkills, id])}
-                                          >
-                                            + {skillLabel(id)}
-                                          </button>
-                                        ) : (
-                                          <span key={`d-${id}`} className="ap-skill ap-dropped-chip">{skillLabel(id)}</span>
-                                        ),
-                                      )}
-                                    </span>
-                                  )}
-                                </span>
-                              )
-                            })()}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </details>
-                )}
-
-                {/* ── TIER 3: compact action row (right-aligned) ──
-                    Restore / Regenerate / Retry + folded redo-pill ("Redo N") */}
-                {(() => {
-                  const isLastMsg = i === chat.length - 1
-                  const showRetry = msg.error && isLastMsg && !generating
-                  const showRestore = msg.code && !isCurrent
-                  const showRegenerate = msg.code && isCurrent && !generating
-                  // redo-pill folded in: only show on the LAST ai turn (so it's contextually
-                  // next to the actions you'd take after a rollback)
-                  const showRedo = rolledBackVersions > 0 && !generating && isLastMsg && msg.code
-                  if (!showRetry && !showRestore && !showRegenerate && !showRedo) return null
-                  return (
-                    <div className="turn-actions">
-                      {showRedo && (
-                        <button
-                          className="redo-action"
-                          title="You rolled the model back — click to bring the newer versions back instead."
-                          onClick={() => restoreNewer()}
-                        >
-                          <DRefresh />
-                          Redo ({rolledBackVersions})
-                        </button>
-                      )}
-                      {showRetry && (
-                        <button className="chip-btn" title="Run the same prompt again" onClick={() => void retryLast()}>
-                          <DRefresh /> Retry
-                        </button>
-                      )}
-                      {showRestore && (
-                        <button
-                          className="chip-btn"
-                          title="Bring this version of the model back"
-                          disabled={generating}
-                          onClick={() => restoreVersion(msg.id)}
-                        >
-                          <DRestore /> Restore v{versionOf.get(msg.id)}
-                        </button>
-                      )}
-                      {showRegenerate && (
-                        <button
-                          className="chip-btn"
-                          title="Generate a different version of this model — both are kept; switch between them with the version chips"
-                          onClick={() => void rerollLast()}
-                        >
-                          <DRefresh /> Regenerate
-                        </button>
-                      )}
-                    </div>
-                  )
-                })()}
-              </div>{/* end .ai-stack */}
-            </motion.div>
-          )
-        })}
-
-        {/* Live streaming turn */}
-        {generating && (
-          <div className="msg ai">
-            <div className="msg-head">
-              <span className="msg-avatar ai"><DSparkFill /></span>
-              <span className="msg-who">Vibemesh-AI</span>
-              <span className="msg-time">{now()}</span>
-            </div>
-            <div className="msg-body"><span className="streaming">{streamProse || phaseLabel}</span></div>
-            {streamingCode && <div className="version-pill"><span className="vp-dot" /> writing code…</div>}
-            <div className="stream-meta">{elapsed}s{activeProvider ? ` · ${activeProvider.label.split(' · ')[0]}` : ''}</div>
-          </div>
-        )}
+        {/* UIUX-7: StreamingLeaf subscribes ONLY to generating + streamText — never
+            triggers a re-render on the message list. Scroll-on-token is also inside. */}
+        <StreamingLeaf scrollRef={scrollRef} chat={chat} activeProvider={activeProvider} />
       </div>
 
       {/* ── Composer (pre-composer strips folded in) ── */}
       <div className="composer">
         <div className={`composer-box${generating ? ' is-generating' : ''}`}>
 
-          {/* inline gen-progress label (the top-border shimmer is CSS ::before) */}
-          {generating && (
-            <div className={`composer-gen-label${genRemainSec <= 120 ? ' low' : ''}`}
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(genPct)}
-              aria-label="Time elapsed before the generation timeout"
-            >
-              <span className="streaming">Working… {genElapsedClock}</span>
-              <span className="gen-remain">{genRemainLabel} before timeout</span>
-            </div>
-          )}
+          {/* UIUX-7: composer progress bar reads generating+elapsed from StreamingLeaf's own
+              slice. We use a separate thin component to avoid subscribing ChatPanel to streamText. */}
+          {generating && <ComposerProgressBar />}
 
           {/* inline thumbnail strip — GUARD: real <img> elements inside .chat-pane
               (surfaces.spec.ts:23 asserts `.chat-pane img` visible after setInputFiles) */}
@@ -817,6 +514,406 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
         </div>
       </div>
     </section>
+  )
+}
+
+// ── Pure time helpers (module-level, no React) ─────────────────────────────
+
+/** Format HH:MM from a timestamp epoch-ms. Empty string for missing stamps (pre-createdAt messages). */
+function fmtTime(ts?: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** Current wall-clock HH:MM (used for the streaming turn's "sent now" label). */
+function nowTime(): string {
+  const d = new Date()
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+// ── UIUX-7: MessageRow — memo'd single-bubble renderer ──────────────────────
+// Receives all data as props. Has NO subscription to streamText or generating
+// (only needs `generating` for the Restore-button disabled state, which is a
+// coarse boolean flip — acceptable). Prior bubbles never re-render per token.
+
+interface MessageRowProps {
+  msg: ChatMessage
+  isLast: boolean
+  versionNum: number | undefined
+  currentCode: string
+  generating: boolean
+  rolledBackVersions: number
+  flaggedSkills: Set<string>
+  reduce: boolean | null
+  onLightbox: (src: string | null) => void
+  onRestoreVersion: (id: string) => void
+  onRestoreNewer: () => void
+  onRetryLast: () => void
+  onRerollLast: () => void
+  onRegenerateWithSkills: (msgId: string, skillIds: string[]) => void
+}
+
+const MessageRow = memo(function MessageRow({
+  msg,
+  isLast,
+  versionNum,
+  currentCode,
+  generating,
+  rolledBackVersions,
+  flaggedSkills,
+  reduce,
+  onLightbox,
+  onRestoreVersion,
+  onRestoreNewer,
+  onRetryLast,
+  onRerollLast,
+  onRegenerateWithSkills,
+}: MessageRowProps) {
+  if (msg.role === 'user') {
+    return (
+      <motion.div
+        className="msg user"
+        initial={reduce ? false : { opacity: 0, y: 7 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <div className="msg-head">
+          <span className="msg-avatar user"><DUser /></span>
+          <span className="msg-who">You</span>
+          <span className="msg-time">{fmtTime(msg.createdAt)}</span>
+        </div>
+        {msg.images?.map((img, j) => (
+          <img
+            key={j}
+            className="msg-img"
+            src={imgSrc(img)}
+            alt="reference"
+            role="button"
+            tabIndex={0}
+            title="Click to view full size"
+            onClick={() => onLightbox(imgSrc(img))}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLightbox(imgSrc(img)) } }}
+          />
+        ))}
+        {msg.action ? (
+          <div className="tag" title={msg.text}><DCode /> {msg.action}</div>
+        ) : (
+          <div className="bubble">{msg.text}</div>
+        )}
+      </motion.div>
+    )
+  }
+
+  // ── assistant turn ──
+  const isCurrent = msg.code === currentCode
+  const appliedSkills = msg.appliedSkillIds ?? []
+  const droppedSkills = (msg.droppedSkillIds ?? []).filter((id) => !appliedSkills.includes(id))
+  const hasMetadata = Boolean(
+    msg.skillNote ||
+    (msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low')) ||
+    (msg.code && (msg.intent || appliedSkills.length > 0))
+  )
+  const metaCount = appliedSkills.length + (msg.intent ? 1 : 0)
+
+  return (
+    <motion.div
+      className={`msg ai${msg.error ? ' err' : ''}`}
+      initial={reduce ? false : { opacity: 0, y: 7 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <div className="msg-head">
+        <span className="msg-avatar ai"><DSparkFill /></span>
+        <span className="msg-who">Vibemesh-AI</span>
+        <span className="msg-time">{fmtTime(msg.createdAt)}</span>
+      </div>
+
+      {msg.images?.map((img, j) => (
+        <img
+          key={j}
+          className="msg-img"
+          src={imgSrc(img)}
+          alt="reference"
+          role="button"
+          tabIndex={0}
+          title="Click to view full size"
+          onClick={() => onLightbox(imgSrc(img))}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLightbox(imgSrc(img)) } }}
+        />
+      ))}
+
+      <div className="msg-body">{msg.text}</div>
+
+      <div className="ai-stack">
+        {/* TIER 1: result marker */}
+        {msg.code && (
+          <div
+            className={`code-chip${isCurrent ? ' current' : ''}`}
+            title={isCurrent ? 'This is the version you see now' : `v${versionNum}`}
+            aria-label={isCurrent ? `Version ${versionNum}, current` : `Version ${versionNum}`}
+          >
+            <span className="cc-icon"><DCode /></span>
+            <span className="cc-text">
+              <span className="cc-title">Model code updated</span>
+              <span className="cc-meta">v{versionNum}{isCurrent ? ' · current' : ''}</span>
+            </span>
+          </div>
+        )}
+
+        {/* TIER 2: metadata drawer */}
+        {hasMetadata && (
+          <details className="turn-meta">
+            <summary>
+              Design details
+              {metaCount > 0 && <span className="tm-count">{metaCount}</span>}
+            </summary>
+            <div className="turn-meta-body">
+              {msg.skillNote && (
+                <div className="skill-note" title="Verified-skill mechanism check — advisory">
+                  <span className="sn-head">⚠ Mechanism check</span>
+                  {msg.skillNote.split('\n').map((line, j) => (
+                    <div key={j} className="sn-line">{line}</div>
+                  ))}
+                </div>
+              )}
+              {msg.code && (msg.intent?.sourceType === 'photo' || msg.intent?.confidence === 'low') && (
+                <div className={`expect-banner ${msg.intent?.sourceType === 'photo' ? 'photo' : 'lowconf'}`}>
+                  <span className="eb-icon">{msg.intent?.sourceType === 'photo' ? <DImage /> : <IconWarning />}</span>
+                  <span className="eb-text">
+                    {msg.intent?.sourceType === 'photo'
+                      ? 'Working from a photo — exact sizes are estimated, and smooth or organic curves become a printable hard-surface approximation. Tell me what to refine.'
+                      : 'Low-confidence read of this reference — a best-effort interpretation. Correct me if a feature looks off.'}
+                    {msg.intent?.confidence && <span className="eb-conf">confidence {msg.intent.confidence}</span>}
+                  </span>
+                </div>
+              )}
+              {msg.code && (msg.intent || appliedSkills.length > 0) && (
+                <div
+                  className="applied-patterns"
+                  title={[
+                    msg.intent?.archetype && `Archetype: ${msg.intent.archetype}`,
+                    msg.intent?.ambiguityScore && `Ambiguity: ${msg.intent.ambiguityScore}`,
+                    msg.intent?.assumptions?.length && `Assumptions:\n${msg.intent.assumptions.map((a) => `• ${a}`).join('\n')}`,
+                  ].filter(Boolean).join('\n') || undefined}
+                >
+                  <span className="ap-icon"><DLayers /></span>
+                  <span className="ap-text">
+                    <span className="ap-title">
+                      {msg.intent?.form ?? 'design'}
+                      {msg.intent?.facetVerdict ? ` · ${msg.intent.facetVerdict}` : ''}
+                    </span>
+                    <span className="ap-skills">
+                      {appliedSkills.map((id) => (
+                        <span key={id} className={`ap-skill${flaggedSkills.has(id) ? ' flagged' : ''}`}>
+                          {flaggedSkills.has(id) && (
+                            <span className="ap-flag" title="You've removed this pattern often — it may misfire here. Consider quarantining it.">⚠</span>
+                          )}
+                          {skillLabel(id)}
+                          {isCurrent && !generating && (
+                            <button
+                              className="ap-x"
+                              title={`Remove "${skillLabel(id)}" and regenerate`}
+                              onClick={() => onRegenerateWithSkills(msg.id, appliedSkills.filter((x) => x !== id))}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                      {appliedSkills.length === 0 && !(isCurrent && !generating) && <span className="ap-meta">no mechanism skills applied</span>}
+                      {isCurrent && !generating && ALL_SKILL_IDS.filter((id) => !appliedSkills.includes(id)).length > 0 && (
+                        <select
+                          className="ap-add"
+                          value=""
+                          title="Add a mechanism pattern and regenerate"
+                          onChange={(e) => {
+                            if (e.target.value) onRegenerateWithSkills(msg.id, [...appliedSkills, e.target.value])
+                          }}
+                        >
+                          <option value="">+ pattern</option>
+                          {ALL_SKILL_IDS.filter((id) => !appliedSkills.includes(id)).map((id) => (
+                            <option key={id} value={id}>{skillLabel(id)}</option>
+                          ))}
+                        </select>
+                      )}
+                      {droppedSkills.length > 0 && (
+                        <span className="ap-dropped" title="Matched your prompt but cut by the cap — promote one to include it">
+                          <span className="ap-meta">· considered:</span>
+                          {droppedSkills.map((id) =>
+                            isCurrent && !generating ? (
+                              <button
+                                key={`d-${id}`}
+                                className="ap-promote"
+                                title={`Promote "${skillLabel(id)}" and regenerate`}
+                                onClick={() => onRegenerateWithSkills(msg.id, [...appliedSkills, id])}
+                              >
+                                + {skillLabel(id)}
+                              </button>
+                            ) : (
+                              <span key={`d-${id}`} className="ap-skill ap-dropped-chip">{skillLabel(id)}</span>
+                            ),
+                          )}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                </div>
+              )}
+            </div>
+          </details>
+        )}
+
+        {/* TIER 3: action row */}
+        {(() => {
+          const showRetry = msg.error && isLast && !generating
+          const showRestore = msg.code && !isCurrent
+          const showRegenerate = msg.code && isCurrent && !generating
+          const showRedo = rolledBackVersions > 0 && !generating && isLast && msg.code
+          if (!showRetry && !showRestore && !showRegenerate && !showRedo) return null
+          return (
+            <div className="turn-actions">
+              {showRedo && (
+                <button
+                  className="redo-action"
+                  title="You rolled the model back — click to bring the newer versions back instead."
+                  onClick={onRestoreNewer}
+                >
+                  <DRefresh /> Redo ({rolledBackVersions})
+                </button>
+              )}
+              {showRetry && (
+                <button className="chip-btn" title="Run the same prompt again" onClick={onRetryLast}>
+                  <DRefresh /> Retry
+                </button>
+              )}
+              {showRestore && (
+                <button
+                  className="chip-btn"
+                  title="Bring this version of the model back"
+                  disabled={generating}
+                  onClick={() => onRestoreVersion(msg.id)}
+                >
+                  <DRestore /> Restore v{versionNum}
+                </button>
+              )}
+              {showRegenerate && (
+                <button
+                  className="chip-btn"
+                  title="Generate a different version of this model — both are kept; switch between them with the version chips"
+                  onClick={onRerollLast}
+                >
+                  <DRefresh /> Regenerate
+                </button>
+              )}
+            </div>
+          )
+        })()}
+      </div>
+    </motion.div>
+  )
+})
+
+// ── UIUX-7: StreamingLeaf — the only component that subscribes to streamText ─
+// Subscribes to generating + streamText with granular zustand selectors.
+// Also owns the elapsed timer and the per-token scroll, so ChatPanel never
+// re-renders on a streaming token.
+
+function StreamingLeaf({
+  scrollRef,
+  chat,
+  activeProvider,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  chat: ChatMessage[]
+  activeProvider: { label: string } | undefined
+}) {
+  const generating = useStore((s) => s.generating)
+  const streamText = useStore((s) => s.streamText)
+
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!generating) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setElapsed(0)
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => clearInterval(timer)
+  }, [generating])
+
+  // per-token scroll: instant (smooth on new message is handled in ChatPanel)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight })
+  }, [streamText, scrollRef])
+
+  if (!generating) return null
+
+  // hide the code block from the live stream — the code lands in the code panel
+  const streamProse = streamText.split('```')[0].trim()
+  const streamingCode = streamText.includes('```')
+
+  // UIUX-8 — name the active generation phase (scan from the tail of the stable chat array)
+  let lastAction: string | undefined
+  for (let i = chat.length - 1; i >= 0; i--) {
+    if (chat[i].role === 'user') { lastAction = chat[i].action; break }
+  }
+  const phaseLabel =
+    lastAction === 'Refine pass' ? 'Refining against your reference…'
+      : lastAction === 'Auto-fix' ? 'Auto-fixing the render…'
+        : lastAction === 'Fix format' ? 'Reformatting the program…'
+          : lastAction === 'Regenerate' ? 'Generating a fresh version…'
+            : lastAction === 'Adjust patterns' ? 'Regenerating with the chosen patterns…'
+              : 'Thinking…'
+
+  return (
+    <div className="msg ai">
+      <div className="msg-head">
+        <span className="msg-avatar ai"><DSparkFill /></span>
+        <span className="msg-who">Vibemesh-AI</span>
+        <span className="msg-time">{nowTime()}</span>
+      </div>
+      <div className="msg-body"><span className="streaming">{streamProse || phaseLabel}</span></div>
+      {streamingCode && <div className="version-pill"><span className="vp-dot" /> writing code…</div>}
+      <div className="stream-meta">{elapsed}s{activeProvider ? ` · ${activeProvider.label.split(' · ')[0]}` : ''}</div>
+    </div>
+  )
+}
+
+// ── UIUX-7: ComposerProgressBar — subscribes to generating + elapsed (via its own timer) ─
+// Keeps the composer's progress label out of ChatPanel's render path on token updates.
+
+function ComposerProgressBar() {
+  const generating = useStore((s) => s.generating)
+  const genTimeoutMs = useStore((s) => s.health?.genTimeoutMs)
+
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!generating) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setElapsed(0)
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => clearInterval(timer)
+  }, [generating])
+
+  if (!generating) return null
+
+  const genCapSec = Math.max(1, Math.round((genTimeoutMs ?? 60 * 60 * 1000) / 1000))
+  const genPct = Math.min(100, (elapsed / genCapSec) * 100)
+  const genRemainSec = Math.max(0, genCapSec - elapsed)
+  const genRemainLabel = genRemainSec >= 60 ? `~${Math.ceil(genRemainSec / 60)} min left` : `${genRemainSec}s left`
+  const genElapsedClock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+
+  return (
+    <div className={`composer-gen-label${genRemainSec <= 120 ? ' low' : ''}`}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(genPct)}
+      aria-label="Time elapsed before the generation timeout"
+    >
+      <span className="streaming">Working… {genElapsedClock}</span>
+      <span className="gen-remain">{genRemainLabel} before timeout</span>
+    </div>
   )
 }
 

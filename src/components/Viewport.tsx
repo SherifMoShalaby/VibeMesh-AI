@@ -27,6 +27,18 @@ import {
   DWrench,
 } from './icons'
 
+// UIUX-5 — suppress the recurring THREE.Clock deprecation log that fires from the r3f render loop
+// (three ^0.184.0 / r3f ^9.6.1). Filter is dev-only, message-scoped — does NOT blanket-suppress.
+// Installed once at module load so it covers the Canvas mount before any React lifecycle runs.
+if (import.meta.env.DEV) {
+  const _origWarn = console.warn.bind(console)
+  console.warn = (...args: unknown[]) => {
+    const msg = typeof args[0] === 'string' ? args[0] : ''
+    if (msg.includes('THREE.Clock') && msg.includes('deprecated')) return
+    _origWarn(...args)
+  }
+}
+
 type ViewName = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right'
 
 export interface ViewApi {

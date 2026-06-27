@@ -5,6 +5,7 @@ import { useUi } from '../state/ui'
 import { applyValuesToCode, paramsForPiece } from '../lib/params'
 import { buildManualFixPrompt } from '../lib/compileReport'
 import { downloadBlob } from '../lib/stl'
+import { formatDot, parseDot, roundToStep } from '../lib/sliderFormat'
 import type { ParamValue, ScadParameter } from '../types'
 // CodeMirror is ~170KB gzip — keep it out of the main bundle; the chunk loads lazily on the
 // first Code-tab open.
@@ -13,12 +14,7 @@ import { DSliders, DCode, DChevDown, DChevRight, DUndo, DDownload, DCheck, DCopy
 
 const TWEAK_HINT_KEY = 'vibemesh.hint.tweak.v1'
 
-/** clamp slider/number values to the param's step grid — keeps float noise out of state (UX-AUDIT F13) */
-function roundToStep(n: number, step: number | undefined): number {
-  if (!step || !Number.isFinite(step) || step <= 0) return n
-  const decimals = (String(step).split('.')[1] ?? '').length
-  return Number((Math.round(n / step) * step).toFixed(decimals))
-}
+// roundToStep, formatDot, parseDot — imported from src/lib/sliderFormat.ts (UIUX-4)
 
 /** "Objects" outliner — lists the individual pieces of a multi-part design.
  *  Row-click and scene-click are bidirectional via the shared `selectedPiece`.
@@ -446,18 +442,30 @@ function ParamControl({
           {name}
         </span>
         <span className="param-valbox">
+          {/* UIUX-4: type=text + inputMode=decimal avoids the OS-locale spinner (type=number
+              shows "1,5" on comma-locale machines). dot-format on display, parseDot on commit
+              so both comma- and dot-locale keyboards work. Uncontrolled while typing: we only
+              commit on blur/Enter so mid-edit "1." stays legal. */}
           <input
-            type="number"
-            lang="en-US"
+            type="text"
+            inputMode="decimal"
             aria-label={`${name} (exact value)`}
-            min={param.min}
-            max={param.max}
-            step={param.step}
-            value={Number(v)}
-            onChange={(e) => {
-              const n = Number(e.target.value)
+            defaultValue={formatDot(Number(v))}
+            key={formatDot(Number(v))}
+            onBlur={(e) => {
+              const n = parseDot(e.target.value)
               if (Number.isFinite(n)) onChange(roundToStep(n, param.step))
+              // reset the displayed text to the canonical dot format
+              e.target.value = formatDot(Number(v))
             }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const n = parseDot((e.target as HTMLInputElement).value)
+                if (Number.isFinite(n)) onChange(roundToStep(n, param.step))
+                ;(e.target as HTMLInputElement).value = formatDot(Number(v))
+              }
+            }}
+            onDoubleClick={() => onChange(param.defaultValue)}
           />
         </span>
       </div>
@@ -478,8 +486,9 @@ function ParamControl({
       {param.min !== undefined && param.max !== undefined && (
         <div className="param-meta">
           <span className="param-range">
-            {param.min} – {param.max}
-            {param.step ? ` · step ${param.step}` : ''}
+            {/* UIUX-4: same formatDot as the value box so both always show the same separator */}
+            {formatDot(param.min)} – {formatDot(param.max)}
+            {param.step ? ` · step ${formatDot(param.step)}` : ''}
           </span>
         </div>
       )}
