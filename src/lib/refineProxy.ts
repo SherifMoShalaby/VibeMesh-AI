@@ -155,6 +155,37 @@ export function textRefineDecision(hasDefect: boolean, dimMismatch: boolean): bo
 }
 
 /**
+ * Composes the per-turn refine signals into the single "should we arm an auto-refine pass?" verdict
+ * used by the generation loop. Pure + deterministic so the composition is unit-testable (the inline
+ * expression it replaces was not — which is how OC-12's worst-piece arming slipped through review):
+ *  - visionWantsRefine (OC-6 advisory VLM "named feature ABSENT") arms regardless of the IoU gate.
+ *  - kitWantsRefine (OC-12) arms when a kit's WORST piece is below the floor EVEN when the
+ *    whole-render IoU is fine (the assembly averages a single featureless piece away), so it must
+ *    NOT be subordinate to iouWantsRefine.
+ *  - when an IoU signal exists (image turn): refine while below the floor & still improving, or on a
+ *    dimension mismatch.
+ *  - with NO IoU signal (text turn / no photo / mask not ready): DEFECT-justified only (OC-4) —
+ *    an island/dim defect arms, and `converged` only ever STOPS it.
+ */
+export function proxyRefineDecision(args: {
+  visionWantsRefine: boolean
+  kitWantsRefine: boolean
+  iouWantsRefine: boolean | undefined
+  dimMismatch: boolean
+  hasIslandDefect: boolean
+  converged: boolean
+}): boolean {
+  const { visionWantsRefine, kitWantsRefine, iouWantsRefine, dimMismatch, hasIslandDefect, converged } = args
+  return (
+    visionWantsRefine ||
+    kitWantsRefine ||
+    (iouWantsRefine !== undefined
+      ? iouWantsRefine || dimMismatch
+      : textRefineDecision(hasIslandDefect, dimMismatch) && !converged)
+  )
+}
+
+/**
  * ADVISORY self-relative solidity note for the refine prompt. fillRatio = mesh volume / bbox volume;
  * a vanishingly low ratio means the part fills very little of its own envelope — usually an
  * unintended thin shell / hollow body that read as the right SIZE but not the right MASS. It

@@ -3,7 +3,7 @@ import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
 import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, estGenTokens, type SkillIssue } from '../lib/api'
-import { clampStatedDimensions, dimDiscrepancies, geometryConverged, iouRefineDecision, textRefineDecision } from '../lib/refineProxy'
+import { clampStatedDimensions, dimDiscrepancies, geometryConverged, iouRefineDecision, proxyRefineDecision } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
 import { ComputeBudget } from '../lib/openscad/budget'
@@ -654,6 +654,7 @@ export function createGenerationActions(
             .find((m) => m.role === 'user' && (m.images?.some((im) => (im.role ?? 'global') === 'global') ?? false))
             ?.images?.find((im) => (im.role ?? 'global') === 'global')
           let iouWantsRefine: boolean | undefined
+          let kitWantsRefine = false
           if (refPhoto && provider?.vision) {
             ensureRefMask(aid, refPhoto.data, refPhoto.mediaType, refPhoto.data)
             const refMask = getRefMask(aid)
@@ -686,7 +687,14 @@ export function createGenerationActions(
               // single-part path (OC-2) above is byte-identical when not a kit. CPU rasterization only.
               if (isMultiPartNow) {
                 const worst = await scoreKitPieces(code, refMask, h)
-                if (worst) refineDiscrepancy.set(aid, worstPieceDiscrepancy(worst.piece, worst.iou, REF_IOU_FLOOR))
+                if (worst) {
+                  refineDiscrepancy.set(aid, worstPieceDiscrepancy(worst.piece, worst.iou, REF_IOU_FLOOR))
+                  // OC-12 acceptance #2 — the worst piece must DRIVE a targeted refine even when the
+                  // whole-render IoU is fine (the assembly averages a single featureless piece away, so
+                  // iouWantsRefine is false). This arms the same bounded auto-refine seam as OC-6/the IoU
+                  // path; it still respects the per-turn budget + autoCap below.
+                  kitWantsRefine = true
+                }
               }
             }
           }
@@ -723,11 +731,14 @@ export function createGenerationActions(
           // OC-6 — an ABSENT named feature (advisory vision-judge) is a hard, specific defect: it arms
           // a refine regardless of the IoU/convergence gate (it can fire even when the silhouette
           // overlap is fine). visionWantsRefine is always false when the judge is off → no-op.
-          const proxyWantsRefine =
-            visionWantsRefine ||
-            (iouWantsRefine !== undefined
-              ? iouWantsRefine || dimMismatch
-              : textRefineDecision(hasIslandDefect, dimMismatch) && !converged)
+          const proxyWantsRefine = proxyRefineDecision({
+            visionWantsRefine,
+            kitWantsRefine,
+            iouWantsRefine,
+            dimMismatch,
+            hasIslandDefect,
+            converged,
+          })
           if (curGeom) refinePrevGeom.set(aid, curGeom)
           // LAT-2 — interactive auto-refine defaults to ONE pass. A 2nd auto pass is only armed when
           // the oracle is positively still improving (iouWantsRefine === true); otherwise the chain
