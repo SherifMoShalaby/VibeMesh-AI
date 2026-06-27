@@ -47,7 +47,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   const scrollRef = useRef<HTMLDivElement>(null)
   const reduce = useReducedMotion()
 
-  const chat = projects.find((p) => p.id === activeId)?.chat ?? []
+  const chat = useMemo(() => projects.find((p) => p.id === activeId)?.chat ?? [], [projects, activeId])
   // versions rolled past via Restore, recoverable until the next prompt diverges the branch
   const rolledBackVersions = (projects.find((p) => p.id === activeId)?.chatFuture ?? []).filter((m) => m.code).length
   const activeProvider = health?.providers.find((p) => p.id === engine)
