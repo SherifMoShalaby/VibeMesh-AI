@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAuth } from '../state/authStore'
+import { useFocusTrap } from '../lib/useFocusTrap'
 
 export default function AuthModal() {
   const [mode, setMode]     = useState<'signin' | 'signup'>('signin')
@@ -8,6 +9,8 @@ export default function AuthModal() {
   const [error, setError]   = useState<string | null>(null)
   const [busy, setBusy]     = useState(false)
   const { signIn, signUp }  = useAuth()
+  const dialogRef = useRef<HTMLFormElement>(null)
+  useFocusTrap(dialogRef)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -25,8 +28,12 @@ export default function AuthModal() {
       position: 'fixed', inset: 0, display: 'flex', alignItems: 'center',
       justifyContent: 'center', background: 'var(--bg)', zIndex: 1000,
     }}>
-      <form onSubmit={(e) => { void submit(e) }} style={{
-        background: 'var(--surface)', border: '1px solid var(--border)',
+      <form
+        ref={dialogRef} tabIndex={-1}
+        role="dialog" aria-modal="true"
+        aria-label={mode === 'signin' ? 'Sign in to Vibemesh' : 'Create account'}
+        onSubmit={(e) => { void submit(e) }} style={{
+        background: 'var(--raised)', border: '1px solid var(--line)',
         borderRadius: 12, padding: 32, width: 340, display: 'flex',
         flexDirection: 'column', gap: 16,
       }}>
@@ -39,7 +46,7 @@ export default function AuthModal() {
           <input
             type="email" value={email} required autoFocus
             onChange={(e) => setEmail(e.target.value)}
-            style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)', fontSize: '0.9rem' }}
+            style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'var(--inset)', color: 'var(--text)', fontSize: '0.9rem' }}
           />
         </label>
 
@@ -48,12 +55,12 @@ export default function AuthModal() {
           <input
             type="password" value={password} required minLength={8}
             onChange={(e) => setPass(e.target.value)}
-            style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)', fontSize: '0.9rem' }}
+            style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'var(--inset)', color: 'var(--text)', fontSize: '0.9rem' }}
           />
         </label>
 
         {error && (
-          <p style={{ margin: 0, color: 'var(--error, #f87171)', fontSize: '0.82rem' }}>{error}</p>
+          <p role="alert" style={{ margin: 0, color: 'var(--err)', fontSize: '0.82rem' }}>{error}</p>
         )}
 
         <button
