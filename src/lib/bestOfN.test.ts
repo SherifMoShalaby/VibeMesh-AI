@@ -47,6 +47,18 @@ describe('scoreCandidate — reference-free priority', () => {
     expect(notAttempted).toBeGreaterThan(degenerate) // and beats a known-bad render
     expect(notAttempted).toBeLessThan(clean) // but a confirmed clean compile is still preferred
   })
+
+  it('LAT-5/SHE-94: a windowed-out / transport candidate uses the env-miss bucket (not a non-compile)', () => {
+    // runBestOfN scores a candidate that didn't return in the window, OR hit a transport error, as
+    // {hasScad:true, compileAttempted:false} — an environmental UNKNOWN. It must rank above a candidate
+    // that returned a real reply with no usable program (a genuine non-compile / no-scad), so the
+    // slowest candidate is never mistaken for a fault and a transport blip never demotes a real miss.
+    const windowedOrTransport = scoreCandidate(sig({ hasScad: true, compileAttempted: false, compiled: false }))
+    const returnedNoScad = scoreCandidate(sig({ hasScad: false, compileAttempted: false, compiled: false }))
+    const confirmedNonCompile = scoreCandidate(sig({ hasScad: true, compileAttempted: true, compiled: false }))
+    expect(windowedOrTransport).toBeGreaterThan(returnedNoScad)
+    expect(windowedOrTransport).toBeGreaterThan(confirmedNonCompile)
+  })
 })
 
 describe('scoreCandidate — hollow fill-ratio tiebreak (below every harder signal)', () => {
@@ -130,6 +142,38 @@ describe('scoreCandidate — reference-photo shapeMatch tiebreak (Phase 2, below
     const correctDimsHollowMiss = scoreCandidate(sig({ dimMismatches: 0, shapeMatch: 0, fillRatio: 0.001 }))
     const wrongDimsSolidMatch = scoreCandidate(sig({ dimMismatches: 1, shapeMatch: 1, fillRatio: 0.9 }))
     expect(correctDimsHollowMiss).toBeGreaterThan(wrongDimsSolidMatch)
+  })
+})
+
+describe('scoreCandidate — proportion tiebreak (OC-10, below shapeMatch, above hollow)', () => {
+  it('OC-10 acceptance: a correct-shape but wrong-PROPORTION candidate scores below a correct-proportion one', () => {
+    // Both tie on every harder signal AND on the scale-blind shapeMatch — only proportion differs.
+    const correctProp = scoreCandidate(sig({ shapeMatch: 0.9, proportionMatch: 0.95 }))
+    const wrongProp = scoreCandidate(sig({ shapeMatch: 0.9, proportionMatch: 0.3 }))
+    expect(correctProp).toBeGreaterThan(wrongProp)
+  })
+
+  it('no proportion signal (undefined) is a TOTAL no-op — byte-identical to the score without it', () => {
+    expect(scoreCandidate(sig({ proportionMatch: undefined }))).toBe(scoreCandidate(sig({})))
+    expect(scoreCandidate(sig({ proportionMatch: 1 }))).toBe(scoreCandidate(sig({ proportionMatch: undefined })))
+  })
+
+  it('ranks STRICTLY below shapeMatch: a better OUTLINE wins even with worse proportions', () => {
+    const betterShape = scoreCandidate(sig({ shapeMatch: 0.9, proportionMatch: 0.0 }))
+    const worseShape = scoreCandidate(sig({ shapeMatch: 0.5, proportionMatch: 1.0 }))
+    expect(betterShape).toBeGreaterThan(worseShape) // shape term (75) dominates the proportion term (25)
+  })
+
+  it('NEVER crosses a harder signal: a total proportion miss still beats one extra dim mismatch', () => {
+    const missButCloserDims = scoreCandidate(sig({ proportionMatch: 0, dimMismatches: 0 }))
+    const matchButFartherDims = scoreCandidate(sig({ proportionMatch: 1, dimMismatches: 1 }))
+    expect(missButCloserDims).toBeGreaterThan(matchButFartherDims)
+  })
+
+  it('the combined soft tier stays clamped < one dim mismatch (shape + proportion + hollow all worst)', () => {
+    const allSoftWorst = scoreCandidate(sig({ shapeMatch: 0, proportionMatch: 0, fillRatio: 1e-6, dimMismatches: 0 }))
+    const oneDimOff = scoreCandidate(sig({ shapeMatch: 1, proportionMatch: 1, fillRatio: 0.9, dimMismatches: 1 }))
+    expect(allSoftWorst).toBeGreaterThan(oneDimOff)
   })
 })
 

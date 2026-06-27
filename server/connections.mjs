@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { queueAtomicWrite } from './atomicWrite.mjs'
 
 /* ────────────────────────────────────────────────────────────────
    Connection marketplace (P2). The user adds provider connections;
@@ -100,8 +101,11 @@ function load() {
   return cache
 }
 function persist() {
-  // 0o600: the file holds no secrets (those are in .env) but keep it owner-only for tidiness.
-  fs.writeFileSync(STORE_PATH, JSON.stringify(cache ?? [], null, 2) + '\n', { mode: 0o600 })
+  // SEC-6: temp-file + atomic rename, serialized per path, so a concurrent save + remove can't
+  // interleave a read-modify-write and corrupt the store. produce() snapshots `cache` at write time
+  // (the source of truth), so the latest in-memory state always wins. 0o600: the file holds no
+  // secrets (those are in .env) but keep it owner-only for tidiness.
+  return queueAtomicWrite(STORE_PATH, () => JSON.stringify(cache ?? [], null, 2) + '\n', 0o600)
 }
 
 /** Non-secret connection records (a copy, so callers can't mutate the cache). */

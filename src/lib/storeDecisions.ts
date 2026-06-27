@@ -61,3 +61,20 @@ export function degenerateReason(
   if (checkBed && (x > bed.x || y > bed.y || z > bed.z)) return `a dimension exceeds the ${bed.x}×${bed.y}×${bed.z} mm bed (${x}×${y}×${z} mm)`
   return null
 }
+
+/**
+ * OC-13 — flat-on-bed printability of a SINGLE solid part. A part whose lowest face sits well off
+ * z=0 — floating above the bed (minZ > tol) or sunk below it (minZ < -tol, e.g. t2-soapdish's
+ * minZ=-3 feet) — is a DESIGN miss the success gate should surface, not just silently transform on
+ * export. Returns a human reason or null. tol is a few tenths of a mm so a part authored flat
+ * (minZ≈0) and the inevitable mesh-rounding noise are NOT flagged. The deterministic export
+ * drop-to-bed remains the safety net; this only flags the design. Caller exempts the assembled
+ * `all` view and multi-part (their pieces legitimately float / explode). Pure + deterministic.
+ */
+export function notFlatOnBedReason(dims: StlBBox | null, tol = 0.5): string | null {
+  if (!dims || !Number.isFinite(dims.minZ)) return null
+  if (Math.abs(dims.minZ) <= tol) return null
+  return dims.minZ < 0
+    ? `the part is authored ${(-dims.minZ).toFixed(1)}mm below the bed (its lowest face is at z=${dims.minZ.toFixed(1)}) — design it to rest flat on z=0`
+    : `the part floats ${dims.minZ.toFixed(1)}mm above the bed (its lowest face is at z=${dims.minZ.toFixed(1)}) — design it to rest flat on z=0`
+}

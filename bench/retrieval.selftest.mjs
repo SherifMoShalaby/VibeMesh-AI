@@ -31,13 +31,20 @@ const POSITIVE = [
   ['a decorative crown for a trophy topper', 'crown-coronet'],
   ['a chess rook with a crenellated battlement rim', 'hollow-crenellation'],
   ['a holder with open prongs cradling a marble', 'open-prong-cradle'],
+  // common-object FORM skills (RET-1/RET-2): the everyday housewares now route to a fragment
+  ['a desk organizer with compartments for pens and paperclips', 'divided-tray'],
+  ['a soap dish that drains by the sink', 'drained-dish'],
+  ['a coffee mug with a handle', 'mug'],
+  ['a pitcher with a handle', 'vessel-handle'],
+  ['an L-bracket to wall-mount a shelf', 'bracket'],
+  ['a desk nameplate that says HELLO', 'lettering'],
+  ['a crown-cap bottle opener', 'bottle-opener'],
 ]
 
 const NEGATIVE = [
   'a rectangular box 40 x 20 x 10 mm',
   'a hexagonal coaster',
-  'a simple desk nameplate',
-  'a spring water bottle holder', // bare "spring" must NOT fire coil/leaf
+  'a spring water label', // bare "spring" must NOT fire coil/leaf; no housewares word -> no fallback
   'a turret enclosure for a raspberry pi', // bare "turret" must NOT fire battlement styling
 ]
 
@@ -68,6 +75,58 @@ for (const [prompt, banned, want] of EXCLUDE) {
   if (!ok) fail++
   console.log(`  ${mark(ok)} (homograph) "${prompt.slice(0, 40)}" → [${got.join(', ') || '—'}]  (no ${banned}, has ${want})`)
 }
+
+// RET-3: decorative homographs must NOT inject the bodied mechanism exemplar. A *-shaped /
+// cookie-cutter / -top jar request drops the mechanism (it never fires), so its bodied "follow
+// this structure" exemplar can't pull a decorative request the wrong way.
+const DECOR_HOMOGRAPH = [
+  ['a gear-shaped cookie cutter', 'spur-gear'],
+  ['a screw-top jar lid', 'threaded-fastener-seat'],
+  ['a snowflake-shaped ornament', 'snap-fit'], // contrived: ensures the guard generalizes
+]
+for (const [prompt, banned] of DECOR_HOMOGRAPH) {
+  const got = selectSkills({ prompt })
+  const ok = !got.includes(banned)
+  if (!ok) fail++
+  console.log(`  ${mark(ok)} (decorative) "${prompt.slice(0, 40)}" → [${got.join(', ') || '—'}]  (no bodied ${banned})`)
+}
+
+// RET-3: a GENUINE mechanism prompt still earns its bodied exemplar (not prose-only). A single
+// corroborated hit ("40mm 24T spur gear" — gear + the dimensioned-gear signal) keeps spur-gear OUT
+// of the prose set. A bare uncorroborated single hit gets PROSE-ONLY guidance instead.
+const genuine = selectSkillsDetailed({ prompt: 'a 40mm 24T spur gear', intent: { domainTags: ['gear'] } })
+const genuineOk = genuine.selected.includes('spur-gear') && !(genuine.prose ?? []).includes('spur-gear')
+if (!genuineOk) fail++
+console.log(`  ${mark(genuineOk)} genuine mechanism gets BODIED exemplar: sel [${genuine.selected.join(', ')}] prose [${(genuine.prose ?? []).join(', ') || '—'}]`)
+
+const bareHit = selectSkillsDetailed({ prompt: 'a gear' })
+const bareOk = bareHit.selected.includes('spur-gear') && (bareHit.prose ?? []).includes('spur-gear')
+if (!bareOk) fail++
+console.log(`  ${mark(bareOk)} bare single hit → PROSE-ONLY: sel [${bareHit.selected.join(', ')}] prose [${(bareHit.prose ?? []).join(', ') || '—'}]`)
+
+// RET-2: a first-turn IMAGE with no specific match falls back to the generic open-container.
+const imgFallback = selectSkills({ prompt: '', hasImage: true })
+const imgOk = imgFallback.length === 1 && imgFallback[0] === 'open-container'
+if (!imgOk) fail++
+console.log(`  ${mark(imgOk)} first-turn image, no match → [${imgFallback.join(', ') || '—'}] (open-container fallback)`)
+
+// RET-2: a housewares-shaped text prompt with no specific match also falls back.
+const hwFallback = selectSkills({ prompt: 'a desk caddy for my supplies' })
+const hwOk = hwFallback.includes('open-container')
+if (!hwOk) fail++
+console.log(`  ${mark(hwOk)} housewares text, no specific match → [${hwFallback.join(', ') || '—'}] (open-container fallback)`)
+
+// RET-4: a GENERIC kit gets PROSE-ONLY separable-parts guidance (no studded baseplate exemplar).
+const genericKit = selectSkillsDetailed({ kit: true, prompt: 'a pen-holder kit' })
+const genericKitOk = genericKit.selected.includes('kit-baseplate') && (genericKit.prose ?? []).includes('kit-baseplate')
+if (!genericKitOk) fail++
+console.log(`  ${mark(genericKitOk)} generic kit → prose-only: sel [${genericKit.selected.join(', ')}] prose [${(genericKit.prose ?? []).join(', ') || '—'}]`)
+
+// RET-4: an explicit LEGO/baseplate kit still earns the BODIED KIT_EXEMPLAR.
+const legoKit = selectSkillsDetailed({ kit: true, prompt: 'a LEGO-compatible studded baseplate kit' })
+const legoKitOk = legoKit.selected.includes('kit-baseplate') && !(legoKit.prose ?? []).includes('kit-baseplate')
+if (!legoKitOk) fail++
+console.log(`  ${mark(legoKitOk)} studded kit → bodied: sel [${legoKit.selected.join(', ')}] prose [${(legoKit.prose ?? []).join(', ') || '—'}]`)
 
 // cap: a prompt that name-drops many mechanisms must not balloon the prompt
 const capGot = selectSkills({ prompt: 'a geared, hinged, snap-fit, ratcheting, wheeled gizmo with a pinion and clips' })

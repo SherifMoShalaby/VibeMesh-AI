@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote, iouRefineDecision } from './refineProxy'
+import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote, iouRefineDecision, textRefineDecision, proxyRefineDecision } from './refineProxy'
 import type { StlBBox } from './stl'
 
 const bbox = (x: number, y: number, z: number): StlBBox => ({ x, y, z, minZ: 0, volume: 0, triangles: 0 })
@@ -162,6 +162,31 @@ describe('iouRefineDecision — reference-IoU refine gate (OC-2)', () => {
   })
 })
 
+describe('textRefineDecision — defect-justified text refine gate (OC-4)', () => {
+  it('fires ZERO passes with no measured defect (no island, no dim mismatch)', () => {
+    // the key acceptance: a text turn with no stated dims and no defect never arms a blind pass
+    expect(textRefineDecision(false, false)).toBe(false)
+  })
+
+  it('arms a pass on a measured island (connectivity) defect', () => {
+    expect(textRefineDecision(true, false)).toBe(true)
+  })
+
+  it('arms a pass on a dimension-vs-stated mismatch', () => {
+    expect(textRefineDecision(false, true)).toBe(true)
+  })
+
+  it('arms a pass when both defects are present', () => {
+    expect(textRefineDecision(true, true)).toBe(true)
+  })
+
+  it('never depends on self-relative reshaping — only a measured defect can START it', () => {
+    // there is no "still reshaping" parameter: the only inputs are MEASURED defects, so geometry
+    // that is merely unsettled (but has no defect) cannot arm a pass.
+    expect(textRefineDecision(false, false)).toBe(false)
+  })
+})
+
 describe('fillRatioNote — advisory hollow-fill self-diagnosis', () => {
   it('returns "" for unusable input (null/undefined, zero bbox, non-positive/non-finite volume)', () => {
     expect(fillRatioNote(null)).toBe('')
@@ -193,5 +218,44 @@ describe('fillRatioNote — advisory hollow-fill self-diagnosis', () => {
 
   it('never reports 0% (floors the displayed percentage at 1)', () => {
     expect(fillRatioNote(solid(100, 100, 100, 50))).toMatch(/~1%/) // 0.005% rounds up to a readable 1%
+  })
+})
+
+describe('proxyRefineDecision — composed refine gate', () => {
+  const base = {
+    visionWantsRefine: false,
+    kitWantsRefine: false,
+    iouWantsRefine: undefined as boolean | undefined,
+    dimMismatch: false,
+    hasIslandDefect: false,
+    converged: false,
+  }
+
+  // OC-12 acceptance #2 — the worst kit piece must DRIVE a targeted refine even when the whole-render
+  // IoU is fine (the assembly averages a single featureless piece away → iouWantsRefine === false).
+  it('a worst kit piece arms a refine even when whole-render IoU is at/above the floor', () => {
+    expect(proxyRefineDecision({ ...base, kitWantsRefine: true, iouWantsRefine: false })).toBe(true)
+  })
+
+  it('without a worst piece a satisfied whole-render IoU does NOT refine (no false positive)', () => {
+    expect(proxyRefineDecision({ ...base, kitWantsRefine: false, iouWantsRefine: false })).toBe(false)
+  })
+
+  // OC-6 — an absent named feature arms regardless of the IoU/convergence gate.
+  it('an absent named feature (vision judge) arms even with a satisfied IoU', () => {
+    expect(proxyRefineDecision({ ...base, visionWantsRefine: true, iouWantsRefine: false })).toBe(true)
+  })
+
+  it('image turn: a below-floor-and-improving IoU refines; a dimension mismatch refines too', () => {
+    expect(proxyRefineDecision({ ...base, iouWantsRefine: true })).toBe(true)
+    expect(proxyRefineDecision({ ...base, iouWantsRefine: false, dimMismatch: true })).toBe(true)
+  })
+
+  it('text turn (no IoU): a measured defect arms, and convergence stops it', () => {
+    expect(proxyRefineDecision({ ...base, hasIslandDefect: true })).toBe(true)
+    expect(proxyRefineDecision({ ...base, hasIslandDefect: true, converged: true })).toBe(false)
+    expect(proxyRefineDecision({ ...base, dimMismatch: true })).toBe(true)
+    // no defect at all → zero passes (OC-4: never burn a blind self-grading pass)
+    expect(proxyRefineDecision({ ...base })).toBe(false)
   })
 })

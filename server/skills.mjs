@@ -681,6 +681,253 @@ union() {
 }
 `
 
+/* ── Common-object FORM exemplars (RET-1) ── compile-verified through openscad-wasm Manifold;
+ * each is a single connected solid flat on z=0. These cover the highest-frequency everyday asks
+ * (trays, dishes, vessels, brackets, lettering) the mechanism registry never knew. */
+
+const DIVIDED_TRAY_EXEMPLAR = `// SKILL: divided-tray — an open box split into cols x rows compartments by REAL
+// internal partition walls (a wall per grid line, never a phantom 'divider' flag).
+
+/* [Tray] */
+length = 120;   // [40:1:300]
+width = 80;     // [40:1:300]
+height = 28;    // [10:1:80]
+wall = 2.4;     // [1.2:0.1:5]
+cols = 3;       // [1:1:8]
+rows = 2;       // [1:1:8]
+
+floor_h = wall;
+
+module shell() difference() {
+  cube([length, width, height]);
+  translate([wall, wall, floor_h]) cube([length-2*wall, width-2*wall, height]);
+}
+
+// REAL partition walls: cols-1 lengthwise + rows-1 crosswise full-height dividers.
+// Wall count derives from cols*rows — (cols-1)+(rows-1) — not a boolean toggle.
+module dividers() {
+  for (c = [1:cols-1]) translate([c*length/cols - wall/2, wall, floor_h])
+    cube([wall, width-2*wall, height-floor_h]);
+  for (r = [1:rows-1]) translate([wall, r*width/rows - wall/2, floor_h])
+    cube([length-2*wall, wall, height-floor_h]);
+}
+
+shell();
+dividers();
+`
+
+const DRAINED_DISH_EXEMPLAR = `// SKILL: drained-dish — a hollow dish (soap/sponge) with through-drain slots in the
+// floor so water escapes. Sits FLAT on z=0 (no feet sinking below the bed).
+
+/* [Dish] */
+length = 110;   // [60:1:200]
+width = 80;     // [40:1:160]
+height = 22;    // [10:1:60]
+wall = 2.4;     // [1.2:0.1:5]
+floor_h = 2;    // [1:0.2:5]
+drain_slots = 5; // [2:1:12]
+slot_w = 4;     // [2:0.5:10]
+
+module body() difference() {
+  hull() for (x=[wall, length-wall]) for (y=[wall, width-wall])
+    translate([x, y, 0]) cylinder(r=wall, h=height, $fn=24);   // flat-bottomed dish on z=0
+  translate([wall, wall, floor_h]) cube([length-2*wall, width-2*wall, height]); // cavity
+}
+
+// through-drain slots cut clean through the floor (water escapes, not a blind well)
+module drains() for (i=[0:drain_slots-1])
+  translate([length*(i+1)/(drain_slots+1) - slot_w/2, width*0.25, -1])
+    cube([slot_w, width*0.5, floor_h+2]);
+
+difference() { body(); drains(); }
+`
+
+const VESSEL_HANDLE_EXEMPLAR = `// SKILL: vessel+handle — a hollow vessel whose handle is FUSED to the wall as ONE
+// solid. The handle is a hull() chain of body-tangent profiles whose end blobs OVERLAP
+// the wall, so it merges into the body (a single island, never a detached torus).
+
+/* [Vessel] */
+outer_d = 80;    // [40:1:160]
+height = 90;     // [40:1:200]
+wall = 3;        // [1.6:0.1:6]
+floor_h = 3;     // [1.6:0.1:8]
+
+/* [Handle] */
+handle_t = 10;       // [6:0.5:18]   handle bar thickness
+handle_out = 32;     // [16:1:60]    how far the handle bows out
+handle_top = 0.72;   // [0.4:0.02:0.9] top anchor (fraction of height)
+handle_bot = 0.18;   // [0.05:0.02:0.5] bottom anchor (fraction of height)
+
+module vessel() difference() {
+  cylinder(d=outer_d, h=height, $fn=96);
+  translate([0,0,floor_h]) cylinder(d=outer_d-2*wall, h=height, $fn=96);
+}
+
+// anchors overlap the OUTER wall; mids bow outward. Hulling consecutive blobs builds a
+// continuous bar fused into the wall -> single connected solid.
+module anchor(zf) translate([outer_d/2 - handle_t/4, 0, height*zf]) sphere(d=handle_t, $fn=32);
+module mid(zf)    translate([outer_d/2 + handle_out, 0, height*zf]) sphere(d=handle_t, $fn=32);
+
+module handle() {
+  hull() { anchor(handle_top); mid(handle_top - 0.12); }
+  hull() { mid(handle_top - 0.12); mid(handle_bot + 0.12); }
+  hull() { mid(handle_bot + 0.12); anchor(handle_bot); }
+}
+
+union() { vessel(); handle(); }   // ONE solid: wall + fused handle
+`
+
+const BRACKET_EXEMPLAR = `// SKILL: bracket / wall-mount — two flanges at 90 deg, stiffened by a triangular
+// gusset, with a mount-hole pattern bored through each flange.
+
+/* [Bracket] */
+arm_a = 60;     // [20:1:160]  vertical flange height
+arm_b = 50;     // [20:1:160]  horizontal flange depth
+bwidth = 40;    // [20:1:120]
+thick = 5;      // [3:0.5:12]
+
+/* [Holes] */
+hole_d = 5.2;   // [3:0.1:10]  M5 clearance
+holes_per_arm = 2; // [1:1:4]
+edge = 10;      // [6:1:20]    hole inset from edges
+
+module flanges() {
+  cube([thick, bwidth, arm_a]);            // vertical flange
+  cube([arm_b, bwidth, thick]);            // horizontal flange
+}
+
+// triangular gusset webbing the inside corner (stiffens the joint)
+module gusset() translate([thick, bwidth/2 + thick/2, thick])
+  rotate([90,0,0]) linear_extrude(thick)
+    polygon([[0,0],[arm_b-thick,0],[0,arm_a-thick]]);
+
+module holes() {
+  for (i=[0:holes_per_arm-1])                                            // vertical-flange holes
+    translate([-1, bwidth*(i+1)/(holes_per_arm+1), arm_a-edge])
+      rotate([0,90,0]) cylinder(d=hole_d, h=thick+2, $fn=32);
+  for (i=[0:holes_per_arm-1])                                            // horizontal-flange holes
+    translate([arm_b-edge, bwidth*(i+1)/(holes_per_arm+1), -1])
+      cylinder(d=hole_d, h=thick+2, $fn=32);
+}
+
+difference() { union() { flanges(); gusset(); } holes(); }
+`
+
+const LETTERING_EXEMPLAR = `// SKILL: lettering-without-text() — text() is FORBIDDEN by the contract, so each glyph
+// is composed from rectangle/polygon strokes, assembled into a word, then raised on (or
+// recessed into) a plate. Replace the demo glyphs with the requested characters.
+
+/* [Plate] */
+plate_w = 90;    // [40:1:200]
+plate_h = 30;    // [20:1:80]
+plate_t = 4;     // [2:0.5:10]
+
+/* [Lettering] */
+letter_h = 16;   // [8:1:40]
+stroke = 3;      // [1.5:0.5:8]
+relief = 2;      // [0.6:0.2:5]   raised height (or recess depth)
+recessed = false; // [true, false]
+
+module bar(len) square([len, stroke]);     // horizontal stroke
+module vbar(len) square([stroke, len]);    // vertical stroke
+
+// glyph 'H' from strokes (origin at glyph bottom-left)
+module glyph_H() {
+  w = letter_h*0.7;
+  vbar(letter_h);
+  translate([w-stroke,0]) vbar(letter_h);
+  translate([0, letter_h/2 - stroke/2]) bar(w);
+}
+module glyph_I() vbar(letter_h);
+
+module word_2d() { glyph_H(); translate([letter_h*0.9, 0]) glyph_I(); }
+
+module plate() cube([plate_w, plate_h, plate_t]);
+module letters3d(h) translate([plate_w*0.18, (plate_h-letter_h)/2, 0])
+  linear_extrude(h) word_2d();
+
+if (recessed) {
+  difference() { plate(); translate([0,0,plate_t-relief]) letters3d(relief+1); }
+} else {
+  plate();
+  translate([0,0,plate_t]) letters3d(relief);   // raised glyphs fused to the plate
+}
+`
+
+const MUG_EXEMPLAR = `// SKILL: mug (household) — a hollow mug whose handle is FUSED to the body as ONE solid.
+// The handle is a hull() chain of body-tangent profiles, so it is one connected island
+// (never the detached C-torus failure). Reuses the vessel+handle fusion discipline.
+
+/* [Mug] */
+outer_d = 84;    // [50:1:140]
+height = 95;     // [50:1:160]
+wall = 3.2;      // [2:0.1:6]
+floor_h = 4;     // [2:0.2:10]
+
+/* [Handle] */
+handle_t = 11;       // [7:0.5:18]
+handle_out = 34;     // [18:1:60]
+handle_top = 0.74;   // [0.5:0.02:0.9]
+handle_bot = 0.20;   // [0.05:0.02:0.5]
+
+module cup() difference() {
+  cylinder(d=outer_d, h=height, $fn=96);
+  translate([0,0,floor_h]) cylinder(d=outer_d-2*wall, h=height, $fn=96);
+}
+
+// anchors overlap the wall; mids bow outward -> hulled bar fuses into the wall (1 island)
+module anchor(zf) translate([outer_d/2 - handle_t/4, 0, height*zf]) sphere(d=handle_t, $fn=32);
+module mid(zf)    translate([outer_d/2 + handle_out, 0, height*zf]) sphere(d=handle_t, $fn=32);
+
+module handle() {
+  hull() { anchor(handle_top); mid(handle_top - 0.14); }
+  hull() { mid(handle_top - 0.14); mid(handle_bot + 0.14); }
+  hull() { mid(handle_bot + 0.14); anchor(handle_bot); }
+}
+
+union() { cup(); handle(); }   // ONE connected solid
+`
+
+const BOTTLE_OPENER_EXEMPLAR = `// SKILL: bottle-opener (household) — a flat opener with a REAL undercut catch lip that
+// grips a crown cap's edge from beneath. The recess is WIDER than the mouth it is entered
+// through, so material overhangs (an undercut lip), not a blind cylinder pocket.
+
+/* [Opener] */
+length = 90;     // [60:1:140]
+width = 34;      // [24:1:60]
+thick = 8;       // [5:0.5:14]
+hang_d = 12;     // [8:0.5:18]   hang hole
+
+/* [Catch] */
+cap_d = 30;          // [26:0.5:34]  crown-cap outer diameter (the recess width)
+mouth = 22;          // [16:0.5:28]  entry opening (< cap_d -> overhanging lip)
+lip_overhang = 3;    // [1.5:0.5:6]  how far the lip overhangs the recess
+recess_d = 2.6;      // [1.5:0.2:5]  recess depth from the top face
+
+cx = length - cap_d/2 - 6;  // catch center
+
+module slab() hull() {
+  translate([width/2, width/2, 0]) cylinder(d=width, h=thick, $fn=48);
+  translate([length-width/2, width/2, 0]) cylinder(d=width, h=thick, $fn=48);
+}
+
+// recess (cap_d) opened from below, then a NARROWER mouth through the top — the rim left
+// above the recess is the undercut catch lip that overhangs and grips the cap from beneath.
+module catch_cut() translate([cx, width/2, 0]) {
+  translate([0,0,-1]) cylinder(d=cap_d, h=thick-recess_d+1, $fn=64);            // cap recess
+  translate([0,0,thick-recess_d]) cylinder(d=mouth, h=recess_d+1, $fn=64);      // narrow mouth
+  translate([-mouth/2, 0, thick-recess_d]) cube([mouth, length, recess_d+1]);   // slide-in slot
+}
+
+module hang() translate([width/2, width/2, -1]) cylinder(d=hang_d, h=thick+2, $fn=32);
+
+difference() { slab(); catch_cut(); hang(); }
+
+// the undercut is REAL: the recess is wider than the mouth it enters through.
+assert(cap_d > mouth, "catch lip must overhang: cap_d > mouth");
+assert(lip_overhang > 0);
+`
+
 export const SKILLS = {
   'kit-baseplate': {
     id: 'kit-baseplate',
@@ -694,8 +941,8 @@ export const SKILLS = {
       return issues
     },
     // the buildable-kit pattern: prose rules + (non-local) the compile-verified exemplar.
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Build as a KIT\n\nThis request is for a buildable kit. Produce SEPARATE connectable parts, not one fused solid: use the part enum (one module per piece), design real inline mating connectors (studs/tubes, pegs/sockets, snaps, axles/bores) with the fit clearance exposed as a parameter, and render each selected piece flat on z=0 in print orientation. EXCEPTION: if a reference image shows a SINGLE object that merely accepts inserted hardware (a bearing pocket, weight bores, screw holes), it is ONE printable solid — model it as a single faithful part and ignore this kit guidance.'
       if (!isLocal) {
@@ -718,8 +965,8 @@ export const SKILLS = {
         issues.push('a rotating wheel/axle bore must be axle_d + a positive spin clearance (bore = axle_d + spin_fit), or the parts seize')
       return issues
     },
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Wheels & axles\n\nFor wheels/axles, the rotating joint is the point: every female bore = axle_d + ONE shared spin clearance (e.g. spin_fit ~0.3-0.4mm), exposed as a parameter — never an equal-size bore (it would seize). Print the wheel and chassis flat (round face down, true circles), the axle lying flat; a printed axle is weak in bending, so for load suggest a metal rod. If it is a kit, use the part enum (one module per piece).'
       if (!isLocal) {
@@ -744,8 +991,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/web_thick\s*=\s*[\d.]+/, 'web_thick = 2.0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Living hinge\n\nA living hinge is ONE thin continuous web joining two rigid panels — never a gap or a separate part. Web ~0.3-0.6mm (>=2 perimeters), spanning a few mm so strain spreads; the two leaves stay a SINGLE body. Orient so layer lines run ACROSS the bend; print PP/TPU/PETG/Nylon (PLA cracks). Fillet where the web meets each panel.'
       if (!isLocal) s += '\n\nReference example (two panels + one continuous thin web, flat on z=0):\n\n' + LIVING_HINGE_EXEMPLAR
@@ -766,8 +1013,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/root_thick\s*=\s*[\d.]+/, 'root_thick = 0.6'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Leaf / cantilever spring\n\nA leaf spring is a tapered cantilever beam (thicker fixed root -> thinner free tip) on an anchor, with a filleted root. Stiffness scales with thickness CUBED — expose root/tip thickness; root >= 1.2mm. Orient so bending tension runs ALONG the layer lines (never peeling them); PETG/Nylon for repeated flex, not PLA.'
       if (!isLocal) s += '\n\nReference example (anchor + tapered cantilever beam, flat on z=0):\n\n' + LEAF_SPRING_EXEMPLAR
@@ -795,8 +1042,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/hook_overlap\s*=\s*[\d.]+/, 'hook_overlap = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Snap-fit (cantilever)\n\nA snap-fit is a flexing cantilever beam with a hook that springs over a mating ledge. ONE shared overlap parameter must drive BOTH the hook protrusion AND the catch ledge it engages — never two independent numbers that can drift apart. Give the hook a shallow lead-in ramp (easy insert) and a steep retention face (resists pull-out), an insertion clearance, and a void the beam deflects into. Keep beam length/thickness >= 6 so the bending strain stays in the printable/elastic range.'
       if (!isLocal) s += '\n\nReference example (clip + keeper, one shared hook_overlap, flat on z=0):\n\n' + SNAP_FIT_EXEMPLAR
@@ -819,8 +1066,8 @@ export const SKILLS = {
       }
       return issues
     },
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Print-in-place hinge\n\nA print-in-place hinge prints fully assembled and FLAT on the bed, then pivots with no assembly. Interleave the two leaves\' knuckles around one pin; make the pin SOLID through one leaf\'s knuckles and give the other leaf\'s knuckles a radial clearance bore = pin_r + gap (one shared gap parameter). Leave the same gap axially between adjacent knuckles. The gap must be >= one nozzle width (~0.3-0.5mm) or the layers fuse and the joint locks up.'
       if (!isLocal) s += '\n\nReference example (two leaves, interleaved knuckles, captive pin, flat on z=0):\n\n' + PIP_HINGE_EXEMPLAR
@@ -842,8 +1089,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/backlash\s*=\s*[\d.]+/, 'backlash = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Spur gears\n\nMeshing gears MUST share one module (tooth size) — never two unrelated tooth definitions. Pitch radius = module*teeth/2; the meshing centre distance = module*(teeth_a + teeth_b)/2. ALWAYS thin the teeth by a backlash allowance (~0.1-0.4mm of flank clearance): zero-backlash printed teeth bind and stall. Expose module, tooth counts, thickness, bore, and backlash as parameters. Offset one gear by half a tooth so the teeth interleave in the assembled view.'
       if (!isLocal) s += '\n\nReference example (pinion + gear, shared module, backlash > 0, flat on z=0):\n\n' + SPUR_GEAR_EXEMPLAR
@@ -865,8 +1112,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/backlash\s*=\s*[\d.]+/, 'backlash = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Rack & pinion\n\nA rack & pinion converts pinion rotation into linear travel of a toothed bar. The rack and pinion MUST share one module; the rack tooth pitch is PI*module (linear), and the pinion is an ordinary spur gear of that module. Thin the teeth by a backlash allowance (~0.1-0.4mm) on both — zero backlash binds. Expose module, pinion tooth count, rack length, thickness, bore, and backlash.'
       if (!isLocal) s += '\n\nReference example (pinion + straight rack, shared module, backlash > 0, flat on z=0):\n\n' + RACK_PINION_EXEMPLAR
@@ -887,8 +1134,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/gap\s*=\s*[\d.]+/, 'gap = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Ratchet & pawl\n\nA ratchet turns one way and locks the other. The wheel teeth MUST be asymmetric — a long gentle ramp the pawl slides up, then a steep (near-radial) face it jams against. The pawl pivots (or flexes) into each tooth and needs a clearance gap on its pivot so it actually moves. Expose tooth count, radius, tooth height, and the pawl clearance.'
       if (!isLocal) s += '\n\nReference example (sawtooth wheel + pivoting pawl, flat on z=0):\n\n' + RATCHET_EXEMPLAR
@@ -912,8 +1159,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/pitch\s*=\s*[\d.]+/, 'pitch = 1'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Compression coil spring\n\nA printed coil spring (e.g. a button-return or controller spring) is a helix: sweep a wire circle, offset to the coil radius, upward while rotating (linear_extrude with twist, or a swept helix). Wire thickness >= ~1.6mm (2+ perimeters); the pitch (rise per turn) MUST exceed the wire thickness or the coils fuse into a tube. Print in TPU/PETG for real springiness. WARNING: render cost grows with turns*facets — keep turns and $fn modest so high-quality renders do not time out.'
       if (!isLocal) s += '\n\nReference example (helical compression coil, flat on z=0):\n\n' + COIL_SPRING_EXEMPLAR
@@ -931,8 +1178,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/\bM[2-8](?:\.5)?\b/g, 'Xx'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         `\n\n# Threaded-fastener seats\n\nSize fastener features to STANDARD metric hardware, never an arbitrary hole. Three patterns: (1) a clearance hole for the screw shank — close fit ~M3=${SCREWS.M3.clearance}mm, M4=${SCREWS.M4.clearance}mm (so the screw passes but does not strip); (2) a heat-set insert pocket sized to the insert OD (~M3=${SCREWS.M3.insertDia}mm, M4=${SCREWS.M4.insertDia}mm) with a lead-in chamfer; (3) a captive hex nut trap (across-flats ~M3=${SCREWS.M3.nutAF}mm, M4=${SCREWS.M4.nutAF}mm) plus a screw clearance through it. Build a hex pocket as a 6-faceted cylinder whose diameter = across_flats / cos(30). Expose the screw size as a parameter and look the dimensions up.`
       if (!isLocal) s += '\n\nReference example (clearance / heat-set insert / nut-trap, standard sizes, flat on z=0):\n\n' + FASTENER_SEAT_EXEMPLAR
@@ -956,8 +1203,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(new RegExp(`\\bod\\s*=\\s*${BEARINGS['608'].od}\\b`), 'od = 30'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         `\n\n# Bearing pocket (608)\n\nA 608 skate bearing is OD ${BEARINGS['608'].od}mm, ID ${BEARINGS['608'].id}mm, width ${BEARINGS['608'].w}mm (the de-facto standard for spinners, wheels, lazy-susans). Seat it in a pocket sized OD + a fit allowance (press fit ~0, slip fit ~0.2mm). Add a shoulder/lip the outer race rests on at a defined depth, and a relief bore through the centre that is wider than the rotating inner race but narrower than the OD — so the seat grips the outer race only and never rubs the spinning inner race. Expose the fit as a parameter.`
       if (!isLocal) s += '\n\nReference example (608 pocket with shoulder + inner-race relief, flat on z=0):\n\n' + BEARING_POCKET_EXEMPLAR
@@ -981,8 +1228,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/assert\s*\([\s\S]*?\);/, ''),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Planetary (epicyclic) gearset\n\nA planetary set is a central sun gear, several planet gears, and an internal ring gear — ALL sharing one module and a backlash allowance. TWO constraints are mandatory, and getting them wrong is the classic failure: (1) concentricity — teeth_ring = teeth_sun + 2*teeth_planet; (2) even spacing — (teeth_sun + teeth_ring) must be divisible by num_planets, or the planets cannot all mesh. Assert the divisibility so a bad tooth count fails loudly. Build the internal ring teeth by subtracting an offset (backlash) projection of a ring-pitch gear from a disc.'
       if (!isLocal) s += '\n\nReference example (sun + planets + internal ring, asserted constraints, flat on z=0):\n\n' + PLANETARY_EXEMPLAR
@@ -1005,8 +1252,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/pitch\s*=\s*2\b/, 'pitch = 3'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# GT2 timing pulley\n\nA GT2 pulley drives a 2mm-pitch GT2 belt (the standard on most printers/CNC). Pitch diameter = teeth*2/PI; the tooth count sets the gear ratio. Add a flange (raised rim) on each side to keep the belt tracking, and a bore for the shaft (a set-screw flat/hole if it must not slip). Approximate the belt teeth as rounded grooves spaced at the 2mm pitch around the rim. Expose teeth, bore, and belt width.'
       if (!isLocal) s += '\n\nReference example (flanged GT2 pulley, 2mm pitch, flat on z=0):\n\n' + GT2_PULLEY_EXEMPLAR
@@ -1028,8 +1275,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/backlash\s*=\s*[\d.]+/, 'backlash = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Herringbone / helical gear\n\nA herringbone gear is two mirrored helical halves (a chevron): the opposed helix angles cancel the axial thrust a single helical gear produces, while meshing smoother and quieter than a straight spur. Build each half with a twisted linear_extrude (one +helix, one -helix), aligned at the seam. Still one shared module across a meshing pair and a mandatory backlash > 0. Expose module, tooth count, thickness, helix angle, and bore.'
       if (!isLocal) s += '\n\nReference example (mirrored helical halves, backlash > 0, flat on z=0):\n\n' + HERRINGBONE_EXEMPLAR
@@ -1047,8 +1294,8 @@ export const SKILLS = {
       if (!clearanceFitOk(code, 'peg_d')) issues.push('fit-pair bore must be the male size + a named clearance (bore = peg_d + fit) — a bare equal-size bore seizes')
       return issues
     },
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Fit-pair (peg + socket)\n\nFor ANY mating pair, the female bore is the male dimension PLUS a named clearance parameter — never two independent equal numbers (they fuse instead of joining). Pick the fit by function: press ~0.05mm (permanent), slide ~0.2mm (assembly), free ~0.35mm (spins). Expose the male size + one clearance; derive the bore.'
       if (!isLocal) s += '\n\nReference example (peg + socket, bore = peg_d + fit, flat on z=0):\n\n' + FIT_PAIR_EXEMPLAR
@@ -1069,8 +1316,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/beam_t\s*=\s*[\d.]+/, 'beam_t = 3'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Bistable snap\n\nA bistable click is a shallow PRE-CURVED arch beam anchored at both ends that buckles between two stable states. The beam must be THIN (~0.6-1.2mm) so it snaps elastically without breaking; the arch rise is the snap travel. Print PETG/Nylon with layer lines running across the arch (not along it). Expose span, rise, and beam thickness.'
       if (!isLocal) s += '\n\nReference example (anchored shallow arch beam, flat on z=0):\n\n' + BISTABLE_EXEMPLAR
@@ -1089,8 +1336,8 @@ export const SKILLS = {
       if (!/\bspring_d\b/.test(code)) issues.push('button-return must seat a STANDARD metal compression spring (a spring_d pocket) — do not print a coil spring')
       return issues
     },
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Button-return\n\nA returning push button rides in a guide bore (bore = shaft_d + a clearance fit) and returns on a SEATED metal compression spring — a pocket sized to a standard spring OD, NOT a printed coil (printed coils are unreliable + render-heavy). The shaft rests on the spring; a cap stops at the housing mouth; expose travel, the spring pocket, and the guide clearance.'
       if (!isLocal) s += '\n\nReference example (housing with a spring seat + a guided button, flat on z=0):\n\n' + BUTTON_RETURN_EXEMPLAR
@@ -1111,8 +1358,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/\btop_d\s*=\s*[\d.]+/, 'top_d = 10'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Crown / coronet\n\nA crown or coronet FLARES OUTWARD — it is WIDEST AT THE TOP rim, never a blocky inverted cone. Build it as a hollow shell (linear_extrude with scale > 1 from a neck diameter up to a larger rim diameter), then scallop or notch the open rim into points. Keep top_d > base_d; the points are recessed cuts, not a polygonized whole body.'
       if (!isLocal) s += '\n\nReference example (flared hollow coronet with a scalloped rim, flat on z=0):\n\n' + CROWN_CORONET_EXEMPLAR
@@ -1134,8 +1381,8 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/\binner_d\s*=\s*[\d.]+/, 'inner_d = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Hollow crenellation (battlement)\n\nA castle/rook battlement crown is HOLLOW (a sunken interior bore, inner_d > 0 and < outer_d) and its rim is a ring of merlons separated by crenel gaps — never a solid closed cylinder. Subtract the central bore AND the crenel gaps from the top.'
       if (!isLocal) s += '\n\nReference example (hollow crenellated crown with merlon/crenel rim, flat on z=0):\n\n' + HOLLOW_CRENELLATION_EXEMPLAR
@@ -1156,12 +1403,185 @@ export const SKILLS = {
       return issues
     },
     brokenControl: (code) => code.replace(/\bgap\s*=\s*[\d.]+/, 'gap = 0'),
-    fragment(engine) {
-      const isLocal = typeof engine === 'string' && engine.startsWith('local:')
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
       let s =
         '\n\n# Open forked cradle\n\nA bishop\'s split mitre / a forked claw is OPEN — two or more prongs that DO NOT touch (a positive gap between the tips) cradling a separate smooth orb. Never fuse the prongs into a solid wedge. Keep gap > 0 and model the orb as its own body resting in the fork.'
       if (!isLocal) s += '\n\nReference example (open prongs + a separate cradled orb, flat on z=0):\n\n' + OPEN_PRONG_ORB_EXEMPLAR
       return s
+    },
+  },
+
+  // ── Common-object FORM skills (RET-1) ──────────────────────────────────────────────
+  'divided-tray': {
+    id: 'divided-tray',
+    version: 1,
+    exemplar: DIVIDED_TRAY_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      const g = code.replace(/\/\/[^\n]*/g, '')   // geometry only — a wall described in prose is not a wall
+      if (!/\bcols\s*=/.test(g) || !/\brows\s*=/.test(g)) issues.push('divided-tray must expose cols and rows parameters that drive the compartment grid')
+      // REAL walls: a divider loop over the grid lines (cols-1 / rows-1), not a phantom flag
+      if (!(/for\s*\(\s*\w+\s*=\s*\[1:(cols|rows)-1\]/.test(g)))
+        issues.push('divided-tray must build REAL partition walls from cols*rows (a wall per grid line, e.g. for(c=[1:cols-1])) — not a phantom divider boolean')
+      return issues
+    },
+    // strip the divider loops -> an empty box with no partitions (the organizer-with-no-compartments failure)
+    brokenControl: (code) => code.replace(/module dividers\(\)\s*\{[\s\S]*?\n\}/, 'module dividers() { }'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Divided tray / organizer\n\nA divided tray or organizer has REAL internal partition walls forming separate compartments — never one open box with no interior structure. Expose cols and rows parameters and BUILD a full-height wall on each interior grid line (cols-1 lengthwise + rows-1 crosswise), each spanning the cavity. A boolean "divider" flag that only shifts an offset is wrong: the compartments must physically exist.'
+      if (!isLocal) s += '\n\nReference example (open box + real cols×rows partition walls, flat on z=0):\n\n' + DIVIDED_TRAY_EXEMPLAR
+      return s
+    },
+  },
+
+  'drained-dish': {
+    id: 'drained-dish',
+    version: 1,
+    paramAliases: { wall: 'wall' },
+    exemplar: DRAINED_DISH_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      // a real drain: a slot count parameter that drives the through-floor cuts (not just the word "drain")
+      if (!/\bdrain_slots\s*=/.test(code)) issues.push('a drained dish must cut through-drain slots driven by a drain_slots parameter so water escapes (a sealed well is wrong)')
+      const f = code.match(/\bfloor_h\s*=\s*([\d.]+)/)
+      if (!f) issues.push('drained-dish must expose a floor_h parameter (the floor the drains pierce)')
+      return issues
+    },
+    // zero out the drain count -> no slots cut, a sealed well that pools water (the not-actually-draining failure)
+    brokenControl: (code) => code.replace(/\bdrain_slots\s*=\s*[\d.]+/, 'drainz = 0'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Draining dish (soap / sponge)\n\nA draining dish is a hollow basin with through-drain slots cut clean through the FLOOR so water escapes — never a sealed well. Keep it FLAT on z=0 (the base rests on the bed; do not author feet that sink the body below z=0). Expose wall and floor_h; cut the drain slots all the way through the floor.'
+      if (!isLocal) s += '\n\nReference example (hollow dish + through-floor drain slots, flat on z=0):\n\n' + DRAINED_DISH_EXEMPLAR
+      return s
+    },
+  },
+
+  'vessel-handle': {
+    id: 'vessel-handle',
+    version: 1,
+    paramAliases: { wall: 'wall' },
+    exemplar: VESSEL_HANDLE_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      // the handle must be FUSED: a hull() of the wall-anchored profiles (a free rotate_extrude torus is detached)
+      if (!/\bhull\s*\(\s*\)\s*\{\s*anchor/.test(code)) issues.push('vessel handle must be FUSED to the wall via hull() of body-tangent (anchor/mid) profiles — a free torus is a detached island')
+      if (!/\bunion\s*\(/.test(code)) issues.push('vessel + handle must be ONE solid (union the wall and the fused handle), not two separate bodies')
+      return issues
+    },
+    // collapse the handle's hull() fusion -> the handle no longer merges into the wall (detached island)
+    brokenControl: (code) => code.replace(/module handle\(\)\s*\{[\s\S]*?\n\}/, 'module handle() { translate([outer_d/2 + handle_out, 0, height*0.5]) rotate_extrude($fn=48) translate([handle_out/2,0]) circle(d=handle_t); }'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Vessel with a handle\n\nWhen a cup/mug/jug/pitcher has a handle, the handle must be FUSED to the wall as ONE connected solid — never a floating torus that does not touch the body. Build the handle as a hull() chain of body-tangent profiles whose end blobs OVERLAP the outer wall, then union it with the vessel. The result is a single island; a detached handle is a print/quality failure.'
+      if (!isLocal) s += '\n\nReference example (hollow vessel + hull-fused handle, one solid, flat on z=0):\n\n' + VESSEL_HANDLE_EXEMPLAR
+      return s
+    },
+  },
+
+  bracket: {
+    id: 'bracket',
+    version: 1,
+    exemplar: BRACKET_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      // a real gusset: a triangular polygon webbing the corner (not just the word "gusset")
+      if (!/linear_extrude\([^)]*\)\s*\n?\s*polygon\(/.test(code)) issues.push('an L-bracket needs a triangular gusset/web (an extruded polygon) stiffening the inside corner — a bare L flexes at the joint')
+      if (!/cylinder\(d\s*=\s*hole_d/.test(code)) issues.push('a wall-mount bracket needs a mount-hole pattern bored through the flanges')
+      return issues
+    },
+    // drop the gusset polygon -> an unstiffened L that flexes at the corner
+    brokenControl: (code) => code.replace(/module gusset\(\)[\s\S]*?polygon\(\[\[0,0\],\[arm_b-thick,0\],\[0,arm_a-thick\]\]\);/, 'module gusset() cube([0.01,0.01,0.01]);'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Bracket / wall-mount\n\nAn L-bracket has two flanges at 90°, a triangular GUSSET webbing the inside corner so the joint does not flex, and a mount-hole pattern bored through each flange (size the holes to the fastener clearance). Print it with one flange flat on the bed.'
+      if (!isLocal) s += '\n\nReference example (two flanges + corner gusset + mount holes, flat on z=0):\n\n' + BRACKET_EXEMPLAR
+      return s
+    },
+  },
+
+  lettering: {
+    id: 'lettering',
+    version: 1,
+    exemplar: LETTERING_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      const noComments = code.replace(/\/\/[^\n]*/g, '')   // text() in prose is fine; in geometry it is not
+      if (/\btext\s*\(/.test(noComments)) issues.push('lettering must NOT use text() (forbidden by the contract) — compose each glyph from rectangle/polygon strokes')
+      if (!/\blinear_extrude\b/.test(noComments)) issues.push('lettering must linear_extrude the composed 2D glyphs into raised/recessed relief')
+      return issues
+    },
+    // inject the forbidden text() primitive -> the validator must catch the contract violation
+    brokenControl: (code) => code.replace(/module word_2d\(\)\s*\{[^}]*\}/, 'module word_2d() { text("HI"); }'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Lettering / nameplate (no text())\n\ntext() is FORBIDDEN by the contract. Build each letter from rectangle/polygon STROKES inside a per-glyph module, assemble the glyphs into the word, then linear_extrude it as RAISED relief on (or RECESSED into) a plate. Expose letter height, stroke width, and relief depth as parameters.'
+      if (!isLocal) s += '\n\nReference example (stroke-composed glyphs extruded as relief on a plate — replace the demo glyphs with the requested characters):\n\n' + LETTERING_EXEMPLAR
+      return s
+    },
+  },
+
+  // ── Household-part exemplars (OC-9) ────────────────────────────────────────────────
+  // layered on the vessel-handle fusion discipline (mug) and the undercut catch-lip pattern
+  mug: {
+    id: 'mug',
+    version: 1,
+    paramAliases: { wall: 'wall' },
+    exemplar: MUG_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      if (!/\bhull\s*\(\s*\)\s*\{\s*anchor/.test(code)) issues.push('a mug handle must be FUSED to the body via hull() of body-tangent (anchor/mid) profiles — a free torus is a detached island')
+      if (!/\bunion\s*\(/.test(code)) issues.push('mug body + handle must be ONE connected solid (union), not two bodies')
+      return issues
+    },
+    brokenControl: (code) => code.replace(/module handle\(\)\s*\{[\s\S]*?\n\}/, 'module handle() { translate([outer_d/2 + handle_out, 0, height*0.5]) rotate_extrude($fn=48) translate([handle_out/2,0]) circle(d=handle_t); }'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Mug\n\nA mug is a hollow cup with a handle FUSED to the wall as ONE connected solid — never a detached C-torus floating off the body. Build the handle as a hull() chain of body-tangent profiles whose ends overlap the outer wall, then union it with the cup so the whole part is a single island.'
+      if (!isLocal) s += '\n\nReference example (hollow cup + hull-fused handle, one solid, flat on z=0):\n\n' + MUG_EXEMPLAR
+      return s
+    },
+  },
+
+  'bottle-opener': {
+    id: 'bottle-opener',
+    version: 1,
+    exemplar: BOTTLE_OPENER_EXEMPLAR,
+    validate(code) {
+      const issues = []
+      const cap = code.match(/\bcap_d\s*=\s*([\d.]+)/)
+      const mouth = code.match(/\bmouth\s*=\s*([\d.]+)/)
+      if (!cap || !mouth) issues.push('bottle-opener must declare cap_d (recess width) and mouth (entry opening)')
+      else if (parseFloat(mouth[1]) >= parseFloat(cap[1]))
+        issues.push(`bottle-opener catch lip must OVERHANG: mouth (${mouth[1]}) must be < cap_d (${cap[1]}) — an equal/wider mouth is a blind cylinder pocket, not an undercut lip`)
+      return issues
+    },
+    // widen the mouth to/past the recess -> the lip stops overhanging (a blind straight bore)
+    brokenControl: (code) => code.replace(/\bmouth\s*=\s*[\d.]+/, 'mouth = 34'),
+    fragment(engine, opts) {
+      const isLocal = (typeof engine === 'string' && engine.startsWith('local:')) || !!opts?.prose
+      let s =
+        '\n\n# Bottle opener (crown cap)\n\nA crown-cap bottle opener needs a REAL undercut CATCH LIP that grips the cap edge from beneath — not a blind cylindrical pocket. Make the cap recess WIDER than the mouth it is entered through (mouth < cap_d) so a rim of material overhangs the recess; that overhang is the lever lip. Print it flat with the lip face up.'
+      if (!isLocal) s += '\n\nReference example (flat opener + overhanging undercut catch lip, flat on z=0):\n\n' + BOTTLE_OPENER_EXEMPLAR
+      return s
+    },
+  },
+
+  // generic open-container fallback — PROSE ONLY (no exemplar): the catch-all for a
+  // housewares-shaped ask (or a first-turn image) that matched nothing specific.
+  'open-container': {
+    id: 'open-container',
+    version: 1,
+    fragment() {
+      return '\n\n# Open container (generic)\n\nThis reads as an everyday open container/holder. Model it as a hollow body with real internal voids: an outer shell, a flat base resting on z=0, and a wall thickness exposed as a parameter. If it holds distinct things, give it real internal divisions (walls), not one undifferentiated cavity. Keep it a single connected solid unless the ask is explicitly a multi-part kit.'
     },
   },
 }
@@ -1207,6 +1627,16 @@ const TRIGGERS = [
   ['crown-coronet', /\bcrown(?!\s+gear)|\bcoronet|\btiara|\bdiadem/i],
   ['hollow-crenellation', /\bcrenell?at|\bbattlement|\bmerlon|\bparapet|\brook\b|\bcastle\b(?!\s+nut)/i],
   ['open-prong-cradle', /\bprong|\bforked?\b|\bclaw\b|\bmitre|\bmiter|\bcradl/i],
+  // common-object FORM skills (RET-1/RET-2). LAST in the array = lowest tie-break priority, so a
+  // mechanism homograph (a "geared organizer") still leads with its mechanism. Specific household
+  // exemplars come before the generic open-container catch-all so the catch-all never shadows them.
+  ['bottle-opener', /\bbottle[\s-]?opener|\bcrown[\s-]?cap|\bcap[\s-]?lifter/i],
+  ['mug', /\bmug|\bcoffee[\s-]?cup|\bteacup/i],
+  ['vessel-handle', /\bvessel|\bpitcher|\bjug|\btankard|\bstein|\bcup\b.*\bhandle|\bhandle\b.*\b(cup|vase|pot|pitcher)/i],
+  ['drained-dish', /\bsoap[\s-]?dish|\bdraining?[\s-]?(dish|tray|rack)|\bsponge[\s-]?holder|\bdish\b.*\bdrain|\bdrain\b.*\bdish/i],
+  ['divided-tray', /\bdivided[\s-]?tray|\borgani[sz]er|\bcompartment|\bdrawer[\s-]?insert|\bcutlery[\s-]?tray|\btray\b.*\b(compartment|divider|section)/i],
+  ['bracket', /\bbracket|\bwall[\s-]?mount|\bL[\s-]?bracket|\bshelf[\s-]?support|\bgusset/i],
+  ['lettering', /\bnameplate|\bname[\s-]?tag|\bsign\b|\bsignage|\bletter(?:s|ing)?\b|\bengrav|\bplaque|\bword[\s-]?art/i],
 ]
 
 /** A skill is selectable only if it exists AND is not quarantined. Quarantine (an entry flag)
@@ -1223,6 +1653,30 @@ const TRIGGER_INDEX = new Map(TRIGGERS.map(([id], i) => [id, i]))
  *  together (the board's named case: a wheel running on a bearing). Never ADDS a skill that did
  *  not match on its own — only re-ranks, so no false positives. */
 const COREQUIRES = { 'wheel-axle': ['bearing-608-pocket'] }
+
+/** Mechanism skills whose bodied exemplar says "follow this STRUCTURE" and so actively pulls
+ *  geometry: a decorative homograph ("gear-shaped cookie cutter") must NOT get the bodied form.
+ *  RET-3 gates these behind a corroborated score (> 2) and the decorative-qualifier guard; the
+ *  common-object FORM skills (divided-tray, mug, …) are exempt — they ARE the housewares answer. */
+const MECHANISM_SKILLS = new Set([
+  'wheel-axle', 'rack-pinion', 'planetary', 'herringbone', 'spur-gear', 'gt2-pulley',
+  'living-hinge', 'print-in-place-hinge', 'snap-fit', 'ratchet', 'coil-spring', 'leaf-spring',
+  'bearing-608-pocket', 'threaded-fastener-seat', 'button-return', 'bistable', 'fit-pair',
+  'crown-coronet', 'hollow-crenellation', 'open-prong-cradle',
+])
+
+/** Decorative-qualifier guard (RET-3): a prompt describing a *-shaped / cookie-cutter / display /
+ *  molding / -top jar / stamp / ornament is a DECORATIVE homograph — a mechanism skill must drop to
+ *  PROSE-ONLY (never inject the bodied "follow this structure" exemplar that pulls real geometry). */
+const DECORATIVE_GUARD = /(\bshaped\b|[a-z]+-shaped|\bcookie[\s-]?cutter|\bdisplay\b|\bmolding\b|\bmoulding\b|[a-z]+-top\s+jar|\bscrew-top\b|\bstamp\b|\bornament)/i
+
+/** Real stud/brick keywords (RET-4): only an EXPLICIT studded-baseplate ask gets the bodied
+ *  KIT_EXEMPLAR (the LEGO prior). A generic kit gets prose-only separable-parts guidance. */
+const KIT_STUD_KEYWORDS = /\bstud|\bbrick\b|\bbaseplate|\blego|\bduplo|\bclutch[\s-]?power|\bblock\b/i
+
+/** Housewares-shaped text (RET-2): a container-ish ask that matched no specific form still gets the
+ *  generic open-container fallback (so the everyday case never runs on the bare prompt). */
+const HOUSEWARES_HINT = /\b(holder|caddy|container|bin|basket|planter|organi[sz]er|desk[\s-]?tidy|utensil[\s-]?holder|pen[\s-]?(pot|cup))\b/i
 
 /** Score every triggerable (non-quarantined) skill against the request. Higher = more relevant.
  *  A direct prompt hit (2) outweighs the model's carried intent.domainTags (2), archetype (1),
@@ -1273,10 +1727,21 @@ export function selectSkillsDetailed(context) {
       if (selected.length < MAX_SKILLS) selected.push(id)
       else dropped.push(id)
     }
-    return { selected, dropped, scores: {} }
+    // explicit set = intentional: emit each as its full (bodied) fragment.
+    return { selected, dropped, scores: {}, prose: [] }
   }
+  const prompt = typeof context?.prompt === 'string' ? context.prompt : ''
+  const decorative = DECORATIVE_GUARD.test(prompt)
   const selected = []
-  if (context?.kit && usable('kit-baseplate')) selected.push('kit-baseplate')
+  // `prose` = skills emitted PROSE-ONLY (no bodied exemplar): a decorative homograph, a single
+  // uncorroborated mechanism hit (RET-3), or a generic (non-studded) kit (RET-4).
+  const prose = new Set()
+  if (context?.kit && usable('kit-baseplate')) {
+    selected.push('kit-baseplate')
+    // RET-4: a generic kit gets prose-only separable-parts guidance; only an explicit stud/brick
+    // ask earns the bodied studded KIT_EXEMPLAR (the LEGO prior).
+    if (!KIT_STUD_KEYWORDS.test(prompt)) prose.add('kit-baseplate')
+  }
   const score = scoreSkills(context)
   // tie-break by TRIGGERS index; `?? Infinity` defends a future co-required dep that isn't itself a
   // TRIGGERS row (else the comparator yields NaN and the sort becomes implementation-defined).
@@ -1286,10 +1751,23 @@ export function selectSkillsDetailed(context) {
   const dropped = []
   for (const id of ranked) {
     if (selected.includes(id)) continue
+    // RET-3: a decorative homograph DROPS the mechanism entirely; an uncorroborated single hit
+    // (score <= 2 = one prompt hit, no tag/archetype/signature corroboration) gets PROSE-ONLY so
+    // the bodied "follow this structure" exemplar can't pull a decorative request the wrong way.
+    if (MECHANISM_SKILLS.has(id)) {
+      if (decorative) continue
+      if (score[id] <= 2) prose.add(id)
+    }
     if (selected.length < MAX_AUTO_SKILLS) selected.push(id)
     else dropped.push(id)
   }
-  return { selected, dropped, scores: score }
+  // RET-2: the generic open-container fallback when nothing specific matched but the turn is
+  // (a) a first-turn image (hasImage / sourceHint), or (b) a housewares-shaped text prompt.
+  if (selected.length === 0 && usable('open-container')) {
+    const isImageTurn = !!(context?.hasImage || context?.intent?.sourceType || context?.sourceHint)
+    if (isImageTurn || HOUSEWARES_HINT.test(prompt)) selected.push('open-container')
+  }
+  return { selected, dropped, scores: score, prose: [...prose] }
 }
 
 /** Ordered skill ids to inject for a request (the selected set). Back-compat wrapper over

@@ -36,11 +36,22 @@ const CORPUS = [
   // so a stylized over-fire here surfaces as a precision drop, not only a binary selftest fail
   ['a crown gear for a hand drill', ['spur-gear']],
   ['a castle nut for an M6 bolt', ['threaded-fastener-seat']],
+  // common-object FORM skills (RET-1/RET-2) — the everyday housewares now route to a fragment
+  ['a desk organizer with compartments for pens and paperclips', ['divided-tray']],
+  ['a soap dish that drains by the sink', ['drained-dish']],
+  ['a coffee mug with a handle', ['mug']],
+  ['a pitcher with a handle', ['vessel-handle']],
+  ['an L-bracket to wall-mount a shelf', ['bracket']],
+  ['a desk nameplate that says HELLO', ['lettering']],
+  ['a crown-cap bottle opener', ['bottle-opener']],
+  ['a desk caddy for my supplies', ['open-container']], // housewares fallback (no specific form)
+  // decorative homographs (RET-3) — the mechanism must NOT fire (drops to nothing here)
+  ['a gear-shaped cookie cutter', []],
+  ['a screw-top jar lid', []],
   // negatives — a plain shape must fire NOTHING (expected empty set)
   ['a rectangular box 40 x 20 x 10 mm', []],
   ['a hexagonal coaster', []],
-  ['a simple desk nameplate', []],
-  ['a spring water bottle holder', []],
+  ['a spring water label', []],
   ['a turret enclosure for a raspberry pi', []],
 ]
 
