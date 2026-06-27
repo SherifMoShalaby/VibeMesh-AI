@@ -14,6 +14,7 @@ import { chatIdFromHash, setChatHash } from '../lib/hashRoute'
 import { createExportActions } from './exportActions'
 import { createPlacementActions, vpSnapshotOf, VP_HISTORY_LIMIT } from './placementActions'
 import { createGenerationActions } from './generationActions'
+import { createParamsActions, clearParamTimer } from './paramsActions'
 
 /** per-tab marker: present once a tab has loaded the app, so a RELOAD/return restores the last
  *  chat while a brand-new window/tab (empty sessionStorage) starts fresh. */
@@ -121,6 +122,28 @@ export interface VpSnapshot {
   pieceOverrides: Record<string, { dx: number; dy: number; rot: 0 | 90 }>
 }
 
+/**
+ * The single store interface. Its actions are now split across cohesive slices (god-module split,
+ * finished by UIUX-11) — the store core wires the slices and owns the compile-lifecycle + session
+ * projection + project/chat helpers that the slices depend on:
+ *   - ./exportActions      — exportPlates / exportPlates3mf / export3mf / exportOrcaProject / exportStlSmart / exportShareFile
+ *   - ./placementActions   — setMeshTransform / clearModel / vpUndo / vpRedo (viewport move/rotate/delete history)
+ *   - ./generationActions  — sendPrompt / retryLast / rerollLast / regenerateWithSkills / abortGeneration / consumeAutoRefine
+ *   - ./paramsActions      — setParamValue / selectPart / undo·redo·jumpToParamHistory / resetParams / setCode / recompile
+ *   - store.ts (this file) — compile-lifecycle (compile/compilePieces/adoptCode + the session helpers
+ *                            writeSession/snapshotSession/restoreSession) and project/chat lifecycle
+ *                            (init/newProject/openProject/deleteProject/import/loadExample/restore*)
+ *
+ * SELECTOR CONTRACT — subscribe to the MINIMAL field, never the whole store object. High-churn
+ * consumers MUST use field-level selectors so a streaming token / slider drag re-renders only the
+ * leaf that reads the changed field:
+ *   - chat streaming: read `streamText` ONLY inside the streaming leaf (StreamingBubble); the rest of
+ *     the chat surface subscribes to `generating` (a coarse boolean), not `streamText`.
+ *   - params: RightPanel selects `params` / `paramValues` / `paramHistory` individually, plus the
+ *     derived `s.generating && s.streamHasCode` boolean instead of raw `streamText`.
+ *   - viewport placement: Viewport selects `stl` / `stlVersion` / `meshTransform` / `pieceOverrides`
+ *     individually; the r3f rigs read the same fields, never the store object.
+ */
 export interface VibeState {
   projects: Project[]
   activeId: string | null
@@ -330,14 +353,6 @@ function composeMatrix(p: [number, number, number], r: [number, number, number])
   const m21 = sx * cy
   const m22 = cx * cy
   return [m00, m10, m20, 0, m01, m11, m21, 0, m02, m12, m22, 0, p[0], p[1], p[2], 1]
-}
-
-let paramTimer: ReturnType<typeof setTimeout> | null = null
-function clearParamTimer() {
-  if (paramTimer) {
-    clearTimeout(paramTimer)
-    paramTimer = null
-  }
 }
 
 export const useStore = create<VibeState>((set, get) => {
@@ -934,86 +949,10 @@ export const useStore = create<VibeState>((set, get) => {
     // this god-store; the shared compile-lifecycle helpers are passed in.
     ...createGenerationActions(set, get, { activeChatFor, setChatFor, setChatAndFutureFor, adoptCodeFor, persistFor, qualityArgsFor, writeSession, genSession }),
 
-    setParamValue: (name, value) => {
-      const prev = get().paramValues  // capture BEFORE update
-      const paramValues = { ...prev, [name]: value }
-      // clear redo immediately — any new edit invalidates the future
-      set({ paramValues, paramFuture: [], paramFutureLabels: [] })
-      clearParamTimer()
-      paramTimer = setTimeout(() => {
-        paramTimer = null
-        const { code, params, paramValues: values, paramHistory, paramHistoryLabels } = get()
-        const label = `${name} → ${value}`
-        set({
-          paramHistory: [...paramHistory, prev].slice(-50),
-          paramHistoryLabels: [...paramHistoryLabels, label].slice(-50),
-        })
-        void compile(code, buildDefines(params, values))
-        persist()
-      }, 800)
-    },
-
-    selectPart: async (value) => {
-      clearParamTimer() // a pending slider render must not clobber the part switch
-      const paramValues = { ...get().paramValues, part: value }
-      set({ paramValues })
-      const { code, params } = get()
-      const result = await compile(code, buildDefines(params, paramValues))
-      // re-frame on a part switch (compile only auto-fits empty→full; a switch is full→full).
-      // This lives HERE, not in setParamValue, so slider drags never yank the camera.
-      if (result.ok) set((s) => ({ fitVersion: s.fitVersion + 1 }))
-      persist()
-    },
-
-    undoParam: () => {
-      const { paramHistory, paramFuture, paramHistoryLabels, paramFutureLabels, paramValues, code, params } = get()
-      if (!paramHistory.length) return
-      clearParamTimer()
-      const restored = paramHistory[paramHistory.length - 1]
-      const label    = paramHistoryLabels[paramHistoryLabels.length - 1]
-      set({
-        paramValues:        restored,
-        paramHistory:       paramHistory.slice(0, -1),
-        paramHistoryLabels: paramHistoryLabels.slice(0, -1),
-        paramFuture:        [paramValues, ...paramFuture],
-        paramFutureLabels:  [label, ...paramFutureLabels],
-      })
-      void compile(code, buildDefines(params, restored))
-      persist()
-    },
-
-    redoParam: () => {
-      const { paramHistory, paramFuture, paramHistoryLabels, paramFutureLabels, paramValues, code, params } = get()
-      if (!paramFuture.length) return
-      clearParamTimer()
-      const restored = paramFuture[0]
-      const label    = paramFutureLabels[0]
-      set({
-        paramValues:        restored,
-        paramFuture:        paramFuture.slice(1),
-        paramFutureLabels:  paramFutureLabels.slice(1),
-        paramHistory:       [...paramHistory, paramValues],
-        paramHistoryLabels: [...paramHistoryLabels, label],
-      })
-      void compile(code, buildDefines(params, restored))
-      persist()
-    },
-
-    jumpToParamHistory: (index) => {
-      const { paramHistory, paramHistoryLabels, paramValues, code, params } = get()
-      if (index < 0 || index >= paramHistory.length) return
-      clearParamTimer()
-      const restored = paramHistory[index]
-      set({
-        paramValues:        restored,
-        paramHistory:       paramHistory.slice(0, index),
-        paramHistoryLabels: paramHistoryLabels.slice(0, index),
-        paramFuture:        [paramValues],
-        paramFutureLabels:  [''],
-      })
-      void compile(code, buildDefines(params, restored))
-      persist()
-    },
+    // Customizer-parameter slice (setParamValue / selectPart / undo·redo·jumpToParamHistory /
+    // resetParams / setCode / recompile) lives in ./paramsActions — the slider value + its history +
+    // the editor working copy, split out of this god-store. compile + persist are passed in.
+    ...createParamsActions(set, get, { compile, persist }),
 
     setPartQuantity: (part, n) => {
       const clamped = Math.max(1, Math.min(99, Math.floor(n) || 1))
@@ -1060,39 +999,6 @@ export const useStore = create<VibeState>((set, get) => {
       // single after orbiting) must leave the camera as the user left it. SPEC §8: auto-fit only
       // when the framed volume genuinely changes, never mid-iteration.
       if (needsBuild) set((s) => ({ fitVersion: s.fitVersion + 1 }))
-    },
-
-    resetParams: () => {
-      const { params, code } = get()
-      const paramValues: ParamValues = {}
-      for (const p of params) paramValues[p.name] = p.defaultValue
-      set({ paramValues })
-      void compile(code, [])
-      persist()
-    },
-
-    setCode: (code) => {
-      set({ code })
-    },
-
-    recompile: () => {
-      const { code, params: oldParams, paramValues: prev } = get()
-      const params = parseParameters(code)
-      const paramValues: ParamValues = {}
-      for (const p of params) {
-        // keep the user's slider value only when the code's written default is
-        // unchanged — if the new code changed the default, the code wins
-        // (prevents old same-named values hijacking freshly pasted programs)
-        const old = oldParams.find((o) => o.name === p.name)
-        let value = old && old.defaultValue === p.defaultValue ? (prev[p.name] ?? p.defaultValue) : p.defaultValue
-        // the carried value must still be valid for the NEW parameter
-        if (p.kind === 'enum' && p.options && !p.options.some((o) => String(o) === String(value))) value = p.defaultValue
-        if (typeof value === 'number' && ((p.min !== undefined && value < p.min) || (p.max !== undefined && value > p.max))) value = p.defaultValue
-        paramValues[p.name] = value
-      }
-      set({ params, paramValues })
-      void compile(code, buildDefines(params, paramValues))
-      persist()
     },
 
     restoreVersion: (msgId) => {

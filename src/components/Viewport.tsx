@@ -16,6 +16,7 @@ import type { CaptureViewName } from '../lib/capture'
 import EmptyState from './EmptyState'
 import ViewportToolRail from './ViewportToolRail'
 import ViewportHud from './ViewportHud'
+import { SlicerReadout, ArrangeToolbar } from './ArrangeController'
 import {
   IconCenter,
   IconDrop,
@@ -72,10 +73,6 @@ export default function Viewport() {
   const pieces = useStore((s) => s.pieces)
   const partQuantities = useStore((s) => s.projects.find((p) => p.id === s.activeId)?.partQuantities ?? EMPTY_QTY)
   const pieceOverrides = useStore((s) => s.pieceOverrides)
-  const setPieceOverride = useStore((s) => s.setPieceOverride)
-  const removePieceOverride = useStore((s) => s.removePieceOverride)
-  const clearPieceOverrides = useStore((s) => s.clearPieceOverrides)
-  const selectedPiece = useUi((s) => s.selectedPiece)
   const slicing = useStore((s) => s.slicing)
   const slicerFailed = useStore((s) => s.slicerFailed)
   const compilePieces = useStore((s) => s.compilePieces)
@@ -311,23 +308,6 @@ export default function Viewport() {
     setMeshTransform(null)
   }
 
-  /* ── per-piece arrange actions (plates view) ── */
-  const hasOverrides = Object.keys(pieceOverrides).length > 0
-  // center the selected piece's PLACED footprint on its plate: shift its current displayed corner to
-  // the bed-centered corner. The displayed corner already includes the override, so add the delta.
-  const centerSelectedPiece = () => {
-    if (!selectedPiece || !platePlan) return
-    const pl = platePlan.plates.flat().find((p) => p.name === selectedPiece)
-    if (!pl) return
-    const cur = pieceOverrides[selectedPiece] ?? { dx: 0, dy: 0, rot: pl.rot }
-    const targetX = (bed.x - pl.w) / 2
-    const targetY = (bed.y - pl.h) / 2
-    setPieceOverride(selectedPiece, { dx: cur.dx + (targetX - pl.x), dy: cur.dy + (targetY - pl.y), rot: pl.rot })
-  }
-  const resetSelectedPiece = () => {
-    if (selectedPiece) removePieceOverride(selectedPiece) // snaps this piece back to its packer seat
-  }
-
   /* ── keyboard: F fit · Esc deselect · Del delete · ⌘Z/⇧⌘Z undo/redo ── */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -514,30 +494,7 @@ export default function Viewport() {
 
       {/* ── slicer readout (bottom-left) — oversize pieces are surfaced LOUDLY ── */}
       {platesView && (
-        <div className="assembly-chip">
-          <span className="ac-label">Slicer</span>
-          {slicing ? (
-            <span className="ac-hint">packing pieces…</span>
-          ) : platePlan ? (
-            <>
-              <span className="ac-hint">
-                {platePlan.plates.length} plate{platePlan.plates.length === 1 ? '' : 's'} · {bed.x}×{bed.y}mm · drag to orbit
-              </span>
-              {platePlan.oversize.length > 0 && (
-                <span className="ac-warn">
-                  <IconWarning /> won't fit the bed: {platePlan.oversize.map((o) => `${o.name} (${o.reason})`).join(', ')} — switch to that part and Ask AI to split
-                </span>
-              )}
-              {slicerFailed.length > 0 && (
-                <span className="ac-warn">
-                  <IconWarning /> failed to render: {slicerFailed.join(', ')} — select that part to see its error
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="ac-hint">no pieces to lay out</span>
-          )}
-        </div>
+        <SlicerReadout platePlan={platePlan} bed={bed} slicing={slicing} slicerFailed={slicerFailed} />
       )}
 
       {/* ── assembly / placement readout (bottom-left) ── */}
@@ -648,28 +605,7 @@ export default function Viewport() {
       )}
 
       {/* ── per-piece ARRANGE toolbar (plates view, a piece selected) ── */}
-      {platesView && selectedPiece && (
-        <div className="sel-bar arrange-bar">
-          <span className="ac-label">{baseName(selectedPiece)}</span>
-          <button className={`plate-chip${gizmoMode === 'translate' ? ' active' : ''}`} aria-pressed={gizmoMode === 'translate'} onClick={() => setGizmoMode('translate')} title="Move on the bed (XY)">
-            <DMove /> Move
-          </button>
-          <button className={`plate-chip${gizmoMode === 'rotate' ? ' active' : ''}`} aria-pressed={gizmoMode === 'rotate'} onClick={() => setGizmoMode('rotate')} title="Rotate flat (snaps 0°/90°)">
-            <DRotate /> Rotate
-          </button>
-          <button className="plate-chip" onClick={centerSelectedPiece} title="Center this piece on its plate">
-            <IconCenter /> Center
-          </button>
-          {pieceOverrides[selectedPiece] && (
-            <button className="plate-chip" onClick={resetSelectedPiece} title="Reset this piece to the auto-packer position">
-              <DUndo /> Reset
-            </button>
-          )}
-          <button className="plate-chip" disabled={!hasOverrides} onClick={clearPieceOverrides} title="Snap every piece back to the auto-packer layout">
-            <DWrench /> Arrange all
-          </button>
-        </div>
-      )}
+      {platesView && <ArrangeToolbar platePlan={platePlan} bed={bed} />}
 
       {showEmpty && <EmptyState />}
     </main>
