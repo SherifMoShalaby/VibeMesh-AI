@@ -64,8 +64,8 @@ interface UiState {
   setGizmoMode: (m: 'translate' | 'rotate') => void
 
   /* ── transient notices + branded confirm (replace window.alert/confirm — UX-AUDIT F12) ── */
-  toasts: { id: string; message: string; level: 'info' | 'error' }[]
-  pushToast: (message: string, level?: 'info' | 'error') => void
+  toasts: { id: string; message: string; level: 'info' | 'error'; action?: { label: string; onClick: () => void } }[]
+  pushToast: (message: string, level?: 'info' | 'error', action?: { label: string; onClick: () => void }) => void
   dismissToast: (id: string) => void
   /** promise-based confirm: the store awaits it; <ConfirmHost> renders the dialog + resolves. */
   confirmRequest: { title: string; body: string; confirmLabel: string; resolve: (ok: boolean) => void } | null
@@ -134,9 +134,9 @@ export const useUi = create<UiState>((set) => ({
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
 
   toasts: [],
-  pushToast: (message, level = 'info') => {
+  pushToast: (message, level = 'info', action) => {
     const id = `${Date.now()}-${Math.round(Math.random() * 1e9).toString(36)}`
-    set((s) => ({ toasts: [...s.toasts, { id, message, level }] }))
+    set((s) => ({ toasts: [...s.toasts, { id, message, level, action }] }))
     // info fades fast; errors stay LOUD longer (export failures must not be missed — SPEC §4),
     // both manually dismissible via the toast ×.
     const ttl = level === 'error' ? 10_000 : 4500

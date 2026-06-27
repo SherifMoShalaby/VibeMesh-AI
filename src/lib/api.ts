@@ -44,6 +44,12 @@ export interface ProviderInfo {
   connection?: boolean
   /** the catalog entry a connection was created from (e.g. 'openrouter', 'glm', 'custom-openai') */
   catalogId?: string
+  /** SEC-4 two-tier connection health from the server. `available` only means a credential is
+   *  present; this says whether the LAST upstream call actually worked. The Engines UI renders a
+   *  degraded (dead/over-quota key) provider distinctly from a verified one. */
+  connectionState?: 'unconfigured' | 'configured-unverified' | 'verified' | 'degraded'
+  /** when connectionState === 'degraded', the human reason (e.g. quota / credential rejected) */
+  connectionReason?: string
 }
 
 /** A provider in the "Add connection" catalog (GET /api/catalog). */

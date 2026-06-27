@@ -8,7 +8,11 @@
  */
 import assert from 'node:assert/strict'
 import { parseParameters } from '../src/lib/params.ts'
-import { SYSTEM_PROMPT } from '../server/prompt.mjs'
+import { SYSTEM_PROMPT, IMAGE_PROMPT } from '../server/prompt.mjs'
+// RET-5: the trace clause moved out of the always-on SYSTEM_PROMPT into the image/reference-only
+// IMAGE_PROMPT layer (appended by contextText for image turns). The model still receives the FULL
+// prompt on an image turn, so the guard checks the combined text.
+const FULL_PROMPT = SYSTEM_PROMPT + IMAGE_PROMPT
 import { createOpenSCAD } from 'openscad-wasm'
 
 const cases = []
@@ -75,12 +79,14 @@ test('(d) MOAT: a canonical bracket parses cleanly, carries NO _prof / trace tok
   assert.deepEqual(names, ['arm', 'thickness', 'hole'])
   assert.ok(!/_prof|polygon\(|rotate_extrude/.test(CANONICAL_BRACKET), 'no traced outline forced onto a canonical form')
 })
-test('(e) PROMPT GUARD: the trace clause + its three mandates are present in SYSTEM_PROMPT', () => {
-  assert.ok(/Trace the defining outline/i.test(SYSTEM_PROMPT), 'trace section header present')
-  assert.ok(/SINGLE-LINE/i.test(SYSTEM_PROMPT) && /BELOW the Customizer parameter block/i.test(SYSTEM_PROMPT),
+test('(e) PROMPT GUARD: the trace clause + its three mandates are present in the image-turn prompt', () => {
+  // RET-5: the clause lives in IMAGE_PROMPT now, not the always-on core — assert both (it's image-only).
+  assert.ok(/Trace the defining outline/i.test(IMAGE_PROMPT), 'trace section header present in IMAGE_PROMPT')
+  assert.ok(!/# Trace the defining outline/i.test(SYSTEM_PROMPT), 'and NOT in the always-on core (image-only, per RET-5)')
+  assert.ok(/SINGLE-LINE/i.test(FULL_PROMPT) && /BELOW the Customizer parameter block/i.test(FULL_PROMPT),
     'single-line + below-block placement mandate present')
-  assert.ok(/fall back to the canonical/i.test(SYSTEM_PROMPT), 'graceful-fallback mandate present')
-  assert.ok(/trace ONLY a non-canonical outline/i.test(SYSTEM_PROMPT), 'moat (non-canonical-only) mandate present')
+  assert.ok(/fall back to the canonical/i.test(FULL_PROMPT), 'graceful-fallback mandate present')
+  assert.ok(/trace ONLY a non-canonical outline/i.test(FULL_PROMPT), 'moat (non-canonical-only) mandate present')
 })
 
 let failed = 0

@@ -26,8 +26,10 @@ export type EngineRowData = ProviderInfo & { useId?: string }
 /** addable  — a catalog provider with no connection yet → the "+" card / connect form
  *  needs-setup — a known engine present but not usable yet (no key / not logged in / no URL)
  *  connected  — usable, but not the active engine → offers "Use"
+ *  degraded   — a credential IS present but the last upstream call failed (dead/over-quota key);
+ *               renders distinctly from `connected` so a green dot never lies (SEC-4)
  *  in-use     — the active engine */
-export type CardState = 'addable' | 'needs-setup' | 'connected' | 'in-use'
+export type CardState = 'addable' | 'needs-setup' | 'connected' | 'degraded' | 'in-use'
 
 /** The method axis that drives the left rail. `custom` splits out the bring-your-own-endpoint
  *  catalog entries (catalogId `custom-*`) from the keyed providers. */
@@ -47,6 +49,11 @@ export interface UnifiedProvider {
   subtitle: string
   /** the 2-line description source */
   detail: string
+  /** SEC-4: the credential is present AND the last upstream call succeeded (a verified-connected
+   *  provider, as opposed to configured-but-never-called). Lets the UI render the two distinctly. */
+  verified?: boolean
+  /** SEC-4: when state === 'degraded', the human reason the dot is not green (quota / dead key). */
+  degradedReason?: string
   /** normalized so connected (ProviderInfo.contextWindow) and addable
    *  (CatalogEntry.caps.contextWindow — a different field) read the same */
   contextWindow?: number
@@ -94,7 +101,18 @@ function isInUse(row: EngineRowData, engine: string | null | undefined): boolean
 }
 
 function fromProvider(row: EngineRowData, engine: string | null | undefined): UnifiedProvider {
-  const state: CardState = isInUse(row, engine) ? 'in-use' : row.available ? 'connected' : 'needs-setup'
+  // SEC-4: a present-but-dead/over-quota credential renders `degraded`, not `connected` — the dot
+  // must reflect VALIDITY, not just key presence. The active engine still shows in-use even if its
+  // last call degraded (the user picked it; the drawer carries the reason).
+  const degraded = row.available && row.connectionState === 'degraded'
+  const verified = row.available && row.connectionState === 'verified'
+  const state: CardState = isInUse(row, engine)
+    ? 'in-use'
+    : degraded
+      ? 'degraded'
+      : row.available
+        ? 'connected'
+        : 'needs-setup'
   return {
     key: row.id,
     label: row.label,
@@ -104,7 +122,10 @@ function fromProvider(row: EngineRowData, engine: string | null | undefined): Un
     subtitle: row.id === 'claude-code'
       ? (row.models?.[0]?.label ?? row.model ?? '')
       : row.model ?? (row.models?.length ? `${row.models.length} models` : ''),
-    detail: row.detail,
+    // a degraded provider shows its reason inline so "why is it red" needs no extra click
+    detail: degraded && row.connectionReason ? `${row.detail} — ${row.connectionReason}` : row.detail,
+    verified,
+    degradedReason: degraded ? row.connectionReason : undefined,
     contextWindow: row.contextWindow,
     maxOutput: row.maxOutput ?? row.outputReservation,
   }
@@ -126,7 +147,7 @@ function fromCatalog(c: CatalogEntry): UnifiedProvider {
 }
 
 /** Rank for the status-priority default sort. */
-const STATE_RANK: Record<CardState, number> = { 'in-use': 0, connected: 1, 'needs-setup': 2, addable: 3 }
+const STATE_RANK: Record<CardState, number> = { 'in-use': 0, connected: 1, degraded: 2, 'needs-setup': 3, addable: 4 }
 
 /**
  * Fold the live providers + the addable catalog into one normalized, ordered card list.

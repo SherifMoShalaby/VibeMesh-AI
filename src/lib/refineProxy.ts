@@ -124,6 +124,24 @@ export function geometryConverged(
 }
 
 /**
+ * OC-2 — reference-IoU refine decision. Given the current pass's measured silhouette-IoU against the
+ * reference photo and the previous pass's IoU, decide whether another refine pass is justified:
+ *  - below the floor AND still improving → refine again
+ *  - the first measurement below the floor counts as "improving" (no baseline to beat yet)
+ *  - at/above the floor, or a pass that did NOT raise IoU by more than `minGain`, → stop
+ * Pure + deterministic. Keeps the loop from burning a pass that made the visual match no better.
+ */
+export function iouRefineDecision(
+  curIoU: number,
+  prevIoU: number | undefined,
+  floor = 0.55,
+  minGain = 0.01,
+): boolean {
+  const improving = prevIoU === undefined ? curIoU < floor : curIoU > prevIoU + minGain
+  return curIoU < floor && improving
+}
+
+/**
  * ADVISORY self-relative solidity note for the refine prompt. fillRatio = mesh volume / bbox volume;
  * a vanishingly low ratio means the part fills very little of its own envelope — usually an
  * unintended thin shell / hollow body that read as the right SIZE but not the right MASS. It

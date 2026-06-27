@@ -331,12 +331,12 @@ function ExportMenu({ fileBase }: { fileBase: string }) {
               <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><circle cx="8" cy="8" r="6" strokeWidth="2" stroke="currentColor" fill="none"/><circle cx="8" cy="8" r="2"/></svg>
             </span>
             <span className="mi-text" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Material</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>Material</span>
               <select
                 value={orcaMaterial}
                 onChange={(e) => setOrcaMaterial(e.target.value as OrcaMaterial)}
                 onClick={(e) => e.stopPropagation()}
-                style={{ fontSize: '0.75rem', flex: 1, background: 'var(--surface-2, #1e1e2e)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 4px', cursor: 'pointer' }}
+                style={{ fontSize: '0.75rem', flex: 1, background: 'var(--inset)', color: 'var(--text)', border: '1px solid var(--line-strong)', borderRadius: 4, padding: '2px 4px', cursor: 'pointer' }}
               >
                 <option value="PLA">PLA</option>
                 <option value="PETG">PETG</option>

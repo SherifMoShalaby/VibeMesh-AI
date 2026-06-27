@@ -4,6 +4,7 @@ import { useStore } from '../state/store'
 import { useUi } from '../state/ui'
 import { CAPTURE_VIEW_NAMES, captureViews } from '../lib/capture'
 import { clampStatedDimensions, dimDiscrepancies, fillRatioNote } from '../lib/refineProxy'
+import { takeRefineDiscrepancy, autoRefineCount } from '../state/generationActions'
 import { estHistoryTokens, historyBudgetTokens, imageBudgetFor, type ProviderInfo } from '../lib/api'
 import { tileReference } from '../lib/tile'
 import { flaggedSkillIds } from '../lib/skillStats'
@@ -145,12 +146,16 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
     const geoBlock = geo.length
       ? `GEOMETRIC CHECK — an independent measurement of the current render against your reference's stated dimensions. These are facts, not opinions; FIX THEM FIRST:\n${geo.map((g) => `- ${g}`).join('\n')}\n\n`
       : ''
+    // OC-2 — the measured reference-IoU discrepancy queued by the gate (the render's silhouette is
+    // off-target vs the photo). Leads the prompt alongside the dimension facts: an objective visual
+    // signal, not self-critique. Consumed (cleared) here so it injects once per armed pass.
+    const iouBlock = activeId ? takeRefineDiscrepancy(activeId) : ''
     // ADVISORY self-relative solidity hint (after the hard dimension facts): a suspiciously hollow
     // fill-ratio lets the model self-diagnose an unintended shell. Never a gate — phrased as a question.
     const fillNote = fillRatioNote(modelDims)
     const fillBlock = fillNote ? `${fillNote}\n\n` : ''
     void sendPrompt(
-      `${geoBlock}${fillBlock}${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. ${geo.length ? 'After the geometric fixes above, list' : 'First list'} the most important remaining discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
+      `${iouBlock}${geoBlock}${fillBlock}${shot}${anchor} My reference image(s) earlier in this conversation are the CORRECT TARGET — fix the render to match them. Do NOT make it more symmetric, more balanced, or simpler than the reference; the reference's asymmetry, uneven proportions, and dense patterns are intentional. ${geo.length ? 'After the geometric fixes above, list' : 'First list'} the most important remaining discrepancies (a missing or collapsed distinct feature outranks any proportion mismatch), then return the corrected complete program.${plan}`,
       views,
       'Refine pass',
     )
@@ -292,6 +297,20 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
   // hide the code block from the live stream — the code lands in the code panel
   const streamProse = streamText.split('```')[0].trim()
   const streamingCode = streamText.includes('```')
+  // UIUX-8 — name the active generation PHASE instead of a generic spinner. Best-of-N writes its own
+  // candidate status into streamText (used verbatim); otherwise the latest user turn's `action` tells
+  // us whether this is a refine / auto-fix / regenerate pass. Falls back to "Thinking…" on a first send.
+  // cheap O(messages) scan from the tail; chat identity is stable mid-stream (only streamText
+  // mutates), so this does not re-run per streamed token — no new per-token re-render is introduced.
+  let lastAction: string | undefined
+  for (let i = chat.length - 1; i >= 0; i--) { if (chat[i].role === 'user') { lastAction = chat[i].action; break } }
+  const phaseLabel =
+    lastAction === 'Refine pass' ? 'Refining against your reference…'
+      : lastAction === 'Auto-fix' ? 'Auto-fixing the render…'
+        : lastAction === 'Fix format' ? 'Reformatting the program…'
+          : lastAction === 'Regenerate' ? 'Generating a fresh version…'
+            : lastAction === 'Adjust patterns' ? 'Regenerating with the chosen patterns…'
+              : 'Thinking…'
   // in-chat timeout bar: how much of the configured generation timeout has elapsed (reassures the
   // user a long Opus/high-effort run is still going, not frozen). `elapsed` ticks every second above.
   const genCapSec = Math.max(1, Math.round((genTimeoutMs ?? 60 * 60 * 1000) / 1000))
@@ -670,7 +689,7 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               <span className="msg-who">Vibemesh-AI</span>
               <span className="msg-time">{now()}</span>
             </div>
-            <div className="msg-body"><span className="streaming">{streamProse || 'Thinking…'}</span></div>
+            <div className="msg-body"><span className="streaming">{streamProse || phaseLabel}</span></div>
             {streamingCode && <div className="version-pill"><span className="vp-dot" /> writing code…</div>}
             <div className="stream-meta">{elapsed}s{activeProvider ? ` · ${activeProvider.label.split(' · ')[0]}` : ''}</div>
           </div>
@@ -725,7 +744,9 @@ export default function ChatPanel({ mobileShow = false, paneCollapsed = false }:
               onClick={refine}
               title="Snapshot the model from a fixed angle and ask the AI to compare it against your reference photo, then fix the differences"
             >
-              <DImage /> Compare with my photo &amp; fix
+              {/* LAT-2 — once the bounded auto-refine chain has fired, this is the manual
+                  "Refine again" control that runs exactly one further pass on demand. */}
+              <DImage /> {activeId && autoRefineCount(activeId) > 0 ? 'Refine again' : 'Compare with my photo & fix'}
             </button>
           )}
 

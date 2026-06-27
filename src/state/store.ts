@@ -5,7 +5,7 @@ import { buildDefines, parseParameters } from '../lib/params'
 import { useUi } from './ui'
 import { openscad } from '../lib/openscad/client'
 import { fetchHealth, type HealthInfo } from '../lib/api'
-import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects, setOnExternalChange } from '../lib/storage'
+import { hydrateStorage, loadLastChatId, loadProjects, newId, saveLastChatId, saveProjects, setOnExternalChange, setOnPersistDegraded } from '../lib/storage'
 import { mergeExternalProjects } from '../lib/storeDecisions'
 import { parseShareFile, shareFileToProject } from '../lib/shareFile'
 import { clearRefMask } from '../lib/refSegment'
@@ -751,6 +751,20 @@ export const useStore = create<VibeState>((set, get) => {
       // never saveProjects here, so a refresh can't rebroadcast.
       setOnExternalChange((incoming) => {
         set({ projects: mergeExternalProjects(incoming, get().projects, get().activeId) })
+      })
+
+      // surface terminal storage failures via a sticky toast + Export action
+      setOnPersistDegraded(() => {
+        useUi.getState().pushToast('Saving is degraded — export your work', 'error', {
+          label: 'Export',
+          onClick: () => {
+            const activeId = get().activeId
+            const project = get().projects.find((p) => p.id === activeId)
+            if (project && project.code.trim()) {
+              get().exportShareFile(project.name)
+            }
+          },
+        })
       })
 
       await get().refreshHealth()

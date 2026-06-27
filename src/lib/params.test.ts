@@ -124,11 +124,36 @@ describe('extractScadBlock', () => {
     expect(code).toBe('cube([1,1,1]);')
   })
 
-  it('returns the longest block and a >1 count when two scad blocks appear', () => {
-    const text = '```scad\nA;\n```\n```scad\nlonger_program_here();\n```'
-    const { code, blockCount } = extractScadBlock(text)
+  it('adopts the LAST tagged block (a self-correction) even when an earlier one is longer', () => {
+    // first block is broken AND longer; the corrected final block is shorter — the last one wins
+    const text =
+      '```scad\n// placeholder offset handled below — broken longer first block xxxxxxxxxxxxxxxx\nA;\n```\nReplace the prior block with this corrected version:\n```scad\nfixed();\n```'
+    const { code, blockCount, selfCorrection } = extractScadBlock(text)
     expect(blockCount).toBe(2)
-    expect(code).toBe('longer_program_here();')
+    expect(code).toBe('fixed();')
+    expect(selfCorrection).toBe(true)
+  })
+
+  it('prefers a tagged scad fence over a longer untagged fence', () => {
+    const text = '```\nuntagged_but_much_longer_program_here();\n```\n```scad\ntagged();\n```'
+    const { code, blockCount } = extractScadBlock(text)
+    expect(code).toBe('tagged();')
+    expect(blockCount).toBe(1) // only the tagged fence counts toward the contract
+  })
+
+  it('falls back to the longest untagged fence when no fence is tagged', () => {
+    const text = '```\nshort();\n```\n```\nthe_longest_untagged_block();\n```'
+    const { code, blockCount } = extractScadBlock(text)
+    expect(code).toBe('the_longest_untagged_block();')
+    expect(blockCount).toBe(0) // no tagged fences → contract count 0
+  })
+
+  it('does not flag a self-correction for a single block', () => {
+    const text = 'Here is the corrected final version.\n```scad\ncube([10,10,10]);\n```'
+    const { code, blockCount, selfCorrection } = extractScadBlock(text)
+    expect(code).toBe('cube([10,10,10]);')
+    expect(blockCount).toBe(1)
+    expect(selfCorrection).toBe(false)
   })
 
   it('returns null code and count 0 when there is no block', () => {

@@ -3,7 +3,7 @@ import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
 import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, estGenTokens, type SkillIssue } from '../lib/api'
-import { clampStatedDimensions, dimDiscrepancies, geometryConverged } from '../lib/refineProxy'
+import { clampStatedDimensions, dimDiscrepancies, geometryConverged, iouRefineDecision } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
 import { ComputeBudget } from '../lib/openscad/budget'
@@ -13,7 +13,7 @@ import { bestRefIoU, ensureRefMask, getRefMask } from '../lib/refSegment'
 import { extractScadBlock, extractIntent, stripIntentLine, parseParameters } from '../lib/params'
 import { degenerateReason, detectKitIntent } from '../lib/storeDecisions'
 import { recordUses, recordRemovals, saveSkillStats } from '../lib/skillStats'
-import { stlBBox } from '../lib/stl'
+import { stlBBox, islandCount } from '../lib/stl'
 import { openscad } from '../lib/openscad/client'
 import { useUi } from './ui'
 import { newId } from '../lib/storage'
@@ -58,17 +58,63 @@ const MAX_GEOM_FIX = 2 // render/structural/interference auto-fixes (was MAX_AUT
 /** Independent per-run fix budgets, threaded through runGeneration in place of the old shared count. */
 type FixBudget = { contract: number; geom: number }
 const NO_FIXES: FixBudget = { contract: 0, geom: 0 }
-const MAX_AUTO_REFINE = 2 // total auto-refine passes per project
+const MAX_AUTO_REFINE = 2 // hard ceiling on auto-refine passes per project (manual + auto combined)
+// LAT-2 — interactive auto-refine defaults to a SINGLE pass; the 2nd pass only fires when there is a
+// positive oracle signal (reference-IoU still measurably improving) or the user clicks "Refine again".
+const DEFAULT_AUTO_REFINE = 1
+// LAT-2 — cumulative wall-clock budget for ONE user turn's whole gen→refine→autofix chain, anchored
+// at the user-initiated send. Once exceeded, no further auto-refine/autofix pass is armed and the
+// chain stops cleanly (the user can still drive a manual "Refine again"). Image turns are the costly
+// case (serial gen + capture + refine); this caps the blind multi-minute auto-chain the audit flagged.
+const TURN_WALLCLOCK_MS = 90_000
+// Per-project anchor (epoch ms) for the current user turn's chain. Set at each user-initiated entry
+// (send/retry/reroll/regenerate); read by the autofix + refine arming guards. A manual "Refine again"
+// re-anchors it so the manual pass is never pre-empted by the prior turn's elapsed budget.
+const turnBudgetStart = new Map<string, number>()
+const turnBudgetExceeded = (pid: string): boolean => {
+  const start = turnBudgetStart.get(pid)
+  return start !== undefined && Date.now() - start > TURN_WALLCLOCK_MS
+}
+// OC-1 — a single-solid part is flagged as broken-multi-island only when its LARGEST island holds
+// less than this share of the mesh volume (i.e. the secondary island(s) together hold >5%). This
+// ignores negligible specks/artefacts from a boolean op while catching a genuinely detached feature.
+const ISLAND_SECONDARY_FLOOR = 0.95
 // Coarse wall-time guard on the reference-shape-match loop (renderMasks + 32 maskIoU passes per
 // candidate over 256×256 masks). Generous — best-of-N is N≤3 small meshes — but caps a pathological
 // high-triangle mesh from stalling selection between the compile loop and pickBestIndex. Past the
 // budget, remaining candidates simply rank without shapeMatch (undefined → no-op), never blocking.
 const SHAPE_MATCH_BUDGET_MS = 4_000
+// OC-2 — reference-IoU refine gate. Below this silhouette-IoU floor (best of the adopted render's
+// pose masks vs the segmented reference photo), an image turn is judged visually off-target and an
+// auto-refine pass is armed. CPU rasterization only — never spends the openscad render budget.
+const REF_IOU_FLOOR = 0.55
+// Previous pass's measured reference-IoU per project — the loop only continues while a refine pass
+// is still RAISING IoU; a non-improving pass stops it (folded into proxyWantsRefine).
+const refinePrevIoU = new Map<string, number>()
+// The measured discrepancy text to inject into the NEXT refine prompt (consumed by ChatPanel.refine
+// via takeRefineDiscrepancy). Lifetime-scoped like the other refine maps.
+const refineDiscrepancy = new Map<string, string>()
 const autoRefinePass = new Map<string, number>()
 // Previous refine-eligible compile's geometry CONTENT (volume + triangle count) per project — the
 // baseline the SELF-RELATIVE convergence stop compares the current pass against. Lifetime-scoped like
 // autoRefinePass; only read/written inside a refine sequence, which the lifetime cap bounds anyway.
 const refinePrevGeom = new Map<string, { volume: number; triangles: number }>()
+
+/** How many auto-refine passes have run for a project this session (LAT-2). ChatPanel reads it to
+ *  switch the manual refine control to "Refine again" once the bounded auto-chain has already fired,
+ *  so the further-pass affordance is discoverable. */
+export function autoRefineCount(pid: string): number {
+  return autoRefinePass.get(pid) ?? 0
+}
+
+/** Consume (read + clear) the measured reference-IoU discrepancy queued for a project's next refine
+ *  pass. ChatPanel.refine() prepends it to the refine prompt so the model gets the OBJECTIVE
+ *  visual-mismatch signal (not just self-critique). Returns '' when none is queued. */
+export function takeRefineDiscrepancy(pid: string): string {
+  const d = refineDiscrepancy.get(pid)
+  if (d) refineDiscrepancy.delete(pid)
+  return d ?? ''
+}
 
 export function createGenerationActions(
   set: StoreApi<VibeState>['setState'],
@@ -107,8 +153,8 @@ export function createGenerationActions(
     const shapeLoopStart = Date.now() // wall-clock anchor for the per-candidate shape-match guard
     const signals: CandidateSignals[] = []
     for (const text of fulls) {
-      const { code, blockCount } = extractScadBlock(text)
-      if (code === null || blockCount > 1) {
+      const { code, blockCount, selfCorrection } = extractScadBlock(text)
+      if (code === null || (blockCount > 1 && !selfCorrection)) {
         signals.push({ hasScad: false, compileAttempted: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
         continue
       }
@@ -251,7 +297,7 @@ export function createGenerationActions(
       // re-ask / adopt path below — that silently spawns a fresh generation. Bail quietly: the
       // finally clears `generating`, matching a Stop on the single-stream path.
       if (ctrl.signal.aborted) return
-      const { code, prose: rawProse, blockCount } = extractScadBlock(full)
+      const { code, prose: rawProse, blockCount, selfCorrection } = extractScadBlock(full)
       // parse the advisory INTENT line, then strip it so the user sees clean PLAN prose
       const intent = extractIntent(rawProse)
       const prose = stripIntentLine(rawProse)
@@ -278,7 +324,11 @@ export function createGenerationActions(
       // often and a prose-only / multi-block reply adopts nothing useful. Shares
       // the auto-fix attempt budget so it can never stack, and is off for weak
       // local engines (which can't reliably honor the format anyway).
-      const contractViolated = code === null || blockCount > 1
+      // A self-correction ("replace the prior block") with a clean final tagged block is NOT a
+      // genuine ambiguity — extractScadBlock already selected that last block — so adopt it directly
+      // and skip the wasted multi-block re-ask round trip. Only a truly ambiguous multi-block (or
+      // no-block) reply still trips the contract nudge below.
+      const contractViolated = (code === null || blockCount > 1) && !(selfCorrection && code !== null)
       if (contractViolated && fixes.contract < MAX_CONTRACT_REASK && engine && !engine.startsWith('local:')) {
         h.setChatFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'assistant', text: prose || 'Returning the program again.' }])
         const nudge =
@@ -395,6 +445,19 @@ export function createGenerationActions(
           // skillNote already shows them; here they also drive a BOUNDED auto-fix (gated on
           // the autoRepair toggle + the MAX_GEOM_FIX budget, so it can't loop).
           const assembly = [...structuralReport(code, params).issues, ...skillReport.flatMap((r) => r.issues)]
+          // OC-1 — reference-free connectivity oracle: a SINGLE-solid part must be ONE connected
+          // body. A handle floating off a mug wall renders as a 2nd island with a sane bbox and a
+          // clean compile, so nothing else catches it. Count islands only on a single part (NEVER
+          // the assembled `all` view of a kit, whose pieces are legitimately separate). A negligible
+          // secondary speck (rounding/artefact) is ignored via the volume-fraction floor.
+          if (!isMultiPart && sess.stl) {
+            const islands = islandCount(sess.stl)
+            if (islands && islands.count >= 2 && islands.largestVolumeFraction < ISLAND_SECONDARY_FLOOR) {
+              assembly.push(
+                `The model rendered as ${islands.count} disconnected pieces — a single part must be one connected solid. Fuse the detached feature (e.g. a handle, lid, or spout) to the body so the whole part is a single watertight mesh.`,
+              )
+            }
+          }
           // C1 — runtime interference proxy: a cutter slicing protected structure (a bore through a
           // clutch tube, a pocket into a bearing seat) is invisible to compile/dim/IoU but caught here
           // by rendering the hidden _debug probe (positives vs negatives) and measuring their overlap.
@@ -408,7 +471,11 @@ export function createGenerationActions(
             const interference = await interferenceIssue(code, budget)
             if (interference) assembly.push(interference)
           }
-          if (canRepair && (degenerate || assembly.length)) {
+          // LAT-2 — stop arming the quality auto-fix once the per-turn wall-clock budget is spent, so
+          // the gen→autofix→refine chain can't run unbounded for minutes. A hard compile-error fix
+          // above is exempt (a non-compiling part must still be repaired); this bounds only the
+          // quality-driven retries that compound latency.
+          if (canRepair && !turnBudgetExceeded(pid) && (degenerate || assembly.length)) {
             const parts: string[] = []
             if (degenerate) parts.push(`The program rendered but the result is not usable: ${degenerate}. Return a corrected complete program with sensible millimeter dimensions.`)
             if (assembly.length)
@@ -462,8 +529,47 @@ export function createGenerationActions(
           const dimMismatch = stated.length > 0 && dimDiscrepancies(md, stated).length > 0
           const curGeom = md ? { volume: md.volume, triangles: md.triangles } : null
           const stillReshaping = !geometryConverged(refinePrevGeom.get(aid), curGeom)
-          const proxyWantsRefine = dimMismatch || stillReshaping
+          //  (c) REFERENCE-IoU (OC-2) — DEFAULT-ON for image turns: measure the ADOPTED render's
+          //      silhouette against the user's segmented reference photo (CPU rasterization; no
+          //      openscad budget). Below the floor → refine, citing the measured mismatch. A refine
+          //      pass is only allowed to CONTINUE while it RAISES IoU (a non-improving pass stops the
+          //      loop, like the self-relative convergence guard). Reads getRefMask INSIDE this path
+          //      (after a fire-and-forget ensure) so the cold-start segmentation race is tolerated:
+          //      no mask yet → ioU undefined → behaves exactly as the pre-OC-2 path.
+          const refPhoto = [...h.activeChatFor(pid)]
+            .reverse()
+            .find((m) => m.role === 'user' && (m.images?.some((im) => (im.role ?? 'global') === 'global') ?? false))
+            ?.images?.find((im) => (im.role ?? 'global') === 'global')
+          let iouWantsRefine: boolean | undefined
+          if (refPhoto && provider?.vision) {
+            ensureRefMask(aid, refPhoto.data, refPhoto.mediaType, refPhoto.data)
+            const refMask = getRefMask(aid)
+            const adoptedStl = h.genSession(pid).stl
+            if (refMask && adoptedStl) {
+              const refIoU = bestRefIoU(renderMasks(adoptedStl), refMask)
+              iouWantsRefine = iouRefineDecision(refIoU, refinePrevIoU.get(aid), REF_IOU_FLOOR)
+              refinePrevIoU.set(aid, refIoU)
+              if (refIoU < REF_IOU_FLOOR) {
+                refineDiscrepancy.set(
+                  aid,
+                  `VISUAL MATCH CHECK — an independent silhouette comparison of the current render against your reference photo scores only ${(refIoU * 100).toFixed(0)}% overlap (a faithful match is well above ${(REF_IOU_FLOOR * 100).toFixed(0)}%). The rendered OUTLINE and PROPORTIONS do not yet match the reference; fix the overall shape, proportions, and any missing/misplaced prominent feature to match the photo. `,
+                )
+              } else {
+                refineDiscrepancy.delete(aid)
+              }
+            }
+          }
+          // When we HAVE an IoU signal, it gates the loop: refine only while below the floor AND the
+          // last pass was still improving. When there is NO IoU signal (text turn, no photo, mask
+          // not ready), fall back to the prior reference-free gate.
+          const proxyWantsRefine = iouWantsRefine !== undefined ? iouWantsRefine || dimMismatch : dimMismatch || stillReshaping
           if (curGeom) refinePrevGeom.set(aid, curGeom)
+          // LAT-2 — interactive auto-refine defaults to ONE pass. A 2nd auto pass is only armed when
+          // the oracle is positively still improving (iouWantsRefine === true); otherwise the chain
+          // stops and the user can fire one more via the "Refine again" control. Also stop arming once
+          // the cumulative per-turn wall-clock budget is spent.
+          const passes = autoRefinePass.get(aid) ?? 0
+          const autoCap = iouWantsRefine === true ? MAX_AUTO_REFINE : DEFAULT_AUTO_REFINE
           if (
             triggerImages?.length &&
             provider?.vision &&
@@ -472,7 +578,8 @@ export function createGenerationActions(
             useUi.getState().autoRepair &&
             aid &&
             proxyWantsRefine &&
-            (autoRefinePass.get(aid) ?? 0) < MAX_AUTO_REFINE
+            !turnBudgetExceeded(aid) &&
+            passes < autoCap
           ) {
             set({ pendingAutoRefineFor: aid })
           }
@@ -519,6 +626,10 @@ export function createGenerationActions(
       const pid = get().activeId
       if (!pid) return
       const userMsg: ChatMessage = { id: newId(), createdAt: Date.now(), role: 'user', text, images, action }
+      // LAT-2 — anchor the per-turn wall-clock budget for the whole gen→refine→autofix chain. An
+      // AUTO 'Refine pass' continues the same turn (no re-anchor → cumulative); a manual 'Refine
+      // again' gets a FRESH budget so the user's explicit pass is never pre-empted by prior elapsed.
+      if (action !== 'Refine pass') turnBudgetStart.set(pid, Date.now())
       // a new prompt commits to the current (possibly rolled-back) version: the stashed
       // tail is now a genuinely abandoned branch, so clear the redo stack as we append.
       h.setChatAndFutureFor(pid, [...h.activeChatFor(pid), userMsg], [])
@@ -536,6 +647,7 @@ export function createGenerationActions(
       if (end === 0 || chat[end - 1].role !== 'user') return
       const lastUser = chat[end - 1]
       h.setChatFor(pid, chat.slice(0, end))
+      if (lastUser.action !== 'Refine pass') turnBudgetStart.set(pid, Date.now())
       await runGeneration({ text: lastUser.text, action: lastUser.action })
     },
 
@@ -553,6 +665,7 @@ export function createGenerationActions(
       // remain switchable via the version chips (Restore / redo) — neither is discarded. Like a
       // diverging send, the redo stash is cleared (this is a new branch).
       h.setChatAndFutureFor(pid, [...chat, { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Regenerate' }], [])
+      turnBudgetStart.set(pid, Date.now())
       await runGeneration({ text, action: 'Regenerate' })
     },
 
@@ -576,6 +689,7 @@ export function createGenerationActions(
       // corrected skillIds OVERRIDING retrieval for this turn. Shares the generating guard +
       // abortController via runGeneration; the new version carries the corrected appliedSkillIds.
       h.setChatAndFutureFor(pid, [...h.activeChatFor(pid), { id: newId(), createdAt: Date.now(), role: 'user', text, action: 'Adjust patterns' }], [])
+      turnBudgetStart.set(pid, Date.now())
       await runGeneration({ text, action: 'Adjust patterns' }, NO_FIXES, { skillIds })
     },
 

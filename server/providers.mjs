@@ -4,7 +4,7 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
-import { SYSTEM_PROMPT } from './prompt.mjs'
+import { SYSTEM_PROMPT, IMAGE_PROMPT } from './prompt.mjs'
 import { SKILLS, selectSkills, selectSkillsDetailed, composePlan } from './skills.mjs'
 import { billOfMaterials } from './hardware.mjs'
 import { getConnection, listConnections, catalogEntry, validateFetchUrl } from './connections.mjs'
@@ -223,6 +223,72 @@ function kimiAuth() {
    ──────────────────────────────────────────────────────────────── */
 
 let claudeBinaryCache = null
+let claudeBinaryCheckedAt = 0
+// TTL the CLI-presence probe so a CLI that's removed (or installed) after boot eventually re-checks,
+// instead of being pinned to its first answer forever. Overridable for tests / tuning.
+const CLAUDE_BINARY_TTL_MS = Number(process.env.VIBEMESH_CLAUDE_BINARY_TTL_MS) || 5 * 60_000
+
+/* ────────────────────────────────────────────────────────────────
+   Per-provider connection health (SEC-4)
+
+   `available`/configured says "a credential is present". This separate map records the LAST upstream
+   OUTCOME so the UI can distinguish a *verified-connected* provider from one whose key is present but
+   DEAD (401/402/403/invalid) or OVER-QUOTA (429). A failed generate/test demotes the provider to
+   `degraded` with a reason; a success marks it `verified`. Keyed by the provider FAMILY (built-in id,
+   `local`, or `conn:<id>`) so a per-model `local:<m>` failure demotes the collapsed Local row too.
+   ──────────────────────────────────────────────────────────────── */
+const providerHealth = new Map()
+
+/** Collapse an engine id to its health family key (so local:<model> shares one bucket). */
+function healthKey(engine) {
+  if (typeof engine !== 'string') return ''
+  if (engine.startsWith('local:')) return 'local'
+  return engine
+}
+
+/** Classify an upstream error into a demotion reason, or null if it's not an availability signal
+ *  (a transient network blip / abort should NOT paint a configured provider red). Recognizes the
+ *  Anthropic SDK error classes and a bare numeric `status` (401/402/403/429) on any thrown error. */
+export function degradeReason(error) {
+  if (!error) return null
+  if (error.name === 'AbortError') return null
+  // The generate path's adapters wrap upstream failures into a UserFacingError with NO numeric
+  // .status — the HTTP status survives only as a trailing `(NNN)` in the message (translateAnthropicError
+  // for anthropic/kimi, the `error (status)` throw for openai/local). Recover it the same way
+  // testFailureToError does for the Test button, so a failed *generation* also demotes (SEC-4).
+  const textStatus = (() => {
+    const m = String(error.message ?? '').match(/\((\d{3})\)/)
+    return m ? Number(m[1]) : null
+  })()
+  const status = typeof error.status === 'number' ? error.status : textStatus
+  const isAuth = (typeof Anthropic !== 'undefined' && error instanceof Anthropic.AuthenticationError) || status === 401 || status === 403 || /invalid.{0,12}key/i.test(error.message || '')
+  const isQuota = (typeof Anthropic !== 'undefined' && error instanceof Anthropic.RateLimitError) || status === 429
+  const isBilling = status === 402
+  if (isQuota) return 'rate limit / quota — wait and retry'
+  if (isBilling) return 'billing / payment required'
+  if (isAuth) return 'credential rejected — check the key'
+  return null
+}
+
+/** Record a successful upstream round-trip → the provider is verified-connected. */
+function markVerified(engine) {
+  const key = healthKey(engine)
+  if (key) providerHealth.set(key, { status: 'verified', at: Date.now() })
+}
+
+/** Record an upstream failure → demote to degraded ONLY for an availability signal (auth/quota/billing);
+ *  ignore transient errors so a working provider's green state never flaps. */
+function markFailure(engine, error) {
+  const reason = degradeReason(error)
+  if (!reason) return
+  const key = healthKey(engine)
+  if (key) providerHealth.set(key, { status: 'degraded', reason, at: Date.now() })
+}
+
+/** The recorded two-tier state for a provider family (or null if never called). */
+function providerHealthOf(engine) {
+  return providerHealth.get(healthKey(engine)) ?? null
+}
 
 /** The model Claude Code is configured to use (label for the "default" option). */
 function claudeCliDefaultModel() {
@@ -238,10 +304,13 @@ function claudeCliDefaultModel() {
 }
 
 function claudeBinaryAvailable() {
-  if (claudeBinaryCache !== null) return Promise.resolve(claudeBinaryCache)
+  if (claudeBinaryCache !== null && Date.now() - claudeBinaryCheckedAt < CLAUDE_BINARY_TTL_MS) {
+    return Promise.resolve(claudeBinaryCache)
+  }
   return new Promise((resolve) => {
     execFile('claude', ['--version'], { timeout: 5000 }, (err) => {
       claudeBinaryCache = !err
+      claudeBinaryCheckedAt = Date.now()
       resolve(claudeBinaryCache)
     })
   })
@@ -424,6 +493,27 @@ export async function providerStatus() {
     })
   }
 
+  // SEC-4: stamp the two-tier connection state onto each provider. `available` still means "a
+  // credential is present"; `connectionState` adds whether the LAST upstream call actually worked:
+  //   unconfigured        — no credential (available:false)
+  //   configured-unverified — credential present, never successfully called
+  //   verified            — last generate/test succeeded
+  //   degraded            — last call failed with an auth/quota/billing signal (carries reason)
+  // The client (engineCards) renders verified vs configured-unverified vs degraded distinctly.
+  for (const p of providers) {
+    const h = providerHealthOf(p.id)
+    if (!p.available) {
+      p.connectionState = 'unconfigured'
+    } else if (h?.status === 'degraded') {
+      p.connectionState = 'degraded'
+      p.connectionReason = h.reason
+    } else if (h?.status === 'verified') {
+      p.connectionState = 'verified'
+    } else {
+      p.connectionState = 'configured-unverified'
+    }
+  }
+
   return providers
 }
 
@@ -431,7 +521,33 @@ export async function providerStatus() {
    Cheap connection tests for the Engines panel (1-token pings)
    ──────────────────────────────────────────────────────────────── */
 
+/** Public test entry: runs the 1-token ping AND records the outcome into providerHealth (SEC-4), so a
+ *  "Test" that fails on a dead/over-quota key demotes the engine dot, and one that passes verifies it. */
 export async function testEngine(engine) {
+  let result
+  try {
+    result = await runTestEngine(engine)
+  } catch (error) {
+    markFailure(engine, error)
+    throw error
+  }
+  if (result?.ok) markVerified(engine)
+  else markFailure(engine, testFailureToError(result?.message))
+  return result
+}
+
+/** Reconstruct an availability-signal error from a failed test message so the openai-protocol path
+ *  (which returns `{ok:false, message:'Rejected (401)…'}` instead of throwing) still demotes. */
+function testFailureToError(message) {
+  const msg = String(message ?? '')
+  const m = msg.match(/\((\d{3})\)/)
+  const status = m ? Number(m[1]) : null
+  const err = new Error(msg)
+  if (status) err.status = status
+  return err
+}
+
+async function runTestEngine(engine) {
   try {
     if (engine === 'anthropic') {
       const client = new Anthropic()
@@ -519,6 +635,12 @@ export function contextText(context, engine) {
   // and (kit intent) mandate a correctly-mated assembled all-view so the pieces don't scatter.
   out += compositionDirective(sel)
   out += matingDirective(sel, context?.kit)
+  // RET-5: the image/trace/facet/refine layer is appended ONLY for an image/reference turn — a
+  // reference image is attached (hasImage), the prior turn classified a source (intent.sourceType),
+  // or the client flagged a coarse sourceHint. Pure-text requests skip the whole IMAGE_PROMPT block,
+  // so a spur-gear prompt no longer pays for the trace/facet/refine machinery on every call.
+  const isImageTurn = !!(context?.hasImage || context?.intent?.sourceType || context?.sourceHint)
+  if (isImageTurn) out += IMAGE_PROMPT
   // source-type-routed vision guidance (P6 ws3): the model-emitted sourceType (carried from
   // the prior turn's intent) takes precedence; on the first image turn the client's coarse
   // sourceHint (derived from attached image roles) routes it. Text-only requests add nothing.
@@ -610,6 +732,17 @@ function latestUserText(messages) {
     return ''
   }
   return ''
+}
+
+/** True when ANY turn in the conversation carries an image block (a reference photo/drawing OR a
+ *  refine-pass render screenshot). Drives the RET-5 gate that appends IMAGE_PROMPT — a single-image
+ *  or refine turn may not set a sourceType/sourceHint, so we also detect the image blocks directly. */
+export function messagesHaveImage(messages) {
+  if (!Array.isArray(messages)) return false
+  for (const m of messages) {
+    if (Array.isArray(m?.content) && m.content.some((p) => p?.type === 'image')) return true
+  }
+  return false
 }
 
 /** Largest ```scad fenced block in the model's reply (a server-side mirror of the client
@@ -723,15 +856,24 @@ export function resolveConnectionDescriptor(conn) {
 }
 
 export async function streamChat({ engine, model, effort, messages, context, onDelta, signal }) {
-  // seed prompt-intent retrieval from the latest user turn unless the caller pinned skillIds
-  const ctx = contextText({ ...context, prompt: context?.prompt ?? latestUserText(messages) }, engine)
+  // seed prompt-intent retrieval from the latest user turn unless the caller pinned skillIds; flag an
+  // image/refine turn so contextText appends the IMAGE_PROMPT layer (RET-5) instead of the always-on
+  // prompt carrying it for every pure-text request.
+  const ctx = contextText({ ...context, prompt: context?.prompt ?? latestUserText(messages), hasImage: context?.hasImage ?? messagesHaveImage(messages) }, engine)
   // built-in id OR a saved-connection id (conn:<id>); resolveEngineDescriptor handles both, reading
   // the connection's secret server-side from .env — the client only ever sends the id, never the key
   const desc = resolveEngineDescriptor(engine, model)
   if (!desc) throw new UserFacingError(`Unknown engine "${engine}".`)
   const adapter = ADAPTERS[desc.protocol]
   if (!adapter) throw new UserFacingError(`No adapter for protocol "${desc.protocol}".`)
-  return adapter({ desc, messages, ctx, onDelta, signal, effort })
+  try {
+    const outcome = await adapter({ desc, messages, ctx, onDelta, signal, effort })
+    markVerified(engine) // a completed stream = the credential works (SEC-4)
+    return outcome
+  } catch (error) {
+    markFailure(engine, error) // demote on an auth/quota/billing signal; transient errors ignored
+    throw error
+  }
 }
 
 export class UserFacingError extends Error {}

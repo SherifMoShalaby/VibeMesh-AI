@@ -171,27 +171,49 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Extract the single ```scad fenced block from an assistant reply.
- *  `blockCount` lets callers enforce the "exactly ONE block" contract — on 0 or
- *  >1 blocks the longest is still returned (graceful fallback), but the count
- *  flags a contract violation worth a retry. */
-export function extractScadBlock(text: string): { code: string | null; prose: string; blockCount: number } {
-  const re = /```(?:scad|openscad)?\s*\n([\s\S]*?)```/g
+/** A self-correction nudge: the model emitted a broken block then a corrected one and SAID so
+ *  ("replace the prior/previous/above block", "use this corrected/final version instead",
+ *  "ignore the first/earlier block"). When this fires alongside a clean tagged LAST block, the
+ *  caller adopts that block directly instead of burning a multi-block contract re-ask. */
+const SELF_CORRECTION_RE =
+  /\b(?:replace|ignore|disregard|discard|instead of)\b[^.\n]*\b(?:prior|previous|above|earlier|first|last)\b|\b(?:corrected|final|fixed|updated)\b[^.\n]*\bversion\b|\buse this[^.\n]*\binstead\b/i
+
+/** Extract the ```scad fenced block to adopt from an assistant reply.
+ *  Selection prefers the LAST complete scad/openscad-TAGGED block (a self-correction replaces the
+ *  prior one), then a tagged fence over a longer untagged one, then — as a last resort — the longest
+ *  untagged fence. `blockCount` lets callers enforce the "exactly ONE block" contract; `selfCorrection`
+ *  flags a 'replace the prior block' reply so a clean final block is adopted without a wasted re-ask. */
+export function extractScadBlock(text: string): {
+  code: string | null
+  prose: string
+  blockCount: number
+  selfCorrection: boolean
+} {
+  const re = /```(scad|openscad)?\s*\n([\s\S]*?)```/g
+  // collect every fence with its tagged-ness so we can prefer LAST-tagged, then tagged, then longest.
+  const blocks: { code: string; tagged: boolean }[] = []
+  for (const m of text.matchAll(re)) blocks.push({ code: m[2].trim(), tagged: Boolean(m[1]) })
+
   let code: string | null = null
-  let best = 0
-  for (const m of text.matchAll(re)) {
-    if (m[1].length > best) {
-      best = m[1].length
-      code = m[1].trim()
-    }
+  const tagged = blocks.filter((b) => b.tagged)
+  if (tagged.length) {
+    // a tagged self-correction: the LAST tagged block supersedes the broken earlier ones.
+    code = tagged[tagged.length - 1].code
+  } else if (blocks.length) {
+    // no tagged fence — fall back to the longest untagged fence (an untagged program is still adopted).
+    code = blocks.reduce((best, b) => (b.code.length > best.length ? b.code : best), blocks[0].code)
   }
+
   // Count only scad/openscad-TAGGED fences toward the "exactly one block" contract.
   // Code extraction stays lenient (an untagged program is still adopted), but an
   // untagged illustrative fence — a print-settings list, a dimension table — must
   // NOT count as a second block and trip a spurious format retry.
-  const blockCount = (text.match(/```(?:scad|openscad)\s*\n/g) || []).length
+  const blockCount = tagged.length
   const prose = text.replace(re, '').replace(/\n{3,}/g, '\n\n').trim()
-  return { code, prose, blockCount }
+  // A clean final tagged block + an explicit "replace the prior block" nudge = a self-correction the
+  // caller can adopt directly (no re-ask). Only meaningful when there ARE multiple tagged blocks.
+  const selfCorrection = tagged.length > 1 && SELF_CORRECTION_RE.test(prose)
+  return { code, prose, blockCount, selfCorrection }
 }
 
 // the model's advisory `INTENT: {json}` PLAN line — a single non-fenced line of plain JSON

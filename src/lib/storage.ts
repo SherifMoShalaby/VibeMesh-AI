@@ -204,8 +204,13 @@ function writeLocal(projects: Project[]): void {
   }
   try {
     localStorage.setItem(KEY, JSON.stringify(slimProjects(projects)))
-  } catch {
-    /* give up silently */
+  } catch (err) {
+    // terminal failure — surface it so the user knows to export their work
+    if (!persistDegraded) {
+      persistDegraded = true
+      console.error('[storage] localStorage write failed; saving is degraded', err)
+      persistDegradedCb?.()
+    }
   }
 }
 
@@ -251,6 +256,8 @@ let cache: Project[] = []
 let hydrated = false
 let db: IDBDatabase | null = null // null → localStorage-only fallback mode
 let readOnly = false // true when the stored data is from a NEWER build — refuse to persist over it
+export let persistDegraded = false // true when a terminal write failure occurs — user should export
+let persistDegradedCb: (() => void) | null = null // called when persistDegraded is set
 
 /** Open the DB, migrate, and fill the synchronous cache. Idempotent; awaited once at boot. */
 export async function hydrateStorage(): Promise<void> {
@@ -366,6 +373,11 @@ let externalChangeCb: ((projects: Project[]) => void) | null = null
 /** subscribe to durable changes made by ANOTHER tab; the store re-projects them (see store.init). */
 export function setOnExternalChange(cb: ((projects: Project[]) => void) | null): void {
   externalChangeCb = cb
+}
+
+/** subscribe to persistence degradation (terminal write failures); the store can alert the user. */
+export function setOnPersistDegraded(cb: (() => void) | null): void {
+  persistDegradedCb = cb
 }
 
 function postSaved(): void {

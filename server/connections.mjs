@@ -118,10 +118,32 @@ export { ConnectionError }
 
 const METADATA_HOSTS = new Set(['metadata.google.internal', 'metadata.goog'])
 
-/** http(s)-only + block the cloud metadata service (169.254.x link-local / metadata hostnames) — the
- *  highest-value SSRF target when HOST=0.0.0.0. LAN/localhost is intentionally ALLOWED (local LLMs
- *  live there, so a blanket private-range block would break Ollama). Throws ConnectionError on a
- *  bad/blocked URL; returns the trimmed value. Shared by saveConnection and POST /api/discover-models. */
+/** Is this hostname a private / loopback / CGNAT address that should be DEFAULT-denied for a
+ *  non-loopback deployment (RFC1918 + 127.x + 0.0.0.0 + 100.64/10 CGNAT + IPv6 loopback/ULA)?
+ *  These are re-permitted by ALLOW_PRIVATE_FETCH=1 for the local-LLM (Ollama/LM Studio) use case.
+ *  Cloud-metadata + link-local (169.254 / fe80:) are handled separately and are ALWAYS blocked. */
+function isPrivateHost(h) {
+  if (h === 'localhost' || h.endsWith('.localhost')) return true
+  if (h === '0.0.0.0' || h === '::' || h === '::1') return true
+  if (h.startsWith('::ffff:')) return isPrivateHost(h.slice(7)) // IPv4-mapped IPv6
+  if (/^fc|^fd/.test(h)) return true // IPv6 ULA fc00::/7
+  if (/^127\./.test(h)) return true // IPv4 loopback
+  if (/^10\./.test(h)) return true // RFC1918 10/8
+  if (/^192\.168\./.test(h)) return true // RFC1918 192.168/16
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true // RFC1918 172.16/12
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true // CGNAT 100.64/10
+  return false
+}
+
+/** http(s)-only SSRF guard. ALWAYS blocks the cloud metadata service (169.254.x link-local /
+ *  metadata hostnames) — the highest-value SSRF target when HOST=0.0.0.0. By DEFAULT it also blocks
+ *  private/loopback ranges (RFC1918, 127.x, IPv6 ULA, 0.0.0.0, 100.64/10 CGNAT) so a non-loopback
+ *  deployment can't be turned into an internal-network probe via /api/discover-models. Set
+ *  ALLOW_PRIVATE_FETCH=1 to re-permit those ranges for a local LLM (Ollama/LM Studio) — see SECURITY.md.
+ *  LIMITATION: this is a URL-SHAPE guard (it inspects the literal hostname), NOT a DNS-rebinding
+ *  defense — a hostname that resolves to a private IP at fetch time is not caught here.
+ *  Throws ConnectionError on a bad/blocked URL; returns the trimmed value. Shared by saveConnection
+ *  and POST /api/discover-models. */
 export function validateFetchUrl(value) {
   const v = String(value ?? '').trim()
   let u
@@ -132,8 +154,14 @@ export function validateFetchUrl(value) {
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new ConnectionError('Base URL must use http or https.')
   const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  // Metadata + link-local are NEVER allowed, even under the opt-in.
   if (METADATA_HOSTS.has(h) || /^169\.254\./.test(h) || h.startsWith('fe80:')) {
     throw new ConnectionError('That host is not allowed.')
+  }
+  // Private/loopback ranges are denied by default; ALLOW_PRIVATE_FETCH=1 re-permits them (local LLMs).
+  const allowPrivate = process.env.ALLOW_PRIVATE_FETCH === '1' || process.env.ALLOW_PRIVATE_FETCH === 'true'
+  if (!allowPrivate && isPrivateHost(h)) {
+    throw new ConnectionError('Private/loopback addresses are blocked. Set ALLOW_PRIVATE_FETCH=1 to allow a local LLM.')
   }
   return v
 }

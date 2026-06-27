@@ -119,6 +119,83 @@ export function stlBBox(buffer: ArrayBuffer): StlBBox | null {
   }
 }
 
+export interface IslandReport {
+  /** number of connected solids (triangle clusters sharing a welded vertex) */
+  count: number
+  /** the largest island's share of total mesh volume — a near-1 value means the rest are
+   *  negligible specks; a sizeable secondary fraction means a genuinely detached feature. */
+  largestVolumeFraction: number
+}
+
+/** Snap a coordinate to ~1e-3 mm so coincident-but-not-bit-identical vertices (the norm in an
+ *  STL where every triangle carries its own copy of shared corners) weld into one node. */
+const VERT_QUANT = 1000 // 1/0.001mm
+
+/**
+ * Connected-components count over a binary STL — a reference-free "is this ONE solid?" signal.
+ * Triangles that share a quantized vertex are unioned (union-find); the number of resulting sets is
+ * the island count. Pure DataView math (no three.js), so it runs in the client AND the bench/node.
+ *
+ * Used by the text success gate: a single-solid part that renders as >=2 disjoint islands (a mug
+ * handle floating off the wall) is physically broken even though its bbox is sane and it compiled.
+ * A hollow ring/tube is still ONE island (its inner + outer walls share the rim triangles), so this
+ * does NOT false-positive legitimate hollow bodies.
+ */
+export function islandCount(buffer: ArrayBuffer): IslandReport | null {
+  if (buffer.byteLength < 84) return null
+  const view = new DataView(buffer)
+  const count = view.getUint32(80, true)
+  if (count === 0) return { count: 0, largestVolumeFraction: 0 }
+  if (buffer.byteLength < 84 + count * 50) return null
+
+  // union-find over triangles, keyed by a shared quantized vertex.
+  const parent = new Int32Array(count)
+  for (let i = 0; i < count; i++) parent[i] = i
+  const find = (a: number): number => {
+    let r = a
+    while (parent[r] !== r) r = parent[r]
+    while (parent[a] !== r) { const n = parent[a]; parent[a] = r; a = n } // path compression
+    return r
+  }
+  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
+
+  // map vertex key → first triangle that touched it; subsequent touchers union to it.
+  const seen = new Map<string, number>()
+  const triVol6 = new Float64Array(count) // 6× signed volume per triangle (for the fraction)
+  for (let i = 0; i < count; i++) {
+    const base = 84 + i * 50 + 12
+    const coords: number[] = []
+    for (let k = 0; k < 3; k++) {
+      const x = Math.round(view.getFloat32(base + k * 12, true) * VERT_QUANT)
+      const y = Math.round(view.getFloat32(base + k * 12 + 4, true) * VERT_QUANT)
+      const z = Math.round(view.getFloat32(base + k * 12 + 8, true) * VERT_QUANT)
+      coords.push(x, y, z)
+      const key = `${x},${y},${z}`
+      const prev = seen.get(key)
+      if (prev === undefined) seen.set(key, i)
+      else union(i, prev)
+    }
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = coords
+    triVol6[i] = ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)
+  }
+
+  // accumulate the SIGNED tetrahedron sum per root set, count distinct roots. Summing signed (not
+  // absolute) values makes a closed surface's enclosed volume telescope correctly regardless of how
+  // far the island sits from the origin — the per-triangle |value| would otherwise scale with offset.
+  const setVol = new Map<number, number>()
+  for (let i = 0; i < count; i++) {
+    const r = find(i)
+    setVol.set(r, (setVol.get(r) ?? 0) + triVol6[i])
+  }
+  let total = 0
+  let largest = 0
+  for (const v of setVol.values()) { const vol = Math.abs(v) / 6; total += vol; if (vol > largest) largest = vol }
+  return {
+    count: setVol.size,
+    largestVolumeFraction: total > 0 ? largest / total : 0,
+  }
+}
+
 /**
  * Apply a 4×4 transform (column-major, THREE.Matrix4.elements) to every vertex
  * of a binary STL, recomputing facet normals. Pure DataView math — used to bake
