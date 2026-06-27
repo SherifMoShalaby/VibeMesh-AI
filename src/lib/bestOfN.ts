@@ -43,6 +43,13 @@ export interface CandidateSignals {
    *  tiebreak, so a registration miss can never cross a harder signal — only break a true tie toward
    *  the candidate whose outline matches the user's photo. */
   shapeMatch?: number
+  /** OC-10 — PROPORTION match (0..1) of this candidate's outline against the reference photo's mask
+   *  at one SHARED scale (aspect / fill / centroid — see src/lib/proportion.ts). The scale-blind
+   *  shapeMatch IoU above is proportion-BLIND, so a correct-shape-but-wrong-proportion candidate ties
+   *  on shapeMatch; this breaks that tie toward the correct proportions. Applied BELOW shapeMatch and
+   *  inside the SAME clamped soft tier, so it can never cross a harder signal — only resolve a tie the
+   *  scale-blind signals leave arbitrary. Undefined (no reference / not measured) → 0 penalty → no-op. */
+  proportionMatch?: number
 }
 
 /** Default fan-out. Kept small: each candidate is a paid generation + a compile through one worker. */
@@ -83,13 +90,18 @@ export function scoreCandidate(s: CandidateSignals): number {
   score -= s.structuralIssues * 1_000 // then: fewer assembly/structural faults
   score -= s.dimMismatches * 100 // then: closer to the stated dimensions
   // SOFT tiebreak tier — below dimMismatches and bounded so the soft signals can NEVER cross a harder
-  // tier, even when BOTH fire. shapeMatch (reference-photo outline match) is weighted ABOVE the
-  // self-relative hollow heuristic (a measured match against the user's photo beats a solidity guess),
-  // but the COMBINED soft penalty is CLAMPED < 100 (one dimMismatch) so two tiebreaks together can't
-  // reorder a harder signal. With no reference, shapeMatch is undefined → shapePenalty 0 → the clamp is
-  // inert (hollow ≤ TIEBREAK_MAX=50) → the score is byte-identical to the reference-free path.
+  // tier, even when ALL fire. shapeMatch (reference-photo OUTLINE match) is weighted ABOVE the
+  // proportion term (a scale-blind shape miss is a worse error than a proportion-only one) which is
+  // above the self-relative hollow heuristic — but the COMBINED soft penalty is CLAMPED < 100 (one
+  // dimMismatch) so the tiebreaks together can't reorder a harder signal. With no reference, both
+  // shapeMatch and proportionMatch are undefined → 0 penalty → the clamp is inert (hollow ≤
+  // TIEBREAK_MAX=50) → the score is byte-identical to the reference-free path.
   const shapePenalty = s.shapeMatch !== undefined ? (1 - s.shapeMatch) * 75 : 0
-  score -= Math.min(shapePenalty + hollowPenalty(s.fillRatio), 95)
+  // OC-10 — proportion penalty (scale-shared aspect/fill/centroid). Capped at 25 — STRICTLY below the
+  // shape term (75) so a candidate with a better OUTLINE still wins, and small enough that shape +
+  // proportion (≤100) stay within the < 100 dimMismatch clamp.
+  const proportionPenalty = s.proportionMatch !== undefined ? (1 - s.proportionMatch) * 25 : 0
+  score -= Math.min(shapePenalty + proportionPenalty + hollowPenalty(s.fillRatio), 95)
   return score
 }
 

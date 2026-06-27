@@ -8,6 +8,8 @@ import { SCREWS, BEARINGS } from './hardware.mjs'
 import { requireAuth, enforceAuthWhenConfigured, requireOwner } from './authMiddleware.mjs'
 import { supabase as dbClient, dbGetProjects, dbUpsertProject, dbDeleteProject } from './db.mjs'
 import { rateLimit } from './rateLimit.mjs'
+import Anthropic from '@anthropic-ai/sdk'
+import { runVisionJudge } from '../bench/judge.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 5175)
@@ -170,6 +172,37 @@ app.post('/api/generate', generateLimiter, enforceAuthWhenConfigured, jsonLarge,
     send({ type: 'error', message })
   }
   res.end()
+})
+
+/**
+ * POST /api/vision-judge  (OC-6 — live ADVISORY feature-fidelity oracle)
+ * body: { prompt, code?, referenceImage?: {base64, mediaType}, renderImages: [{pngBase64, mediaType, name}] }
+ *
+ * Runs the SAME judgeVision-style per-feature present/faithful + asymmetryPreserved check the bench
+ * uses (bench/judge.mjs runVisionJudge), against the client-captured iso/front/top render poses. It is
+ * ADVISORY ONLY — it never gates a generation or export; the client uses the verdict to drive a refine
+ * pass (citing an absent feature) through its existing discrepancy seam. Behind the SAME rate limiter +
+ * auth as /api/generate (it spends an upstream VLM call), and gated on an Anthropic key being present
+ * (the only vision-capable first-party reviewer here). Off by default client-side → never reached.
+ */
+app.post('/api/vision-judge', generateLimiter, enforceAuthWhenConfigured, jsonLarge, async (req, res) => {
+  const { prompt, code, referenceImage, renderImages } = req.body ?? {}
+  if (typeof prompt !== 'string' || !Array.isArray(renderImages) || renderImages.length === 0) {
+    res.status(400).json({ ok: false, message: 'prompt and renderImages are required' })
+    return
+  }
+  // Gate on a usable Anthropic credential — the judge is a plain API call (never the claude-code login
+  // path). Absent → 400 so the advisory caller degrades to its geometry-only refine signals.
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
+    res.status(400).json({ ok: false, message: 'vision judge needs an Anthropic API key' })
+    return
+  }
+  try {
+    const verdict = await runVisionJudge(new Anthropic(), { prompt, code, referenceImage, renderImages })
+    res.json({ ok: !verdict?.error, verdict })
+  } catch (error) {
+    res.status(500).json({ ok: false, message: error instanceof Error ? error.message.slice(0, 160) : 'vision judge failed' })
+  }
 })
 
 // Projects API — only available when Supabase is configured

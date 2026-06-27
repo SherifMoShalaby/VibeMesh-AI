@@ -145,6 +145,38 @@ describe('scoreCandidate — reference-photo shapeMatch tiebreak (Phase 2, below
   })
 })
 
+describe('scoreCandidate — proportion tiebreak (OC-10, below shapeMatch, above hollow)', () => {
+  it('OC-10 acceptance: a correct-shape but wrong-PROPORTION candidate scores below a correct-proportion one', () => {
+    // Both tie on every harder signal AND on the scale-blind shapeMatch — only proportion differs.
+    const correctProp = scoreCandidate(sig({ shapeMatch: 0.9, proportionMatch: 0.95 }))
+    const wrongProp = scoreCandidate(sig({ shapeMatch: 0.9, proportionMatch: 0.3 }))
+    expect(correctProp).toBeGreaterThan(wrongProp)
+  })
+
+  it('no proportion signal (undefined) is a TOTAL no-op — byte-identical to the score without it', () => {
+    expect(scoreCandidate(sig({ proportionMatch: undefined }))).toBe(scoreCandidate(sig({})))
+    expect(scoreCandidate(sig({ proportionMatch: 1 }))).toBe(scoreCandidate(sig({ proportionMatch: undefined })))
+  })
+
+  it('ranks STRICTLY below shapeMatch: a better OUTLINE wins even with worse proportions', () => {
+    const betterShape = scoreCandidate(sig({ shapeMatch: 0.9, proportionMatch: 0.0 }))
+    const worseShape = scoreCandidate(sig({ shapeMatch: 0.5, proportionMatch: 1.0 }))
+    expect(betterShape).toBeGreaterThan(worseShape) // shape term (75) dominates the proportion term (25)
+  })
+
+  it('NEVER crosses a harder signal: a total proportion miss still beats one extra dim mismatch', () => {
+    const missButCloserDims = scoreCandidate(sig({ proportionMatch: 0, dimMismatches: 0 }))
+    const matchButFartherDims = scoreCandidate(sig({ proportionMatch: 1, dimMismatches: 1 }))
+    expect(missButCloserDims).toBeGreaterThan(matchButFartherDims)
+  })
+
+  it('the combined soft tier stays clamped < one dim mismatch (shape + proportion + hollow all worst)', () => {
+    const allSoftWorst = scoreCandidate(sig({ shapeMatch: 0, proportionMatch: 0, fillRatio: 1e-6, dimMismatches: 0 }))
+    const oneDimOff = scoreCandidate(sig({ shapeMatch: 1, proportionMatch: 1, fillRatio: 0.9, dimMismatches: 1 }))
+    expect(allSoftWorst).toBeGreaterThan(oneDimOff)
+  })
+})
+
 describe('pickBestIndex', () => {
   it('picks the highest score', () => {
     expect(pickBestIndex([1, 5, 3])).toBe(1)

@@ -10,7 +10,10 @@ import { ComputeBudget } from '../lib/openscad/budget'
 import { scoreCandidate, pickBestIndex, BEST_OF_N_COUNT, type CandidateSignals } from '../lib/bestOfN'
 import { renderMasks } from '../lib/silhouette'
 import { bestRefIoU, ensureRefMask, getRefMask } from '../lib/refSegment'
-import { extractScadBlock, extractIntent, stripIntentLine, parseParameters } from '../lib/params'
+import { bestProportionMatch } from '../lib/proportion'
+import { worstPiece, worstPieceDiscrepancy, type PieceScore } from '../lib/kitScore'
+import { runLiveVisionJudge, firstAbsentFeature, absentFeatureDiscrepancy } from '../lib/visionJudge'
+import { extractScadBlock, extractIntent, stripIntentLine, parseParameters, buildDefines } from '../lib/params'
 import { degenerateReason, detectKitIntent, notFlatOnBedReason } from '../lib/storeDecisions'
 import { recordUses, recordRemovals, saveSkillStats } from '../lib/skillStats'
 import { stlBBox, islandCount } from '../lib/stl'
@@ -94,6 +97,10 @@ const SHAPE_MATCH_BUDGET_MS = 4_000
 // pose masks vs the segmented reference photo), an image turn is judged visually off-target and an
 // auto-refine pass is armed. CPU rasterization only — never spends the openscad render budget.
 const REF_IOU_FLOOR = 0.55
+// OC-10 — proportion floor for the refine discrepancy note. Below this scale-shared proportion match
+// (aspect/fill/centroid vs the reference mask) the wrong-proportion note is appended. It NEVER arms a
+// refine on its own (the IoU floor gates that); it only adds specificity once IoU already wants refine.
+const PROPORTION_FLOOR = 0.7
 // Previous pass's measured reference-IoU per project — the loop only continues while a refine pass
 // is still RAISING IoU; a non-improving pass stops it (folded into proxyWantsRefine).
 const refinePrevIoU = new Map<string, number>()
@@ -120,6 +127,43 @@ export function takeRefineDiscrepancy(pid: string): string {
   const d = refineDiscrepancy.get(pid)
   if (d) refineDiscrepancy.delete(pid)
   return d ?? ''
+}
+
+// OC-12 — bounded compute for the per-piece kit scoring loop. CPU rasterization is cheap, but each
+// piece is a separate openscad compile; cap the renders + wall-clock so a many-piece kit can't stall
+// the post-render path. Past the budget, the remaining pieces simply go unmeasured (iou undefined →
+// excluded from worst-piece selection) and the loop degrades to the whole-render discrepancy.
+const KIT_PIECE_BUDGET = { wallMs: 30_000, maxRenders: 8 }
+
+/**
+ * OC-12 — render each `part` option (except 'all'), score its silhouette against the reference mask,
+ * and return the WORST piece below the floor (or null when none / unmeasured). CPU rasterization only;
+ * each piece compiles once at Draft through the BACKGROUND worker under a bounded budget. Pure of the
+ * store except for the compile + the qualityArgsFor helper. Returns null on any miss → no-op.
+ */
+async function scoreKitPieces(
+  code: string,
+  refMask: Uint8Array,
+  h: GenerationHelpers,
+): Promise<{ piece: string; iou: number } | null> {
+  const params = parseParameters(code)
+  const partParam = params.find((p) => p.name === 'part' && p.kind === 'enum')
+  if (!partParam?.options) return null
+  const pieces = partParam.options.map(String).filter((o) => o !== 'all')
+  if (!pieces.length) return null
+  const budget = new ComputeBudget(KIT_PIECE_BUDGET)
+  const scores: PieceScore[] = []
+  for (const piece of pieces) {
+    if (!budget.canSpend()) {
+      scores.push({ piece, iou: undefined }) // budget spent — unmeasured, excluded from selection
+      continue
+    }
+    const defines = buildDefines(params, { part: piece })
+    const r = await openscad.compile(code, [...h.qualityArgsFor(QUALITY_PRESETS[0]), ...defines], 30_000, { background: true })
+    budget.spend()
+    scores.push({ piece, iou: r.ok && r.stl ? bestRefIoU(renderMasks(r.stl), refMask) : undefined })
+  }
+  return worstPiece(scores, REF_IOU_FLOOR)
 }
 
 export function createGenerationActions(
@@ -201,6 +245,7 @@ export function createGenerationActions(
       let dimMismatches = 0
       let fillRatio: number | undefined
       let shapeMatch: number | undefined
+      let proportionMatch: number | undefined
       if (budget.canSpend()) {
         compileAttempted = true
         // compile with the SAME root-scope quality defines the real render uses (Draft here — fast
@@ -222,11 +267,15 @@ export function createGenerationActions(
           // the openscad render budget (same as fillRatio). The 32-comparison bestRefIoU is bounded by
           // a coarse wall-time guard so a pathological mesh can't stall selection.
           if (ctx.refMask && Date.now() - shapeLoopStart < SHAPE_MATCH_BUDGET_MS) {
-            shapeMatch = bestRefIoU(renderMasks(r.stl), ctx.refMask)
+            const masks = renderMasks(r.stl)
+            shapeMatch = bestRefIoU(masks, ctx.refMask)
+            // OC-10 — proportion match at one SHARED scale (the scale-blind IoU above can't see it).
+            // Same already-computed pose masks → no extra render budget; tiebreak below shapeMatch.
+            proportionMatch = bestProportionMatch(masks, ctx.refMask)
           }
         }
       }
-      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches, fillRatio, shapeMatch })
+      signals.push({ hasScad: true, compileAttempted, compiled, degenerate, structuralIssues: structuralReport(code, params).issues.length, dimMismatches, fillRatio, shapeMatch, proportionMatch })
     }
     const best = pickBestIndex(signals.map(scoreCandidate))
     h.writeSession(pid, { streamText: '' })
@@ -610,17 +659,60 @@ export function createGenerationActions(
             const refMask = getRefMask(aid)
             const adoptedStl = h.genSession(pid).stl
             if (refMask && adoptedStl) {
-              const refIoU = bestRefIoU(renderMasks(adoptedStl), refMask)
+              const adoptedMasks = renderMasks(adoptedStl)
+              const refIoU = bestRefIoU(adoptedMasks, refMask)
               iouWantsRefine = iouRefineDecision(refIoU, refinePrevIoU.get(aid), REF_IOU_FLOOR)
               refinePrevIoU.set(aid, refIoU)
               if (refIoU < REF_IOU_FLOOR) {
+                // OC-10 — measure PROPORTION (scale-shared aspect/fill/centroid) separately from the
+                // scale-blind IoU, so a low proportion match adds a SPECIFIC "wrong proportions" note
+                // the silhouette overlap alone can't justify. Same pose masks → no extra render budget.
+                const prop = bestProportionMatch(adoptedMasks, refMask)
+                const propNote =
+                  prop < PROPORTION_FLOOR
+                    ? `The PROPORTIONS are also off (aspect / fill / mass distribution match only ${(prop * 100).toFixed(0)}% at a shared scale): correct the overall width-to-height ratio and where the bulk of the form sits to match the reference. `
+                    : ''
                 refineDiscrepancy.set(
                   aid,
-                  `VISUAL MATCH CHECK — an independent silhouette comparison of the current render against your reference photo scores only ${(refIoU * 100).toFixed(0)}% overlap (a faithful match is well above ${(REF_IOU_FLOOR * 100).toFixed(0)}%). The rendered OUTLINE and PROPORTIONS do not yet match the reference; fix the overall shape, proportions, and any missing/misplaced prominent feature to match the photo. `,
+                  `VISUAL MATCH CHECK — an independent silhouette comparison of the current render against your reference photo scores only ${(refIoU * 100).toFixed(0)}% overlap (a faithful match is well above ${(REF_IOU_FLOOR * 100).toFixed(0)}%). The rendered OUTLINE and PROPORTIONS do not yet match the reference; fix the overall shape, proportions, and any missing/misplaced prominent feature to match the photo. ${propNote}`,
                 )
               } else {
                 refineDiscrepancy.delete(aid)
               }
+              // OC-12 — per-piece reference-IoU for KITS. The whole-render IoU above averages a single
+              // wrong piece away; here we render each `part` option, score it against the reference, and
+              // if the WORST piece is below the floor, OVERRIDE the discrepancy with a piece-SPECIFIC
+              // one so the next refine fixes that piece by name. Gated on isMultiPartNow, so the
+              // single-part path (OC-2) above is byte-identical when not a kit. CPU rasterization only.
+              if (isMultiPartNow) {
+                const worst = await scoreKitPieces(code, refMask, h)
+                if (worst) refineDiscrepancy.set(aid, worstPieceDiscrepancy(worst.piece, worst.iou, REF_IOU_FLOOR))
+              }
+            }
+          }
+          // OC-6 — live ADVISORY vision-judge. When opted in (off by default) on a vision-capable
+          // engine for an image turn, capture the rendered poses and run a feature-fidelity check; if a
+          // NAMED feature is judged ABSENT, arm a bounded refine citing it via the SAME discrepancy +
+          // pendingAutoRefineFor seam (no ChatPanel edit). Never blocks export / the green verdict. Only
+          // for the ACTIVE project (the viewport canvas it captures reflects only the active model). Off
+          // → never called → the live path is byte-identical to today.
+          let visionWantsRefine = false
+          if (
+            useUi.getState().visionJudge &&
+            provider?.vision &&
+            !!triggerImages?.length &&
+            pid === get().activeId
+          ) {
+            const userText = [...h.activeChatFor(pid)].reverse().find((m) => m.role === 'user')?.text ?? nameSource.text
+            const refImg = refPhoto ? { data: refPhoto.data, mediaType: refPhoto.mediaType } : null
+            const verdict = await runLiveVisionJudge({ prompt: userText, code, referenceImage: refImg })
+            // meter the advisory VLM call like a generation call (cost discipline — OC-6 acceptance)
+            if (verdict) h.writeSession(pid, (cur) => ({ genCalls: cur.genCalls + 1 }))
+            const absent = firstAbsentFeature(verdict)
+            if (absent) {
+              visionWantsRefine = true
+              // append to any IoU/proportion/piece discrepancy already queued (don't clobber it)
+              refineDiscrepancy.set(aid, (refineDiscrepancy.get(aid) ?? '') + absentFeatureDiscrepancy(absent))
             }
           }
           // When we HAVE an IoU signal (image turn), it gates the loop unchanged: refine only while
@@ -628,10 +720,14 @@ export function createGenerationActions(
           // NO IoU signal (text turn, no photo, or mask not ready) the gate is DEFECT-JUSTIFIED only
           // (OC-4): a measured island/dim defect arms a pass, and `converged` only ever STOPS it — a
           // part that is merely still reshaping with no defect fires ZERO passes.
+          // OC-6 — an ABSENT named feature (advisory vision-judge) is a hard, specific defect: it arms
+          // a refine regardless of the IoU/convergence gate (it can fire even when the silhouette
+          // overlap is fine). visionWantsRefine is always false when the judge is off → no-op.
           const proxyWantsRefine =
-            iouWantsRefine !== undefined
+            visionWantsRefine ||
+            (iouWantsRefine !== undefined
               ? iouWantsRefine || dimMismatch
-              : textRefineDecision(hasIslandDefect, dimMismatch) && !converged
+              : textRefineDecision(hasIslandDefect, dimMismatch) && !converged)
           if (curGeom) refinePrevGeom.set(aid, curGeom)
           // LAT-2 — interactive auto-refine defaults to ONE pass. A 2nd auto pass is only armed when
           // the oracle is positively still improving (iouWantsRefine === true); otherwise the chain

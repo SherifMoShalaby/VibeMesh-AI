@@ -37,6 +37,12 @@ interface UiState {
    *  scores best on reference-free signals. OFF by default — it costs N× generations + compiles. */
   bestOfN: boolean
   setBestOfN: (v: boolean) => void
+  /** OC-6 — live vision judge: after an image-grounded model renders, run an ADVISORY VLM
+   *  feature-fidelity check (render→/api/vision-judge) and, if a named feature is judged absent, arm
+   *  a targeted refine citing it. OFF by default — it costs an extra VLM call per qualifying turn and
+   *  needs a vision-capable engine. Never blocks export / the green verdict (advisory only). */
+  visionJudge: boolean
+  setVisionJudge: (v: boolean) => void
 
   /* ── viewport display preferences ── */
   shading: Shading
@@ -114,6 +120,11 @@ export const useUi = create<UiState>((set) => ({
   setBestOfN: (bestOfN) => {
     localStorage.setItem('vibemesh.bestOfN.v1', bestOfN ? '1' : '0')
     set({ bestOfN })
+  },
+  visionJudge: localStorage.getItem('vibemesh.visionJudge.v1') === '1',
+  setVisionJudge: (visionJudge) => {
+    localStorage.setItem('vibemesh.visionJudge.v1', visionJudge ? '1' : '0')
+    set({ visionJudge })
   },
 
   shading: 'solid',
