@@ -322,11 +322,12 @@ function main() {
   const allowSingle = argv.includes('--allow-single-sample') || process.env.BENCH_MIN_SAMPLES === '1'
   const minFlagIdx = argv.indexOf('--min-samples')
   const minSamples = allowSingle ? 1 : minFlagIdx >= 0 ? Math.max(1, Number(argv[minFlagIdx + 1]) || 2) : Math.max(1, Number(process.env.BENCH_MIN_SAMPLES) || 2)
-  // engines whose regressions are reported but never fail the gate. claude-code is the
-  // personal-use-only login (cannot ship) AND the engine most likely to drop its CLI token,
-  // so it is advisory by default; the shippable anthropic/kimi baseline is authoritative.
+  // engines whose regressions are reported but never fail the gate. Claude is now the
+  // authoritative engine (kimi dropped) — nothing is advisory by default, so the Claude run
+  // (claude-code locally, the anthropic API for a shippable build) GATES. Set
+  // BENCH_ADVISORY_ENGINES to re-mark an engine advisory (e.g. a flaky local login).
   const advisoryEngines = new Set(
-    (process.env.BENCH_ADVISORY_ENGINES ?? 'claude-code').split(',').map((s) => s.trim()).filter(Boolean),
+    (process.env.BENCH_ADVISORY_ENGINES ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   )
 
   const baseline = readJson(BASELINE_PATH, 'baseline') // already-normalized metric rows
