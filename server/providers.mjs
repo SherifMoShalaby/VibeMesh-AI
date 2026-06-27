@@ -252,7 +252,15 @@ function healthKey(engine) {
 export function degradeReason(error) {
   if (!error) return null
   if (error.name === 'AbortError') return null
-  const status = typeof error.status === 'number' ? error.status : null
+  // The generate path's adapters wrap upstream failures into a UserFacingError with NO numeric
+  // .status — the HTTP status survives only as a trailing `(NNN)` in the message (translateAnthropicError
+  // for anthropic/kimi, the `error (status)` throw for openai/local). Recover it the same way
+  // testFailureToError does for the Test button, so a failed *generation* also demotes (SEC-4).
+  const textStatus = (() => {
+    const m = String(error.message ?? '').match(/\((\d{3})\)/)
+    return m ? Number(m[1]) : null
+  })()
+  const status = typeof error.status === 'number' ? error.status : textStatus
   const isAuth = (typeof Anthropic !== 'undefined' && error instanceof Anthropic.AuthenticationError) || status === 401 || status === 403 || /invalid.{0,12}key/i.test(error.message || '')
   const isQuota = (typeof Anthropic !== 'undefined' && error instanceof Anthropic.RateLimitError) || status === 429
   const isBilling = status === 402
