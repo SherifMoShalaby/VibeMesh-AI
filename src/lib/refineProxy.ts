@@ -142,6 +142,19 @@ export function iouRefineDecision(
 }
 
 /**
+ * OC-4 — TEXT-turn refine decision. A text turn (no reference photo, so no silhouette-IoU) must NOT
+ * burn a blind self-grading pass: with no external oracle, re-asking the model to critique itself
+ * regresses (Huang et al. ICLR'24). So a text refine pass is armed ONLY when a REFERENCE-FREE defect
+ * was MEASURED — a broken-connectivity island defect (OC-1) or a dimension-vs-stated mismatch.
+ * Crucially, self-relative "still reshaping" is NOT a START condition here (it remains a STOP-only
+ * signal in the loop): a part that merely hasn't settled, with no measured defect, fires ZERO passes.
+ * Pure + deterministic.
+ */
+export function textRefineDecision(hasDefect: boolean, dimMismatch: boolean): boolean {
+  return hasDefect || dimMismatch
+}
+
+/**
  * ADVISORY self-relative solidity note for the refine prompt. fillRatio = mesh volume / bbox volume;
  * a vanishingly low ratio means the part fills very little of its own envelope — usually an
  * unintended thin shell / hollow body that read as the right SIZE but not the right MASS. It

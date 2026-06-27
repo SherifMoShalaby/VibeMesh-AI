@@ -3,7 +3,7 @@ import type { VibeState, Session } from './store'
 import type { ChatMessage, ScadParameter, ParamValues, CompileResult, Project } from '../types'
 import { resolveBed, QUALITY_PRESETS } from '../types'
 import { streamGenerate, toApiMessages, historyBudgetTokens, imageBudgetFor, estGenTokens, type SkillIssue } from '../lib/api'
-import { clampStatedDimensions, dimDiscrepancies, geometryConverged, iouRefineDecision } from '../lib/refineProxy'
+import { clampStatedDimensions, dimDiscrepancies, geometryConverged, iouRefineDecision, textRefineDecision } from '../lib/refineProxy'
 import { buildAutoFixPrompt, structuralReport } from '../lib/compileReport'
 import { hasDebugContract, interferenceIssue } from '../lib/interferenceProxy'
 import { ComputeBudget } from '../lib/openscad/budget'
@@ -11,7 +11,7 @@ import { scoreCandidate, pickBestIndex, BEST_OF_N_COUNT, type CandidateSignals }
 import { renderMasks } from '../lib/silhouette'
 import { bestRefIoU, ensureRefMask, getRefMask } from '../lib/refSegment'
 import { extractScadBlock, extractIntent, stripIntentLine, parseParameters } from '../lib/params'
-import { degenerateReason, detectKitIntent } from '../lib/storeDecisions'
+import { degenerateReason, detectKitIntent, notFlatOnBedReason } from '../lib/storeDecisions'
 import { recordUses, recordRemovals, saveSkillStats } from '../lib/skillStats'
 import { stlBBox, islandCount } from '../lib/stl'
 import { openscad } from '../lib/openscad/client'
@@ -79,6 +79,12 @@ const turnBudgetExceeded = (pid: string): boolean => {
 // less than this share of the mesh volume (i.e. the secondary island(s) together hold >5%). This
 // ignores negligible specks/artefacts from a boolean op while catching a genuinely detached feature.
 const ISLAND_SECONDARY_FLOOR = 0.95
+// LAT-5 — wall-clock window for the best-of-N GENERATION fan-out. The N parallel candidate streams
+// no longer block on the slowest: once the first candidate(s) return, the rest are given up to this
+// long, then selection proceeds on whatever returned. A candidate still in flight past the window is
+// scored as ENVIRONMENTAL-unknown (not a non-compile) — same benefit-of-the-doubt as a budget-starved
+// compile — so the slowest xhigh call can never gate the whole turn. A user Stop still aborts all.
+const BEST_OF_N_WINDOW_MS = 45_000
 // Coarse wall-time guard on the reference-shape-match loop (renderMasks + 32 maskIoU passes per
 // candidate over 256×256 masks). Generous — best-of-N is N≤3 small meshes — but caps a pathological
 // high-triangle mesh from stalling selection between the compile loop and pickBestIndex. Past the
@@ -138,21 +144,50 @@ export function createGenerationActions(
     const stopReasons: (string | undefined)[] = Array.from({ length: n }, () => undefined)
     let done = 0
     h.writeSession(pid, { streamText: `Generating ${n} candidates, keeping the best…` })
-    const fulls = await Promise.all(
-      Array.from({ length: n }, (_, i) =>
-        streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info }, onDone: (info) => { stopReasons[i] = info.stopReason } })
-          // each candidate is a full paid call — meter it (a best-of-N turn shows N, not 1)
-          .then((text) => { h.writeSession(pid, (cur) => ({ streamText: `Generated ${++done}/${n} candidates…`, genCalls: cur.genCalls + 1, genTokens: cur.genTokens + estGenTokens(text) })); return text })
-          // A user Stop aborts every candidate's shared signal — let AbortError propagate (rejecting
-          // Promise.all) so runGeneration's catch handles it as a Stop, instead of swallowing it to
-          // '' which reads as a contract violation and silently restarts the whole generation.
-          .catch((e) => { if (e instanceof DOMException && e.name === 'AbortError') throw e; return '' }),
-      ),
+    // LAT-5 — outcome per candidate. 'returned' carries the text to score; 'transport' is an
+    // environmental miss (rate-limit/5xx/timeout, swallowed below) and 'pending' is a candidate still
+    // in flight past the window. Neither transport nor pending is scored as a non-compile — both get
+    // the budget-starved "unknown" treatment in scoreCandidate (above a confirmed fail, below a clean
+    // compile), so the slowest candidate never gates the turn and SHE-94 holds.
+    type Outcome = { kind: 'returned'; text: string } | { kind: 'transport' } | { kind: 'pending' }
+    const outcomes: Outcome[] = Array.from({ length: n }, () => ({ kind: 'pending' }))
+    // A shared promise that rejects on a user Stop, so AbortError still wins the race below and
+    // propagates (rejecting the await) exactly as the prior Promise.all did — a Stop aborts all.
+    let abortReject: (e: unknown) => void = () => {}
+    const aborted = new Promise<never>((_, rej) => { abortReject = rej })
+    const calls = Array.from({ length: n }, (_, i) =>
+      streamGenerate(engine, messages, { ...baseOpts, onDelta: () => {}, onSkillReport: (info) => { reports[i] = info }, onDone: (info) => { stopReasons[i] = info.stopReason } })
+        // each candidate that RETURNS is a full paid call — meter only those (a windowed turn shows
+        // the calls actually scored, not a fixed N).
+        .then((text) => {
+          outcomes[i] = { kind: 'returned', text }
+          h.writeSession(pid, (cur) => ({ streamText: `Generated ${++done}/${n} candidates…`, genCalls: cur.genCalls + 1, genTokens: cur.genTokens + estGenTokens(text) }))
+        })
+        // A user Stop aborts every candidate's shared signal — surface AbortError on the shared
+        // `aborted` promise so runGeneration's catch handles it as a Stop, instead of swallowing it
+        // (which would read as a contract violation and silently restart the whole generation). A
+        // genuine transport error is recorded as an environmental miss, not a non-compile.
+        .catch((e) => { if (e instanceof DOMException && e.name === 'AbortError') { abortReject(e); return } outcomes[i] = { kind: 'transport' } }),
     )
+    // Window: don't block on the slowest. Resolve as soon as ALL candidates settle OR the wall-clock
+    // window elapses — whichever comes first — and score whatever returned by then. AbortError races
+    // ahead of both and rejects, so a Stop still tears the whole fan-out down.
+    const settled = Promise.allSettled(calls).then(() => {})
+    const window = new Promise<void>((res) => setTimeout(res, BEST_OF_N_WINDOW_MS))
+    await Promise.race([Promise.race([settled, window]), aborted])
+    const fulls = outcomes.map((o) => (o.kind === 'returned' ? o.text : ''))
     const budget = new ComputeBudget({ wallMs: 60_000, maxRenders: n + 2 })
     const shapeLoopStart = Date.now() // wall-clock anchor for the per-candidate shape-match guard
     const signals: CandidateSignals[] = []
-    for (const text of fulls) {
+    for (const outcome of outcomes) {
+      // LAT-5/SHE-94 — a candidate that didn't return within the window (pending) or hit a transport
+      // error is ENVIRONMENTAL: score it as budget-starved "unknown" (hasScad true, compileAttempted
+      // false) so it ranks above a confirmed fail but below a clean compile — never as a non-compile.
+      if (outcome.kind !== 'returned') {
+        signals.push({ hasScad: true, compileAttempted: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
+        continue
+      }
+      const text = outcome.text
       const { code, blockCount, selfCorrection } = extractScadBlock(text)
       if (code === null || (blockCount > 1 && !selfCorrection)) {
         signals.push({ hasScad: false, compileAttempted: false, compiled: false, degenerate: false, structuralIssues: 0, dimMismatches: 0 })
@@ -255,7 +290,15 @@ export function createGenerationActions(
       // A2 — verifier-guided best-of-N: only on the FIRST attempt of a hard request (kit or image),
       // only when the user opted in (off by default), never on local engines or auto-fix re-entries.
       // The winner feeds the SAME downstream below; OFF → the single-stream path is unchanged.
-      const useBestOfN = fixes.contract === 0 && fixes.geom === 0 && useUi.getState().bestOfN && !engine.startsWith('local:') && (isKit || latestImgs.length > 0)
+      // LAT-5 — a refine pass attaches view images (latestImgs>0), which would otherwise re-trigger
+      // the whole best-of-N fan-out on every refine. Exclude it explicitly so refine never re-fans-out.
+      const useBestOfN =
+        fixes.contract === 0 &&
+        fixes.geom === 0 &&
+        nameSource.action !== 'Refine pass' &&
+        useUi.getState().bestOfN &&
+        !engine.startsWith('local:') &&
+        (isKit || latestImgs.length > 0)
       let full: string
       let stopReason: string | undefined
       if (useBestOfN) {
@@ -440,6 +483,11 @@ export function createGenerationActions(
           const bed = resolveBed(get().bedId, get().customBed)
           const dims = sess.modelDims
           const degenerate = degenerateReason(dims, bed, !isMultiPart)
+          // OC-13 — flat-on-bed DESIGN flag for a single solid part. The deterministic drop below is
+          // only the export safety net (it transforms the mesh); this surfaces that the DESIGN itself
+          // doesn't rest flat (e.g. t2-soapdish minZ=-3). Exempt multi-part + the assembled `all` view
+          // (their pieces legitimately float / explode), matching the drop's own exemptions.
+          const flatOnBedNote = !isMultiPart && !isAssembledAllView ? notFlatOnBedReason(dims) : null
           // assembly/mechanism faults = cheap client structural checks PLUS the retrieved
           // skills' validators (server-side, received via skillReport). The advisory
           // skillNote already shows them; here they also drive a BOUNDED auto-fix (gated on
@@ -491,7 +539,10 @@ export function createGenerationActions(
             const drop1: { position: [number, number, number]; rotation: [number, number, number] } = { position: [0, 0, -dims.minZ], rotation: [0, 0, 0] }
             if (pid === get().activeId) get().setMeshTransform(drop1)
             else h.writeSession(pid, { meshTransform: drop1 })
-            h.writeSession(pid, { compileNote: `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.` })
+            // OC-13 — flag the DESIGN (not flat on bed) alongside the export safety-net drop, so a part
+            // authored floating/sunk is surfaced in the verdict, not silently transformed away.
+            const dropNote = `Part rendered ${dims.minZ < 0 ? 'below' : 'above'} the bed — dropped onto z=0 for export.`
+            h.writeSession(pid, { compileNote: flatOnBedNote ? `${flatOnBedNote}. ${dropNote}` : dropNote })
           } else if (isAssembledAllView && dims && Math.abs(dims.minZ) > 0.5) {
             // assembled kit preview sunk below / floating above the bed → drop onto z=0 so the all-view
             // reads as sitting on the plate and a single-STL export of it prints flat. A per-piece view
@@ -528,7 +579,20 @@ export function createGenerationActions(
           const stated = clampStatedDimensions(intent?.statedDimensions).dimensions
           const dimMismatch = stated.length > 0 && dimDiscrepancies(md, stated).length > 0
           const curGeom = md ? { volume: md.volume, triangles: md.triangles } : null
-          const stillReshaping = !geometryConverged(refinePrevGeom.get(aid), curGeom)
+          // STOP-only self-relative signal: once the geometry has settled, no further pass is armed.
+          // It is NEVER a START on its own (OC-4) — a part that's merely still reshaping, with no
+          // measured defect, fires ZERO refine passes.
+          const converged = geometryConverged(refinePrevGeom.get(aid), curGeom)
+          // OC-1 reference-free connectivity defect, recomputed here (the compile-branch `islands` is
+          // out of scope): a single-solid part rendered as ≥2 islands whose largest holds <floor of the
+          // mesh is a genuine broken-connectivity defect — a measured justification for a text refine.
+          const sessStl = h.genSession(pid).stl
+          const isMultiPartNow = h.genSession(pid).params.some((p) => p.name === 'part' && p.kind === 'enum')
+          let hasIslandDefect = false
+          if (!isMultiPartNow && sessStl) {
+            const isl = islandCount(sessStl)
+            hasIslandDefect = !!isl && isl.count >= 2 && isl.largestVolumeFraction < ISLAND_SECONDARY_FLOOR
+          }
           //  (c) REFERENCE-IoU (OC-2) — DEFAULT-ON for image turns: measure the ADOPTED render's
           //      silhouette against the user's segmented reference photo (CPU rasterization; no
           //      openscad budget). Below the floor → refine, citing the measured mismatch. A refine
@@ -559,10 +623,15 @@ export function createGenerationActions(
               }
             }
           }
-          // When we HAVE an IoU signal, it gates the loop: refine only while below the floor AND the
-          // last pass was still improving. When there is NO IoU signal (text turn, no photo, mask
-          // not ready), fall back to the prior reference-free gate.
-          const proxyWantsRefine = iouWantsRefine !== undefined ? iouWantsRefine || dimMismatch : dimMismatch || stillReshaping
+          // When we HAVE an IoU signal (image turn), it gates the loop unchanged: refine only while
+          // below the floor AND the last pass was still improving (dimMismatch can still pull it). With
+          // NO IoU signal (text turn, no photo, or mask not ready) the gate is DEFECT-JUSTIFIED only
+          // (OC-4): a measured island/dim defect arms a pass, and `converged` only ever STOPS it — a
+          // part that is merely still reshaping with no defect fires ZERO passes.
+          const proxyWantsRefine =
+            iouWantsRefine !== undefined
+              ? iouWantsRefine || dimMismatch
+              : textRefineDecision(hasIslandDefect, dimMismatch) && !converged
           if (curGeom) refinePrevGeom.set(aid, curGeom)
           // LAT-2 — interactive auto-refine defaults to ONE pass. A 2nd auto pass is only armed when
           // the oracle is positively still improving (iouWantsRefine === true); otherwise the chain
@@ -570,9 +639,14 @@ export function createGenerationActions(
           // the cumulative per-turn wall-clock budget is spent.
           const passes = autoRefinePass.get(aid) ?? 0
           const autoCap = iouWantsRefine === true ? MAX_AUTO_REFINE : DEFAULT_AUTO_REFINE
+          // OC-4 — text turns may now arm a BOUNDED refine pass too, but ONLY when a reference-free
+          // defect was measured (proxyWantsRefine, which for the no-IoU path is defect-justified).
+          // The image path still requires provider vision (its IoU/dim gate lives in proxyWantsRefine);
+          // the text path needs only a cloud engine. Both share the per-turn budget + cap below.
+          const isImageTurn = !!triggerImages?.length
+          const channelArmed = isImageTurn ? !!provider?.vision : true
           if (
-            triggerImages?.length &&
-            provider?.vision &&
+            channelArmed &&
             !!eng &&
             !eng.startsWith('local:') &&
             useUi.getState().autoRepair &&

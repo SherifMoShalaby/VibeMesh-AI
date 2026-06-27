@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote, iouRefineDecision } from './refineProxy'
+import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote, iouRefineDecision, textRefineDecision } from './refineProxy'
 import type { StlBBox } from './stl'
 
 const bbox = (x: number, y: number, z: number): StlBBox => ({ x, y, z, minZ: 0, volume: 0, triangles: 0 })
@@ -159,6 +159,31 @@ describe('iouRefineDecision — reference-IoU refine gate (OC-2)', () => {
   it('respects custom floor / minGain', () => {
     expect(iouRefineDecision(0.6, undefined, 0.7)).toBe(true) // below the raised floor
     expect(iouRefineDecision(0.45, 0.4, 0.55, 0.1)).toBe(false) // 0.05 gain < 0.1 minGain → stop
+  })
+})
+
+describe('textRefineDecision — defect-justified text refine gate (OC-4)', () => {
+  it('fires ZERO passes with no measured defect (no island, no dim mismatch)', () => {
+    // the key acceptance: a text turn with no stated dims and no defect never arms a blind pass
+    expect(textRefineDecision(false, false)).toBe(false)
+  })
+
+  it('arms a pass on a measured island (connectivity) defect', () => {
+    expect(textRefineDecision(true, false)).toBe(true)
+  })
+
+  it('arms a pass on a dimension-vs-stated mismatch', () => {
+    expect(textRefineDecision(false, true)).toBe(true)
+  })
+
+  it('arms a pass when both defects are present', () => {
+    expect(textRefineDecision(true, true)).toBe(true)
+  })
+
+  it('never depends on self-relative reshaping — only a measured defect can START it', () => {
+    // there is no "still reshaping" parameter: the only inputs are MEASURED defects, so geometry
+    // that is merely unsettled (but has no defect) cannot arm a pass.
+    expect(textRefineDecision(false, false)).toBe(false)
   })
 })
 

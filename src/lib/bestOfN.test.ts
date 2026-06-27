@@ -47,6 +47,18 @@ describe('scoreCandidate — reference-free priority', () => {
     expect(notAttempted).toBeGreaterThan(degenerate) // and beats a known-bad render
     expect(notAttempted).toBeLessThan(clean) // but a confirmed clean compile is still preferred
   })
+
+  it('LAT-5/SHE-94: a windowed-out / transport candidate uses the env-miss bucket (not a non-compile)', () => {
+    // runBestOfN scores a candidate that didn't return in the window, OR hit a transport error, as
+    // {hasScad:true, compileAttempted:false} — an environmental UNKNOWN. It must rank above a candidate
+    // that returned a real reply with no usable program (a genuine non-compile / no-scad), so the
+    // slowest candidate is never mistaken for a fault and a transport blip never demotes a real miss.
+    const windowedOrTransport = scoreCandidate(sig({ hasScad: true, compileAttempted: false, compiled: false }))
+    const returnedNoScad = scoreCandidate(sig({ hasScad: false, compileAttempted: false, compiled: false }))
+    const confirmedNonCompile = scoreCandidate(sig({ hasScad: true, compileAttempted: true, compiled: false }))
+    expect(windowedOrTransport).toBeGreaterThan(returnedNoScad)
+    expect(windowedOrTransport).toBeGreaterThan(confirmedNonCompile)
+  })
 })
 
 describe('scoreCandidate — hollow fill-ratio tiebreak (below every harder signal)', () => {
