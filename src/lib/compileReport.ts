@@ -19,7 +19,13 @@ export function buildAutoFixPrompt(compileError: string): string {
   const timeoutHint = /timed out/i.test(compileError)
     ? '\n\nNote: the model was too heavy to render in time. Reduce the heaviest constructs (any minkowski(), very large hull/boolean counts) while keeping the overall design.'
     : ''
-  return `The OpenSCAD code failed to render. Fix it and return the corrected complete program.\n\nError:\n${compileError}${manifoldHint}${minkowskiHint}${timeoutHint}`
+  // A figurative trace that won't compile (a leftover geometry-to-variable assignment, a
+  // garbled/self-intersecting polygon, a broken extrude) should NOT be patched in place —
+  // steer it to the stylized-relief floor, which always compiles. (OC-8)
+  const figurativeHint = /parser error|syntax error|assignment|polygon|linear_extrude|rotate_extrude|self-intersect|not (a |an )?(geometr|object)|expected/i.test(compileError)
+    ? '\n\nNote: if this is a figurative subject (a chess piece, animal, or figure) and the trace will not compile, do NOT keep patching the broken geometry — fall back to the stylized-relief floor: a single linear_extrude of a clean silhouette polygon raised on a flat base, with eye/panel-line recesses differenced in. A compiling relief beats a non-compiling sculpt. Remove any leftover/invalid code (e.g. assigning geometry to a variable).'
+    : ''
+  return `The OpenSCAD code failed to render. Fix it and return the corrected complete program.\n\nError:\n${compileError}${manifoldHint}${minkowskiHint}${timeoutHint}${figurativeHint}`
 }
 
 const MALE_RE = /(stud|peg|pin|dowel|tenon|tongue|boss|lug|male|shaft|axle)/i
@@ -73,6 +79,54 @@ export function structuralReport(code: string, params: ScadParameter[]): { issue
   // render its pieces flung apart in the all-view instead of mated on a shared datum.
   if (partParam && (partParam.options?.length ?? 0) >= 3 && !/\bexplode\b/.test(code)) {
     issues.push('Pieces may render scattered in the all-view — mate them on a shared datum and expose an `explode` knob defaulting to 0 (assembled).')
+  }
+
+  // OC-5 — dead-module / phantom-param static check. The model ships unreferenced modules
+  // (t7-knight's never-called `module head()` carrying invalid leftover code) and phantom params
+  // (a declared `divider` bool that shifts an offset but builds no wall). Catch both statically so
+  // they feed the advisory skillNote + the bounded auto-fix.
+  const stripped = code.split('\n').map((l) => l.replace(/\/\/.*$/, '')) // drop line comments; keep code
+  const codeNoComments = stripped.join('\n')
+
+  // Dead module: a `module NAME(` whose name is never CALLED anywhere (only its own declaration).
+  // A module called by another module is genuinely used, so we count call sites across the WHOLE
+  // program, not just below the module region — that never false-positives a called helper.
+  const moduleDecl = /\bmodule\s+([A-Za-z_]\w*)\s*\(/g
+  let md: RegExpExecArray | null
+  const seen = new Set<string>()
+  while ((md = moduleDecl.exec(codeNoComments))) {
+    const name = md[1]
+    if (seen.has(name)) continue
+    seen.add(name)
+    // total `name(` occurrences minus the `module name(` declarations = real call sites. A module
+    // called only from inside another module still counts (so a genuine helper is never flagged).
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const total = (codeNoComments.match(new RegExp(`\\b${esc}\\s*\\(`, 'g')) || []).length
+    const decls = (codeNoComments.match(new RegExp(`\\bmodule\\s+${esc}\\s*\\(`, 'g')) || []).length
+    if (total - decls === 0)
+      issues.push(
+        `Module \`${name}()\` is declared but never called — remove it or call it. An unreferenced module (often carrying leftover/invalid code) ships dead weight and can hide a compile error.`,
+      )
+  }
+
+  // Phantom param: a declared Customizer parameter referenced NOWHERE except its own assignment.
+  // A param consumed only by a derived value (which then drives geometry) still counts as used, so
+  // we look for any reference beyond the single `name = ...;` declaration line — never a brittle
+  // "below the module region" boundary. Exempt `_`-prefixed hidden probe knobs, `$`-vars, and `part`
+  // (the multi-part dispatch consumes it). Use the parsed params for the authoritative name list.
+  for (const p of params) {
+    if (p.name.startsWith('_') || p.name.startsWith('$') || p.name === 'part') continue
+    const esc = p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const refRe = new RegExp(`\\b${esc}\\b`, 'g')
+    const declRe = new RegExp(`^\\s*${esc}\\s*=`)
+    let refs = 0
+    for (const l of stripped) refs += (l.match(refRe) || []).length
+    // subtract the lone occurrence on its own assignment line (LHS)
+    const isDecl = stripped.some((l) => declRe.test(l))
+    if (refs - (isDecl ? 1 : 0) <= 0)
+      issues.push(
+        `Parameter \`${p.name}\` is declared but never used — every declared parameter must affect the geometry (or be removed).`,
+      )
   }
 
   // No global $fn: the quality presets (Draft/Standard/Fine/Ultra) own curve resolution via
