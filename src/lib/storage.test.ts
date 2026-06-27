@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { migrateRecord, slimProjects, reconcileRecord, SCHEMA_VERSION, setOnPersistDegraded } from './storage'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { migrateRecord, slimProjects, reconcileRecord, SCHEMA_VERSION, setOnPersistDegraded, saveProjects } from './storage'
 import type { Project } from '../types'
 
 const proj = (over: Partial<Project> = {}): Project => ({
@@ -112,33 +112,45 @@ describe('reconcileRecord (boot recovery of a lost async write)', () => {
 })
 
 describe('persistDegraded callback (SEC-5)', () => {
-  // The persistDegraded flag and callback mechanism (storage.ts:209-213, :379-381)
-  // ensure that when a terminal localStorage write failure occurs, the user is
-  // notified via a visible toast/banner with an Export action.
-  // - callback registration (setOnPersistDegraded) mirrors setOnExternalChange
-  // - writeLocal guards the callback with `if (!persistDegraded)` so it fires only once
-  // - store.ts wires the callback to push an error toast with Export action (ui.ts)
-  // - e2e/integration testing verifies the full toast + Export path
-
-  it('allows registration of a callback via setOnPersistDegraded', () => {
-    const cb = vi.fn()
-    setOnPersistDegraded(cb)
-    expect(cb).not.toHaveBeenCalled()
+  // In the node test env localStorage is absent, so saveProjects() runs the
+  // localStorage-only branch (no IDB). We stub localStorage + fetch and drive a real
+  // save through writeLocal to exercise the terminal-failure path, not just registration.
+  // NOTE: persistDegraded is module-latched (fires once), so the success case MUST run
+  // before the failure case within this describe.
+  const realLS = (globalThis as { localStorage?: Storage }).localStorage
+  const realFetch = globalThis.fetch
+  const setLocalStorage = (setItem: () => void) => {
+    ;(globalThis as { localStorage?: unknown }).localStorage = { getItem: () => null, setItem, removeItem: () => {}, clear: () => {}, key: () => null, length: 0 }
+  }
+  afterEach(() => {
+    ;(globalThis as { localStorage?: unknown }).localStorage = realLS
+    globalThis.fetch = realFetch
     setOnPersistDegraded(null)
+    vi.restoreAllMocks()
   })
 
-  it('allows clearing the callback by passing null', () => {
+  it('does NOT fire the callback or log on a successful write', () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as unknown as typeof fetch
+    setLocalStorage(() => {}) // every write succeeds
     const cb = vi.fn()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     setOnPersistDegraded(cb)
-    setOnPersistDegraded(null)
+    saveProjects([proj()])
     expect(cb).not.toHaveBeenCalled()
+    expect(err).not.toHaveBeenCalled()
   })
 
-  it('does not fire the callback on a successful write', () => {
+  it('fires the callback once + logs console.error when all localStorage writes fail (terminal data loss)', () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as unknown as typeof fetch
+    setLocalStorage(() => { throw new Error('QuotaExceededError') }) // full + both slimmed retries fail
     const cb = vi.fn()
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     setOnPersistDegraded(cb)
-    // Successful writes return early (line 193 or 201 in storage.ts), never reaching the terminal-failure callback
-    expect(cb).not.toHaveBeenCalled()
-    setOnPersistDegraded(null)
+    saveProjects([proj()])
+    expect(cb).toHaveBeenCalledTimes(1)
+    expect(err).toHaveBeenCalled()
+    // latched: a second terminal failure must NOT re-fire the callback
+    saveProjects([proj()])
+    expect(cb).toHaveBeenCalledTimes(1)
   })
 })
