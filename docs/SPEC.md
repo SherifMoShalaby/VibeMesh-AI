@@ -265,10 +265,26 @@ Governed by two project skills: `.claude/skills/vibemesh-ui/SKILL.md` (all DOM/C
   routing is byte-identical). Co-requirement edges (`COREQUIRES`, e.g. wheel-axle→bearing-608-pocket)
   float a matched dependency in alongside its requirer so the cap can't split a pair. It stays
   **deterministic and zero-API** (no embedding/LLM call on the hot path) so `bench/retrieval.selftest`
-  still gates it. `selectSkillsDetailed` returns `{selected, dropped, scores}`; the cap's `dropped`
+  still gates it. `selectSkillsDetailed` returns `{selected, dropped, scores, prose}`; the cap's `dropped`
   set rides the SSE `done` event to the client so truncation is never silent. An **explicit** skillIds
   list (chip/router) is REPLACE but **deduped and bounded by `MAX_SKILLS`** (an unbounded list would
   balloon the prompt — acute once a router emits lists).
+- **Common-object FORM coverage (RET-1/RET-2).** Beyond mechanisms, the registry carries compile-verified
+  FORM exemplars for the everyday case — `divided-tray` (real cols×rows partition walls, not a phantom
+  flag), `drained-dish` (through-floor drains, flat on z=0), `vessel-handle`/`mug` (handle FUSED to the
+  wall via a `hull()` chain → one connected island, never a detached torus), `bracket` (L + gusset + mount
+  holes), `lettering` (stroke-composed glyphs, **never** `text()`), `bottle-opener` (a real undercut catch
+  lip, `mouth < cap_d`) — plus a prose-only `open-container` fallback. TRIGGERS route the everyday asks
+  (organizer→divided-tray, soap dish→drained-dish, mug→mug, bracket→bracket, nameplate→lettering); the
+  fallback fires when a **first-turn image** (or a housewares-shaped text prompt) matched nothing specific.
+- **Bodied-vs-prose gate (RET-3/RET-4).** The router's `prose` set marks skills emitted **prose-only**
+  (no bodied "follow this STRUCTURE" exemplar), so a bodied exemplar can't pull a request the wrong way:
+  a **decorative homograph** (`*-shaped`, cookie-cutter, `screw-top jar`, stamp, ornament) drops the
+  mechanism entirely; an **uncorroborated single mechanism hit** (score ≤ 2 — one prompt hit, no
+  tag/archetype/signature) gets prose guidance only; a **genuine** mechanism (e.g. "40mm 24T spur gear")
+  still earns its bodied exemplar. A **generic kit** gets prose-only separable-parts guidance — only an
+  explicit stud/brick/baseplate/LEGO/Duplo ask injects the bodied studded `KIT_EXEMPLAR` (saving ~1k+
+  tokens on every generic kit). The assembler passes `fragment(engine, { prose })` per selected skill.
 - **Applied-patterns chip = context/metadata, never a competing output block.** On each code-bearing
   message a chip renders `form · facetVerdict` + the skills that fired (`appliedSkillIds`, as human
   labels), with `archetype`/`ambiguity`/`assumptions` in the tooltip. Renders nothing when the message

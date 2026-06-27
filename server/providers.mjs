@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { SYSTEM_PROMPT, IMAGE_PROMPT } from './prompt.mjs'
-import { SKILLS, selectSkills, selectSkillsDetailed, composePlan } from './skills.mjs'
+import { SKILLS, selectSkillsDetailed, composePlan } from './skills.mjs'
 import { billOfMaterials } from './hardware.mjs'
 import { getConnection, listConnections, catalogEntry, validateFetchUrl } from './connections.mjs'
 
@@ -625,8 +625,11 @@ export function contextText(context, engine) {
   }
   // append each selected skill's fragment; the skill decides per-engine budget rules
   // (e.g. the kit skill drops its heavy exemplar on tiny-context local models).
-  const sel = selectSkills(context)
-  for (const id of sel) out += SKILLS[id].fragment(engine)
+  // RET-3/RET-4: a skill in `prose` is emitted PROSE-ONLY (no bodied exemplar) — a decorative
+  // homograph, an uncorroborated single mechanism hit, or a generic (non-studded) kit.
+  const { selected: sel, prose } = selectSkillsDetailed(context)
+  const proseOnly = new Set(prose ?? [])
+  for (const id of sel) out += SKILLS[id].fragment(engine, { prose: proseOnly.has(id) })
   // real-hardware dims (catalog) for any token in THIS prompt — independent of skill
   // selection, so "fits the M3/608 you already own" holds even when no skill fires.
   out += hardwareDirective(context)
