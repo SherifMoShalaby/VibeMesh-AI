@@ -75,6 +75,17 @@ export function Toaster() {
       {toasts.map((t) => (
         <div key={t.id} className={`toast ${t.level}`}>
           <span className="toast-msg">{t.message}</span>
+          {t.action && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                t.action!.onClick()
+                dismiss(t.id)
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
           <button className="toast-x" aria-label="Dismiss" onClick={() => dismiss(t.id)}>
             <IconX />
           </button>

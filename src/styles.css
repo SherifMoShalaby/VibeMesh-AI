@@ -1708,6 +1708,14 @@ select:focus-visible,
 .toast.error { border-color: color-mix(in srgb, var(--err) 55%, var(--line-strong)); }
 .toast.error .toast-msg { color: var(--text); }
 .toast-msg { min-width: 0; flex: 1; }
+.toast-action {
+  flex-shrink: 0; border: 0; background: transparent; color: var(--accent); cursor: pointer;
+  font-size: var(--fs-small); padding: 4px 8px; border-radius: var(--r-xs);
+  transition: color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
+}
+.toast-action:hover { color: color-mix(in srgb, var(--accent) 80%, var(--text)); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.toast-action:focus-visible { outline: var(--ring); }
+.toast-action:active:not(:disabled) { transform: scale(0.98); }
 .toast-x {
   flex-shrink: 0; border: 0; background: transparent; color: var(--text-faint); cursor: pointer;
   display: grid; place-items: center; padding: 1px; border-radius: var(--r-xs);

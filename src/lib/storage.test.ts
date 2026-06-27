@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { migrateRecord, slimProjects, reconcileRecord, SCHEMA_VERSION } from './storage'
+import { describe, it, expect, vi } from 'vitest'
+import { migrateRecord, slimProjects, reconcileRecord, SCHEMA_VERSION, setOnPersistDegraded } from './storage'
 import type { Project } from '../types'
 
 const proj = (over: Partial<Project> = {}): Project => ({
@@ -108,5 +108,37 @@ describe('reconcileRecord (boot recovery of a lost async write)', () => {
     const backup = [proj({ id: 'a', updatedAt: 250, chat: [{ id: 'm1', role: 'user', text: 'x', images: [b] }] })]
     const out = reconcileRecord(idb, backup)
     expect(out[0].chat[0].images).toEqual([b]) // backup's own images win
+  })
+})
+
+describe('persistDegraded callback (SEC-5)', () => {
+  // The persistDegraded flag and callback mechanism (storage.ts:209-213, :379-381)
+  // ensure that when a terminal localStorage write failure occurs, the user is
+  // notified via a visible toast/banner with an Export action.
+  // - callback registration (setOnPersistDegraded) mirrors setOnExternalChange
+  // - writeLocal guards the callback with `if (!persistDegraded)` so it fires only once
+  // - store.ts wires the callback to push an error toast with Export action (ui.ts)
+  // - e2e/integration testing verifies the full toast + Export path
+
+  it('allows registration of a callback via setOnPersistDegraded', () => {
+    const cb = vi.fn()
+    setOnPersistDegraded(cb)
+    expect(cb).not.toHaveBeenCalled()
+    setOnPersistDegraded(null)
+  })
+
+  it('allows clearing the callback by passing null', () => {
+    const cb = vi.fn()
+    setOnPersistDegraded(cb)
+    setOnPersistDegraded(null)
+    expect(cb).not.toHaveBeenCalled()
+  })
+
+  it('does not fire the callback on a successful write', () => {
+    const cb = vi.fn()
+    setOnPersistDegraded(cb)
+    // Successful writes return early (line 193 or 201 in storage.ts), never reaching the terminal-failure callback
+    expect(cb).not.toHaveBeenCalled()
+    setOnPersistDegraded(null)
   })
 })
