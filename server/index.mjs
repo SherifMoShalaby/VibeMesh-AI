@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { applyRuntimeSetting, providerStatus, streamChat, testEngine, discoverModels, SYSTEM_PROMPT_TOKENS, GEN_TIMEOUT_MS, GEN_MAX_RETRIES, UserFacingError, extractScadBlock, reviewWithSkills } from './providers.mjs'
 import { CATALOG, saveConnection, removeConnection, validateFetchUrl, ConnectionError } from './connections.mjs'
 import { SCREWS, BEARINGS } from './hardware.mjs'
-import { requireAuth } from './authMiddleware.mjs'
+import { requireAuth, enforceAuthWhenConfigured, requireOwner } from './authMiddleware.mjs'
 import { supabase as dbClient, dbGetProjects, dbUpsertProject, dbDeleteProject } from './db.mjs'
 import { rateLimit } from './rateLimit.mjs'
 
@@ -49,7 +49,7 @@ app.get('/api/hardware', (_req, res) => {
 })
 
 /** Save a connection setting (API key / base URL) — applied live, persisted to .env. */
-app.post('/api/connect', jsonSmall, async (req, res) => {
+app.post('/api/connect', enforceAuthWhenConfigured, requireOwner, jsonSmall, async (req, res) => {
   const { key, value } = req.body ?? {}
   try {
     applyRuntimeSetting(key, value)
@@ -68,7 +68,7 @@ app.get('/api/catalog', (_req, res) => {
 /** Add or update a marketplace connection: non-secret metadata + (optionally) its API key. The key
  *  is written to .env (CONN_<id>_KEY) by the same guarded writer the built-ins use; metadata lives
  *  in the connections store. Returns the refreshed provider list. */
-app.post('/api/connections', jsonSmall, async (req, res) => {
+app.post('/api/connections', enforceAuthWhenConfigured, requireOwner, jsonSmall, async (req, res) => {
   const body = req.body ?? {}
   try {
     const record = saveConnection(body)
@@ -82,7 +82,7 @@ app.post('/api/connections', jsonSmall, async (req, res) => {
 
 /** Live model discovery for the add-form: query the provider's models endpoint with the supplied
  *  key (used immediately, never stored). The base URL must be http(s) (SSRF guard). */
-app.post('/api/discover-models', jsonSmall, async (req, res) => {
+app.post('/api/discover-models', enforceAuthWhenConfigured, requireOwner, jsonSmall, async (req, res) => {
   const { protocol, baseUrl, secret } = req.body ?? {}
   try {
     validateFetchUrl(baseUrl)
@@ -95,7 +95,7 @@ app.post('/api/discover-models', jsonSmall, async (req, res) => {
 })
 
 /** Remove a marketplace connection (its metadata + the .env key holding its secret). */
-app.delete('/api/connections/:id', async (req, res) => {
+app.delete('/api/connections/:id', enforceAuthWhenConfigured, requireOwner, async (req, res) => {
   const removed = removeConnection(req.params.id)
   if (!removed) {
     res.status(404).json({ ok: false, message: 'Connection not found.' })
@@ -108,7 +108,7 @@ app.delete('/api/connections/:id', async (req, res) => {
 })
 
 /** Cheap 1-token connectivity test for an engine. */
-app.post('/api/test', jsonSmall, async (req, res) => {
+app.post('/api/test', enforceAuthWhenConfigured, jsonSmall, async (req, res) => {
   const { engine } = req.body ?? {}
   if (typeof engine !== 'string') {
     res.status(400).json({ ok: false, message: 'engine is required' })
@@ -122,7 +122,7 @@ app.post('/api/test', jsonSmall, async (req, res) => {
  * body: { engine: string, messages: [{ role, content }] }
  * Streams SSE: {type:'delta', text}, {type:'done'}, {type:'error', message}
  */
-app.post('/api/generate', generateLimiter, jsonLarge, async (req, res) => {
+app.post('/api/generate', generateLimiter, enforceAuthWhenConfigured, jsonLarge, async (req, res) => {
   const { engine, model, effort, messages, context } = req.body ?? {}
   if (!Array.isArray(messages) || messages.length === 0 || typeof engine !== 'string') {
     res.status(400).json({ error: 'bad_request', message: 'engine and messages are required' })

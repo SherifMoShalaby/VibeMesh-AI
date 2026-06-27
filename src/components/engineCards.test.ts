@@ -90,6 +90,57 @@ describe('deriveCards — state machine', () => {
   })
 })
 
+describe('deriveCards — connection validity (SEC-4)', () => {
+  it('renders a present-but-invalid key as degraded (not connected) with the reason', () => {
+    const cards = deriveCards(
+      { providers: [provider({ id: 'kimi', available: true, detail: 'using your Kimi key', connectionState: 'degraded', connectionReason: 'credential rejected — check the key' })] },
+      [],
+      'anthropic',
+    )
+    const card = cards.find((c) => c.provider?.id === 'kimi')!
+    expect(card.state).toBe('degraded')
+    expect(card.degradedReason).toBe('credential rejected — check the key')
+    expect(card.detail).toContain('credential rejected') // reason surfaced inline
+  })
+
+  it('demotes a 429 (over-quota) provider to degraded with a quota reason', () => {
+    const cards = deriveCards(
+      { providers: [provider({ id: 'anthropic', available: true, connectionState: 'degraded', connectionReason: 'rate limit / quota — wait and retry' })] },
+      [],
+      null,
+    )
+    const card = cards.find((c) => c.provider?.id === 'anthropic')!
+    expect(card.state).toBe('degraded')
+    expect(card.degradedReason).toContain('quota')
+  })
+
+  it('distinguishes a verified provider from a freshly-configured-but-never-called one', () => {
+    const cards = deriveCards(
+      {
+        providers: [
+          provider({ id: 'anthropic', available: true, connectionState: 'verified' }),
+          provider({ id: 'kimi', available: true, connectionState: 'configured-unverified' }),
+        ],
+      },
+      [],
+      null,
+    )
+    const anth = cards.find((c) => c.provider?.id === 'anthropic')!
+    const kimi = cards.find((c) => c.provider?.id === 'kimi')!
+    expect(anth.state).toBe('connected')
+    expect(anth.verified).toBe(true) // last call succeeded
+    expect(kimi.state).toBe('connected')
+    expect(kimi.verified).toBe(false) // key present but never confirmed working
+  })
+
+  it('keeps a working provider green (no regression when connectionState is absent)', () => {
+    const cards = deriveCards({ providers: [provider({ id: 'anthropic', available: true })] }, [], null)
+    const card = cards.find((c) => c.provider?.id === 'anthropic')!
+    expect(card.state).toBe('connected') // no health field → behaves exactly as before
+    expect(card.verified).toBe(false)
+  })
+})
+
 describe('deriveCards — addable catalog', () => {
   it('offers a catalog entry only when no connection was created from it', () => {
     const catalog = [catalogEntry({ id: 'openai' }), catalogEntry({ id: 'openrouter' })]

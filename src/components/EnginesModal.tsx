@@ -321,19 +321,23 @@ function LiveCard({ card, expanded, onToggle, onChanged }: CardProps) {
   let corner: ReactNode
   if (isActive) corner = <span className="engine-active-badge">In use</span>
   else if (card.state === 'connected') corner = <i className="dot ok" aria-hidden title="Connected" />
+  // SEC-4: a present-but-dead/over-quota key is degraded, not connected — show a warn dot + reason
+  // instead of the green "Connected" dot so the indicator never lies.
+  else if (card.state === 'degraded') corner = <i className="dot" aria-hidden title={card.degradedReason || 'Connection failed — check the key'} style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--warn)', boxShadow: '0 0 0 3px var(--warn-soft)' }} />
   else corner = (
     <button ref={triggerRef} className="ec-corner-btn" aria-label={`Set up ${card.label}`} aria-expanded={expanded} onClick={onToggle}>
       <DPlus />
     </button>
   )
 
-  const configurable = card.state === 'connected' || isActive
+  // a degraded engine is still selectable (the user may want to retry / fix its key) and configurable
+  const configurable = card.state === 'connected' || card.state === 'degraded' || isActive
 
   return (
     <div className={`engine-card${isActive ? ' on' : ''}`}>
       <CardFace card={card} corner={corner} />
       <div className="ec-actions">
-        {card.state === 'connected' && (
+        {(card.state === 'connected' || card.state === 'degraded') && (
           <button className="btn btn-primary sm" onClick={() => setEngine(useTargetId)} title="Design with this engine">
             Use
           </button>
