@@ -52,7 +52,7 @@ app.get('/api/hardware', (_req, res) => {
 app.post('/api/connect', enforceAuthWhenConfigured, requireOwner, jsonSmall, async (req, res) => {
   const { key, value } = req.body ?? {}
   try {
-    applyRuntimeSetting(key, value)
+    await applyRuntimeSetting(key, value)
   } catch (error) {
     res.status(400).json({ ok: false, message: error instanceof UserFacingError ? error.message : 'Could not save setting.' })
     return
@@ -72,7 +72,7 @@ app.post('/api/connections', enforceAuthWhenConfigured, requireOwner, jsonSmall,
   const body = req.body ?? {}
   try {
     const record = saveConnection(body)
-    if (typeof body.secret === 'string' && body.secret.trim()) applyRuntimeSetting(record.auth.envKey, body.secret)
+    if (typeof body.secret === 'string' && body.secret.trim()) await applyRuntimeSetting(record.auth.envKey, body.secret)
     res.json({ ok: true, id: record.id, providers: await providerStatus() })
   } catch (error) {
     const msg = error instanceof ConnectionError || error instanceof UserFacingError ? error.message : 'Could not save the connection.'
@@ -102,7 +102,7 @@ app.delete('/api/connections/:id', enforceAuthWhenConfigured, requireOwner, asyn
     return
   }
   if (removed.auth?.envKey) {
-    try { applyRuntimeSetting(removed.auth.envKey, '') } catch { /* key already absent */ }
+    try { await applyRuntimeSetting(removed.auth.envKey, '') } catch { /* key already absent */ }
   }
   res.json({ ok: true, providers: await providerStatus() })
 })
