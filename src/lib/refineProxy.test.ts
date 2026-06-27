@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote } from './refineProxy'
+import { dimDiscrepancies, clampStatedDimensions, geometryConverged, fillRatioNote, iouRefineDecision } from './refineProxy'
 import type { StlBBox } from './stl'
 
 const bbox = (x: number, y: number, z: number): StlBBox => ({ x, y, z, minZ: 0, volume: 0, triangles: 0 })
@@ -133,6 +133,32 @@ describe('geometryConverged — self-relative refine convergence', () => {
   it('guards divide-by-zero on a zero-volume baseline', () => {
     expect(geometryConverged({ volume: 0, triangles: 100 }, { volume: 0, triangles: 100 })).toBe(true)
     expect(geometryConverged({ volume: 0, triangles: 100 }, { volume: 5, triangles: 100 })).toBe(false)
+  })
+})
+
+describe('iouRefineDecision — reference-IoU refine gate (OC-2)', () => {
+  it('refines on the first below-floor measurement (no baseline to beat)', () => {
+    expect(iouRefineDecision(0.4, undefined)).toBe(true)
+  })
+
+  it('does NOT refine when already at/above the floor', () => {
+    expect(iouRefineDecision(0.55, undefined)).toBe(false)
+    expect(iouRefineDecision(0.7, 0.5)).toBe(false) // even though it improved, it cleared the floor
+  })
+
+  it('continues while a pass keeps raising IoU below the floor', () => {
+    expect(iouRefineDecision(0.45, 0.4)).toBe(true) // rose >0.01, still below floor
+  })
+
+  it('STOPS the loop when a pass does not raise IoU (the key acceptance criterion)', () => {
+    expect(iouRefineDecision(0.4, 0.4)).toBe(false) // no gain → stop
+    expect(iouRefineDecision(0.35, 0.4)).toBe(false) // regressed → stop
+    expect(iouRefineDecision(0.405, 0.4)).toBe(false) // gain below minGain → stop
+  })
+
+  it('respects custom floor / minGain', () => {
+    expect(iouRefineDecision(0.6, undefined, 0.7)).toBe(true) // below the raised floor
+    expect(iouRefineDecision(0.45, 0.4, 0.55, 0.1)).toBe(false) // 0.05 gain < 0.1 minGain → stop
   })
 })
 
