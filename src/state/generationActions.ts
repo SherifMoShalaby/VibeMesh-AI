@@ -331,9 +331,16 @@ export function createGenerationActions(
       const baseOpts: Omit<Parameters<typeof streamGenerate>[2], 'onDelta' | 'onSkillReport'> = {
         signal: ctrl.signal,
         model: engine === 'claude-code' ? get().claudeModel : engine === 'kimi' ? get().kimiModel : undefined,
-        // effort is capability-driven now (engines that declare reasoning levels), not a hardcoded
-        // engine list — so a future effort-capable provider gets it with no code change here.
-        effort: provider?.efforts?.length ? get().claudeEffort : undefined,
+        // effort is capability-driven (engines that declare reasoning levels), not a hardcoded engine
+        // list. LAT-1 done right: tier by difficulty — claudeEffort (UI/default 'high') is the base for
+        // ordinary prompts; hard geometry (kits, image refs) gets AT LEAST 'xhigh' (deeper thinking
+        // genuinely helps), never lowering a user who picked higher. Reserving xhigh for the hard cases
+        // instead of every prompt is the main cut to Opus think-time (and thus the TTFB/stall window).
+        effort: provider?.efforts?.length
+          ? (isKit || latestImgs.length > 0
+              ? (['xhigh', 'max'].includes(get().claudeEffort) ? get().claudeEffort : 'xhigh')
+              : get().claudeEffort)
+          : undefined,
         context: { bed: { x: bed.x, y: bed.y, z: bed.z, label: bed.label }, kit: isKit, intent: priorIntent, skillIds: opts.skillIds, sourceHint },
       }
       // A2 — verifier-guided best-of-N: only on the FIRST attempt of a hard request (kit or image),
