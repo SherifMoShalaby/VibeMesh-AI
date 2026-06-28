@@ -156,22 +156,28 @@ const LOCAL_NUM_PREDICT = Number(process.env.LOCAL_LLM_MAX_TOKENS) || 4096
 // min while I was fine to wait" symptom). Replace that with ONE explicit, configurable budget and
 // at most one retry. Threaded to the Anthropic/Kimi/local clients, published to the client for the
 // Engines UI, and used to widen Node's server.requestTimeout (server/index.mjs).
-// LAT-4: the interactive default is 4 min (was up to 60 min — a hung stream was invisible for ~61
-// min). VIBEMESH_GEN_TIMEOUT_MS still overrides it (a patient user can raise it for a max run).
-const DEFAULT_GEN_TIMEOUT_MS = 4 * 60000
+// Overall wall-clock ceiling for one generation — NOT a no-first-token cap (see the silence timer
+// below). LAT-4 made this 4min and reused it as the claude-code TTFB cap, which killed HEALTHY
+// generations: opus emits no answer text while thinking, so "time to first token" == full think time
+// (80-242s+ on real prompts). The stall cap is now a true silence detector; this is just the generous
+// outer bound. VIBEMESH_GEN_TIMEOUT_MS overrides it.
+const DEFAULT_GEN_TIMEOUT_MS = 10 * 60000
 export const GEN_TIMEOUT_MS = Math.max(60000, Number(process.env.VIBEMESH_GEN_TIMEOUT_MS) || DEFAULT_GEN_TIMEOUT_MS)
 export const GEN_MAX_RETRIES = (() => {
   const n = Number(process.env.VIBEMESH_GEN_MAX_RETRIES)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 1
 })()
-// LAT-4: the claude-code Agent SDK has no per-request timeout of its own (only the AbortController),
-// so a hung stream stalls until the OUTER request budget (~61 min, pre-LAT-4). These two server soft-
-// timeouts abort a stalled CLI stream and surface a recoverable error instead: a TTFB cap (no first
-// delta within the window) and an overall cap (the whole stream). Both default to GEN_TIMEOUT_MS;
-// override independently for tuning/tests. <=0 disables a cap.
-const CLAUDE_CODE_TTFB_TIMEOUT_MS = (() => {
-  const n = Number(process.env.VIBEMESH_CLAUDE_TTFB_TIMEOUT_MS)
-  return Number.isFinite(n) ? Math.floor(n) : GEN_TIMEOUT_MS
+// The claude-code Agent SDK has no per-request timeout of its own (only the AbortController), so a
+// hung CLI stream would stall until the outer budget. Two server soft-timeouts guard it:
+//  - SILENCE: abort if NO SDK message of ANY kind arrives for the window. The watchdog re-arms this
+//    on every message (incl. system/thinking_tokens emitted during a long think), so it catches a
+//    truly dead CLI fast WITHOUT killing a model that is actively thinking. Small + decoupled from
+//    GEN_TIMEOUT_MS (the LAT-4 bug was tying the no-output cap to the whole-run budget AND clearing
+//    it only on answer text, so it measured think time, not silence).
+//  - OVERALL: a hard wall-clock ceiling for the whole stream (= GEN_TIMEOUT_MS). <=0 disables a cap.
+const CLAUDE_CODE_SILENCE_TIMEOUT_MS = (() => {
+  const n = Number(process.env.VIBEMESH_CLAUDE_SILENCE_TIMEOUT_MS)
+  return Number.isFinite(n) ? Math.floor(n) : 90_000
 })()
 const CLAUDE_CODE_SOFT_TIMEOUT_MS = (() => {
   const n = Number(process.env.VIBEMESH_CLAUDE_SOFT_TIMEOUT_MS)
@@ -1047,12 +1053,13 @@ async function streamClaudeCodeAdapter({ desc, messages, ctx, onDelta, signal, e
 
   const prompt = agentPromptFromMessages(messages)
 
-  // LAT-4: own AbortController so the server soft-timeout can abort a stalled stream (it also relays
-  // the client's abort). The watchdog fires on TTFB (no first delta) or overall stall and surfaces a
-  // recoverable error — without it a hung CLI stream stalls until the ~61-min outer request budget.
+  // own AbortController so a server soft-timeout can abort a stalled stream (it also relays the
+  // client's abort). The watchdog fires on SILENCE (no SDK message of any kind for the window — a
+  // truly dead CLI) or the OVERALL wall-clock ceiling, and surfaces a recoverable error. Crucially,
+  // an actively-thinking model keeps emitting messages, so a long think never trips silence.
   const controller = signalToController(signal)
   const watchdog = makeStreamWatchdog(controller, {
-    ttfbMs: CLAUDE_CODE_TTFB_TIMEOUT_MS,
+    silenceMs: CLAUDE_CODE_SILENCE_TIMEOUT_MS,
     overallMs: CLAUDE_CODE_SOFT_TIMEOUT_MS,
     who: desc.who || 'Claude Code',
   })
@@ -1081,7 +1088,6 @@ async function streamClaudeCodeAdapter({ desc, messages, ctx, onDelta, signal, e
       if (message.type === 'stream_event') {
         const event = message.event
         if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          if (!gotText) watchdog.firstDelta() // clear the TTFB cap; switch to the overall cap
           gotText = true
           onDelta(event.delta.text)
         }
@@ -1109,13 +1115,18 @@ async function streamClaudeCodeAdapter({ desc, messages, ctx, onDelta, signal, e
   }
 }
 
-/** LAT-4: a stall watchdog for the claude-code stream. Arms a TTFB timer (no first delta) and an
- *  overall stall timer; either firing aborts the controller and marks `tripped` so the adapter can
- *  surface a recoverable UserFacingError. tick() (any message) and firstDelta() reset/advance it.
+/** A stall watchdog for the claude-code stream. Two timers; either firing aborts the controller and
+ *  marks `tripped` so the adapter surfaces a recoverable UserFacingError:
+ *   - SILENCE: no SDK message of ANY kind for `silenceMs`. tick() (called on every message, incl.
+ *     system/thinking_tokens during a long think) re-arms it, so it measures TRUE silence (a dead
+ *     CLI), never think time. (The LAT-4 bug cleared its predecessor only on answer TEXT, so it
+ *     measured time-to-first-token == full think time and killed healthy long-thinking generations.)
+ *   - OVERALL: a hard wall-clock ceiling on the whole stream (`overallMs`), deliberately NOT reset
+ *     by tick(), so total runtime stays bounded.
  *  Timers are unref'd so they never keep the process alive. <=0 disables a cap. */
-export function makeStreamWatchdog(controller, { ttfbMs, overallMs, who }) {
+export function makeStreamWatchdog(controller, { silenceMs, overallMs, who }) {
   const w = { tripped: false, reason: null }
-  let ttfb = null
+  let silence = null
   let overall = null
   const arm = (ms, reason) => {
     if (!(ms > 0)) return null
@@ -1127,23 +1138,24 @@ export function makeStreamWatchdog(controller, { ttfbMs, overallMs, who }) {
     if (typeof t.unref === 'function') t.unref()
     return t
   }
-  const clearOverall = () => { if (overall) clearTimeout(overall); overall = null }
-  // arm both up front: TTFB until the first delta, overall for the whole stream
-  ttfb = arm(ttfbMs, 'ttfb')
+  // silence: re-armed on every message (true stall detector). overall: hard wall-clock ceiling.
+  silence = arm(silenceMs, 'silence')
   overall = arm(overallMs, 'overall')
   return {
     get tripped() { return w.tripped },
-    firstDelta() { if (ttfb) { clearTimeout(ttfb); ttfb = null } },
     tick() {
-      // refresh the overall stall timer on each message so a stream making progress isn't cut
-      if (!w.tripped && overallMs > 0) { clearOverall(); overall = arm(overallMs, 'overall') }
+      // any SDK message (incl. thinking_tokens) proves the CLI is alive → reset the silence timer.
+      // The overall wall-clock ceiling is NOT reset, so a runaway stream still ends.
+      if (!w.tripped && silenceMs > 0) { clearTimeout(silence); silence = arm(silenceMs, 'silence') }
     },
     error() {
-      const secs = Math.round((w.reason === 'ttfb' ? ttfbMs : overallMs) / 1000)
-      const detail = w.reason === 'ttfb' ? `produced no output within ${secs}s` : `stalled for ${secs}s`
+      const secs = Math.round((w.reason === 'silence' ? silenceMs : overallMs) / 1000)
+      const detail = w.reason === 'silence'
+        ? `produced no output for ${secs}s (the stream went silent)`
+        : `exceeded its ${Math.round(overallMs / 60000)} min budget`
       return new UserFacingError(`${who} ${detail} — the stream timed out. Try again, or raise VIBEMESH_GEN_TIMEOUT_MS.`)
     },
-    clear() { if (ttfb) clearTimeout(ttfb); clearOverall() },
+    clear() { if (silence) clearTimeout(silence); if (overall) clearTimeout(overall) },
   }
 }
 

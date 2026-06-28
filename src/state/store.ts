@@ -665,7 +665,10 @@ export const useStore = create<VibeState>((set, get) => {
     healthLoaded: false,
     engine: null,
     claudeModel: localStorage.getItem(CLAUDE_MODEL_KEY) ?? 'default',
-    claudeEffort: localStorage.getItem(CLAUDE_EFFORT_KEY) ?? 'xhigh',
+    // 'high' (not 'xhigh') is the sane default: it's the documented sweet spot and the .env intent
+    // (VIBEMESH_EFFORT). Per-prompt tiering bumps hard requests (kits/images) back to 'xhigh' at the
+    // generation seam — xhigh-on-everything was the dominant, silent Opus think-time multiplier.
+    claudeEffort: localStorage.getItem(CLAUDE_EFFORT_KEY) ?? 'high',
     kimiModel: localStorage.getItem(KIMI_MODEL_KEY) ?? 'default',
     code: '',
     params: [],
